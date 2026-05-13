@@ -1,0 +1,23 @@
+{
+  "name": "@ikenga/pkg-hello",
+  "version": "0.0.0",
+  "description": "Minimal Ikenga pkg — proves the registry install pipeline end-to-end without bringing any UI, sidecar, or MCP surface.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/apps/hello"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "files": [
+    "manifest.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "echo 'no build — manifest-only pkg'",
+    "typecheck": "echo 'no ts — manifest-only pkg'"
+  }
+}

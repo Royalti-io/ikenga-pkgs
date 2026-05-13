@@ -15,6 +15,8 @@ importers:
         specifier: ^2.27.10
         version: 2.31.0(@types/node@22.19.19)
 
+  packages/apps/hello: {}
+
   packages/engine/claude-code:
     dependencies:
       '@ikenga/contract':
