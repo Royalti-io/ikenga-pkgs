@@ -49,5 +49,14 @@ jobs:
           NPM_CONFIG_PROVENANCE: "true"
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      # NOTE: the publish→registry bridge step is added in Phase D
-      # (scripts/update-registry-index.mjs) once ikenga-registry exists.
+      - name: Install minisign
+        if: steps.changesets.outputs.published == 'true'
+        run: sudo apt-get update && sudo apt-get install -y minisign
+
+      - name: Update ikenga-registry
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          PUBLISHED: ${{ steps.changesets.outputs.publishedPackages }}
+          REGISTRY_REPO_PAT: ${{ secrets.REGISTRY_REPO_PAT }}
+          REGISTRY_SIGNING_PRIVATE_KEY: ${{ secrets.REGISTRY_SIGNING_PRIVATE_KEY }}
+        run: node scripts/update-registry-index.mjs
