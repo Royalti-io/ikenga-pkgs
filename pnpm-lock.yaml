@@ -56,8 +56,8 @@ importers:
   packages/mcp/browser:
     dependencies:
       '@ikenga/contract':
-        specifier: file:../../../../contract
-        version: file:../contract
+        specifier: ^0.5.0
+        version: 0.5.0
       '@modelcontextprotocol/sdk':
         specifier: ^1.23.0
         version: 1.29.0(zod@3.25.76)
@@ -325,9 +325,6 @@ packages:
 
   '@ikenga/contract@0.5.0':
     resolution: {integrity: sha512-3vV9O4UAa6vtFZJFD9mHRIuVQajGktQ6Rlb1SrdllbtojhbSOCAD8me1e00O9hV9ITTM1OZtr3KV8Y8X7Kwd5Q==}
-
-  '@ikenga/contract@file:../contract':
-    resolution: {directory: ../contract, type: directory}
 
   '@inquirer/external-editor@1.0.3':
     resolution: {integrity: sha512-RWbSrDiYmO4LbejWY7ttpxczuwQyZLBUyygsA9Nsv95hpzUWwnNTVQmAq3xuh7vNwCp07UTmE5i11XAEExx4RA==}
@@ -1289,11 +1286,6 @@ snapshots:
       zod-to-json-schema: 3.25.2(zod@3.25.76)
 
   '@ikenga/contract@0.5.0':
-    dependencies:
-      zod: 3.25.76
-      zod-to-json-schema: 3.25.2(zod@3.25.76)
-
-  '@ikenga/contract@file:../contract':
     dependencies:
       zod: 3.25.76
       zod-to-json-schema: 3.25.2(zod@3.25.76)
