@@ -1,0 +1,21 @@
+# What ships in the npm tarball is controlled by package.json "files".
+# This file is here so that even if "files" is removed, common test/dev
+# noise still doesn't end up on the registry.
+
+.github/
+.git/
+.gitignore
+.npmignore
+node_modules/
+*.tsbuildinfo
+.env
+.env.*
+.DS_Store
+*.log
+
+# Test fixtures (none yet, future-proof)
+test/
+tests/
+__tests__/
+*.test.ts
+*.spec.ts

@@ -1,0 +1,35 @@
+name: Bug report
+about: Create a report to help us improve `@ikenga/mcp-iyke`
+title: "Bug: "
+labels: bug, needs-triage
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |-
+        Before filing this report, ensure you are running the latest `0.1.x` patch release
+        and that the issue is not already on our GitHub Issues list.
+  - type: input
+    id: summary
+    attributes:
+      label: Summary
+      description: Describe what happened and what you expected instead.
+      placeholder: "Claude cannot reach iyke-mcp on macOS when the desktop app is running"
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      description: Provide the exact commands/endpoints you used and any relevant environment details.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: `@ikenga/mcp-iyke` version (from package.json) and Node.js runtime.
+      placeholder: "0.1.0 / Node 24.0.0"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or error output
+      description: Include any stack trace, HTTP status, or MCP error code you observed.
+      placeholder: "HTTP 401: Invalid token"

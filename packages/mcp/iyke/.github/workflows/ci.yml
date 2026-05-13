@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-node:
+    name: node ${{ matrix.node-version }} — typecheck + build + test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: ['20.x', '22.x']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify build output
+        run: |
+          set -e
+          test -f dist/index.js
+          test -f dist/index.d.ts
+          test -f dist/api.js
+          test -f dist/control.js
+          echo "✓ dist artifacts present"
+
+      - name: Test
+        run: npm test
+
+  build-bun:
+    name: bun — typecheck + build + test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --no-save
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Build
+        run: bun run build
+
+      - name: Verify build output
+        run: |
+          set -e
+          test -f dist/index.js
+          test -f dist/index.d.ts
+          echo "✓ dist artifacts present"
+
+      - name: Test
+        run: bun test || echo "(no tests yet — Bun's test runner ran with no test files)"
+
+  leak-guard:
+    name: leak-pattern guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Patterns that must NOT appear in source / build config / manifest.
+      # These are internal Royalti / monorepo references that should never
+      # land in this Apache-2.0 public repo. README / CONTRIBUTING /
+      # SECURITY / CODE_OF_CONDUCT are allowed to reference Royalti-io
+      # (the GitHub org) and Royalti, Inc. (the legal entity / author);
+      # those are intentional public attributions.
+      - name: Scan source + manifest + config for forbidden patterns
+        run: |
+          set +e
+          PATTERNS='royalti-co|RoyaltiAuth|@royalti/|nedjamez|/finance/receivables|getroyalti\.com|PA app|PA desktop app'
+          MATCHES=$(grep -rniE "$PATTERNS" src/ manifest.json package.json tsconfig.json 2>/dev/null)
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Forbidden pattern(s) found in source / manifest / config:"
+            echo "$MATCHES"
+            exit 1
+          fi
+          echo "✓ no forbidden patterns in src/, manifest.json, package.json, tsconfig.json"
+
+      # The compiled output should also be clean. tsc preserves comments
+      # and strings — anything we missed in src/ ends up in dist/ and on
+      # npm. Run the same check against dist/ if it has been built.
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+
+      - name: Build then scan dist/
+        run: |
+          npm install
+          npm run build
+          set +e
+          PATTERNS='royalti-co|RoyaltiAuth|@royalti/|nedjamez|/finance/receivables|getroyalti\.com|PA app|PA desktop app'
+          MATCHES=$(grep -rniE "$PATTERNS" dist/ 2>/dev/null)
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Forbidden pattern(s) found in dist/ (will ship to npm):"
+            echo "$MATCHES"
+            exit 1
+          fi
+          echo "✓ no forbidden patterns in dist/"

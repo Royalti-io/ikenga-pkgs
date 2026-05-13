@@ -1,0 +1,27 @@
+name: Feature request
+about: Suggest an enhancement or new tool for the MCP bridge
+title: "Feature: "
+labels: enhancement, needs-triage
+assignees: []
+
+body:
+  - type: input
+    id: feature
+    attributes:
+      label: Feature idea
+      description: Summarize the new capability you are proposing.
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Why would this enhancement help Ikenga desktop app users or MCP consumers?
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What other tools, commands, or workarounds did you try?
+  - type: input
+    id: impact
+    attributes:
+      label: Impact
+      description: Who would benefit (e.g., Claude sessions, automations, testing)?
