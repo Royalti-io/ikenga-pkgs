@@ -1,0 +1,68 @@
+{
+  "name": "@ikenga/mcp-iyke",
+  "version": "0.1.2",
+  "mcpName": "io.github.Royalti-io/ikenga-pkg-mcp-iyke",
+  "description": "Model Context Protocol (MCP) server that exposes the Ikenga desktop app's iyke control bridge — drive a running Tauri AI workspace from any MCP client (Claude, Cursor, etc.).",
+  "license": "Apache-2.0",
+  "author": "Royalti, Inc.",
+  "homepage": "https://github.com/Royalti-io/ikenga-pkg-mcp-iyke#readme",
+  "bugs": {
+    "url": "https://github.com/Royalti-io/ikenga-pkg-mcp-iyke/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkg-mcp-iyke.git"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ikenga",
+    "iyke",
+    "claude",
+    "anthropic",
+    "ai",
+    "desktop",
+    "tauri",
+    "control-bridge"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "iyke-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "manifest.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run build",
+    "test": "echo 'no tests yet — see CONTRIBUTING.md' && exit 0"
+  },
+  "dependencies": {
+    "@ikenga/contract": "^0.3.0",
+    "@modelcontextprotocol/sdk": "^1.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

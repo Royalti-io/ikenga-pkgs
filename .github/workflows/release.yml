@@ -1,0 +1,111 @@
+name: Release
+
+# Triggers on a pushed tag matching v*.*.* (semver). Validates that the
+# tag matches the version in package.json, runs CI checks, then publishes
+# to npm and creates a GitHub release.
+#
+# Manual workflow_dispatch is also supported for emergency re-runs (with
+# the version field as input).
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to publish (must match package.json)'
+        required: true
+        type: string
+
+permissions:
+  contents: write   # for creating GitHub releases
+  id-token: write   # for npm provenance
+
+jobs:
+  validate:
+    name: validate tag matches package.json
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.extract.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract tag / input version
+        id: extract
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ inputs.version }}"
+          else
+            # Strip leading 'v' from tag
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Tag/input version: $VERSION"
+
+      - name: Verify package.json version matches
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          INPUT_VERSION="${{ steps.extract.outputs.version }}"
+          if [ "$PKG_VERSION" != "$INPUT_VERSION" ]; then
+            echo "::error::package.json version ($PKG_VERSION) does not match tag/input ($INPUT_VERSION)"
+            exit 1
+          fi
+          echo "✓ package.json version matches: $PKG_VERSION"
+
+  build-and-publish:
+    name: build + publish to npm
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Verify build output
+        run: |
+          set -e
+          test -f dist/index.js
+          test -f dist/index.d.ts
+          test -f dist/api.js
+          test -f dist/control.js
+          echo "✓ dist artifacts present"
+
+      - name: Leak-pattern guard (final check)
+        run: |
+          set +e
+          PATTERNS='royalti-co|RoyaltiAuth|@royalti/|nedjamez|/finance/receivables|getroyalti\.com|PA app|PA desktop app'
+          MATCHES=$(grep -rniE "$PATTERNS" src/ dist/ manifest.json package.json tsconfig.json 2>/dev/null)
+          if [ -n "$MATCHES" ]; then
+            echo "::error::Forbidden patterns found — refusing to publish:"
+            echo "$MATCHES"
+            exit 1
+          fi
+          echo "✓ no forbidden patterns"
+
+      - name: Publish to npm
+        run: npm publish --access=public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.validate.outputs.version }}
+          name: v${{ needs.validate.outputs.version }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
