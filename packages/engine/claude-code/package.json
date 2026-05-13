@@ -1,12 +1,15 @@
 {
   "name": "@ikenga/pkg-engine-claude-code",
   "version": "0.1.0",
-  "private": true,
   "description": "Claude Code engine adapter for Ikenga — wraps the `claude` CLI as the default AI engine.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/royalti-io/ikenga-pkg-engine-claude-code.git"
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/engine/claude-code"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "type": "module",
   "main": "./dist/index.js",
@@ -25,7 +28,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@ikenga/contract": "workspace:*"
+    "@ikenga/contract": "^0.4.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0"

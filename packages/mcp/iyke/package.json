@@ -5,13 +5,14 @@
   "description": "Model Context Protocol (MCP) server that exposes the Ikenga desktop app's iyke control bridge — drive a running Tauri AI workspace from any MCP client (Claude, Cursor, etc.).",
   "license": "Apache-2.0",
   "author": "Royalti, Inc.",
-  "homepage": "https://github.com/Royalti-io/ikenga-pkg-mcp-iyke#readme",
+  "homepage": "https://github.com/Royalti-io/ikenga-pkgs/tree/main/packages/mcp/iyke#readme",
   "bugs": {
-    "url": "https://github.com/Royalti-io/ikenga-pkg-mcp-iyke/issues"
+    "url": "https://github.com/Royalti-io/ikenga-pkgs/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Royalti-io/ikenga-pkg-mcp-iyke.git"
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/mcp/iyke"
   },
   "keywords": [
     "mcp",
@@ -41,8 +42,7 @@
     "dist",
     "src",
     "manifest.json",
-    "README.md",
-    "LICENSE"
+    "README.md"
   ],
   "engines": {
     "node": ">=20"
