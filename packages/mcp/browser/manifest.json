@@ -1,0 +1,32 @@
+{
+  "id": "com.ikenga.mcp-browser",
+  "name": "Browser MCP",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "skill",
+
+  "author": {
+    "name": "Royalti, Inc.",
+    "key": "royalti"
+  },
+
+  "mcp": [
+    {
+      "name": "browser",
+      "command": "bun",
+      "args": ["run", "src/index.ts"],
+      "lifecycle": "long-lived"
+    }
+  ],
+
+  "capabilities": {
+    "webview": {
+      "child_webviews": true,
+      "partitions": ["*"]
+    }
+  },
+
+  "permissions": {
+    "net": ["http://127.0.0.1:*"]
+  }
+}

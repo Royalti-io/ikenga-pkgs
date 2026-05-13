@@ -1,0 +1,70 @@
+{
+  "name": "@ikenga/mcp-browser",
+  "version": "0.1.0",
+  "mcpName": "io.github.Royalti-io/ikenga-pkg-mcp-browser",
+  "description": "Model Context Protocol (MCP) server that lets agents drive native child webviews in the Ikenga desktop app — open a pane on a partner portal (Spotify-for-Artists, Bandcamp, Linkfire, etc.), snapshot it, click, fill, and wait. Bypasses iframe CSP `frame-ancestors` by using the system webview.",
+  "license": "Apache-2.0",
+  "author": "Royalti, Inc.",
+  "homepage": "https://github.com/Royalti-io/ikenga-pkgs/tree/main/packages/mcp/browser#readme",
+  "bugs": {
+    "url": "https://github.com/Royalti-io/ikenga-pkgs/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/mcp/browser"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "ikenga",
+    "browser",
+    "automation",
+    "claude",
+    "anthropic",
+    "ai",
+    "desktop",
+    "tauri",
+    "webview"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "browser-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "src",
+    "manifest.json",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "prepublishOnly": "npm run build",
+    "test": "node --test --import=tsx 'src/**/*.test.ts'"
+  },
+  "dependencies": {
+    "@ikenga/contract": "file:../../../../contract",
+    "@modelcontextprotocol/sdk": "^1.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.2"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
