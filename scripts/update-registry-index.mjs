@@ -116,8 +116,16 @@ const nowIso = new Date().toISOString();
 for (const { name, version } of published) {
   const short = shortName(name);
   const pkgDir = findPackageDir(name);
+  // Libraries shipped from this monorepo (e.g. @ikenga/registry-client) get
+  // published to npm but aren't installable Ikenga pkgs — they have no
+  // manifest.json. Skip them; the registry only catalogs installable pkgs.
+  const manifestPath = join(pkgDir, 'manifest.json');
+  if (!existsSync(manifestPath)) {
+    console.log(`Skipping ${name}@${version}: no manifest.json (library publish, not a pkg)`);
+    continue;
+  }
   const pkgJson = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
-  const manifest = JSON.parse(readFileSync(join(pkgDir, 'manifest.json'), 'utf8'));
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
   // Changesets bumps package.json but not manifest.json — overwrite so the
   // registry reports the actual published version.
   manifest.version = version;
