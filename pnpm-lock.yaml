@@ -35,6 +35,22 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
 
+  packages/lib/registry-client:
+    dependencies:
+      '@ikenga/contract':
+        specifier: ^0.5.0
+        version: 0.5.0
+      '@noble/ed25519':
+        specifier: ^2.1.0
+        version: 2.3.0
+      '@noble/hashes':
+        specifier: ^1.5.0
+        version: 1.8.0
+    devDependencies:
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+
   packages/mcp/iyke:
     dependencies:
       '@ikenga/contract':
@@ -130,6 +146,9 @@ packages:
   '@ikenga/contract@0.4.0':
     resolution: {integrity: sha512-OsE9g/LWKCZiJNlEPUQayz94I1t7ZB/1xMqoPMW7Obu5XVTSsL7a6bUgbebRwJVfSFvZSRAfiOgBHKrwKCBDvw==}
 
+  '@ikenga/contract@0.5.0':
+    resolution: {integrity: sha512-3vV9O4UAa6vtFZJFD9mHRIuVQajGktQ6Rlb1SrdllbtojhbSOCAD8me1e00O9hV9ITTM1OZtr3KV8Y8X7Kwd5Q==}
+
   '@inquirer/external-editor@1.0.3':
     resolution: {integrity: sha512-RWbSrDiYmO4LbejWY7ttpxczuwQyZLBUyygsA9Nsv95hpzUWwnNTVQmAq3xuh7vNwCp07UTmE5i11XAEExx4RA==}
     engines: {node: '>=18'}
@@ -154,6 +173,13 @@ packages:
     peerDependenciesMeta:
       '@cfworker/json-schema':
         optional: true
+
+  '@noble/ed25519@2.3.0':
+    resolution: {integrity: sha512-M7dvXL2B92/M7dw9+gzuydL8qn/jiqNHaoR3Q+cb1q1GHV7uwE17WCyFMG+Y+TZb5izcaXk5TdJRrDUxHXL78A==}
+
+  '@noble/hashes@1.8.0':
+    resolution: {integrity: sha512-jCs9ldd7NwzpgXDIf6P3+NrHh9/sD6CQdxHyjQI+h/6rDNo88ypBxxz45UDuZHz9r3tNz7N/VInSVoVdtXEI4A==}
+    engines: {node: ^14.21.3 || >=16}
 
   '@nodelib/fs.scandir@2.1.5':
     resolution: {integrity: sha512-vq24Bq3ym5HEQm2NKCr3yXDwjc7vTsEThRDnkp2DK9p1uqLR+DHurm/NOTo0KG7HYHU7eppKZj3MyqYuMBf62g==}
@@ -983,6 +1009,11 @@ snapshots:
       zod: 3.25.76
       zod-to-json-schema: 3.25.2(zod@3.25.76)
 
+  '@ikenga/contract@0.5.0':
+    dependencies:
+      zod: 3.25.76
+      zod-to-json-schema: 3.25.2(zod@3.25.76)
+
   '@inquirer/external-editor@1.0.3(@types/node@22.19.19)':
     dependencies:
       chardet: 2.1.1
@@ -1027,6 +1058,10 @@ snapshots:
       zod-to-json-schema: 3.25.2(zod@3.25.76)
     transitivePeerDependencies:
       - supports-color
+
+  '@noble/ed25519@2.3.0': {}
+
+  '@noble/hashes@1.8.0': {}
 
   '@nodelib/fs.scandir@2.1.5':
     dependencies:
