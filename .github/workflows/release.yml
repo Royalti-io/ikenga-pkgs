@@ -3,6 +3,7 @@ name: Release packages
 on:
   push:
     branches: [main]
+  workflow_dispatch:
 
 concurrency: ${{ github.workflow }}-${{ github.ref }}
 
@@ -43,7 +44,7 @@ jobs:
           publish: pnpm changeset publish
           createGithubReleases: true
           title: "chore: version packages"
-          commit: "chore: version packages [skip ci]"
+          commit: "chore: version packages"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_CONFIG_PROVENANCE: "true"
