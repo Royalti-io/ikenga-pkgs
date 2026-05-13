@@ -1,6 +1,6 @@
 {
   "name": "@ikenga/pkg-engine-noop",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "No-op engine adapter for Ikenga — proves the engine pluggability pattern; used as a test fixture and for shell-without-AI mode.",
   "license": "Apache-2.0",
   "repository": {
@@ -20,7 +20,11 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist", "manifest.json", "README.md"],
+  "files": [
+    "dist",
+    "manifest.json",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
