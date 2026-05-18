@@ -21,13 +21,14 @@
 import type {
 	Engine,
 	EngineEvent,
+	HostBridge,
 	McpServerSpec,
 	Session,
 	SessionOpts,
 } from '@ikenga/contract/engine';
 
 const ID = 'com.ikenga.engine-claude-code';
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 
 class ClaudeSession implements Session {
 	constructor(
@@ -40,33 +41,13 @@ class ClaudeSession implements Session {
 	}
 }
 
-/**
- * Tauri-command surface the host shell exposes to engine adapters. The shell
- * is responsible for binding these names to its `claude_chat_*` commands;
- * adapters never call `invoke()` directly so they remain testable.
- */
-export interface HostBridge {
-	spawn(opts: {
-		sessionId: string;
-		cwd?: string;
-		systemPrompt?: string;
-		model?: string;
-		resumeSessionId?: string;
-	}): Promise<void>;
-	send(sessionId: string, message: string): Promise<void>;
-	kill(sessionId: string): Promise<void>;
-	listen(sessionId: string): AsyncIterable<EngineEvent>;
-	registerMcp(spec: McpServerSpec): Promise<void>;
-	unregisterMcp(id: string): Promise<void>;
-}
-
 export class ClaudeCodeEngine implements Engine {
 	readonly id = ID;
 	readonly version = VERSION;
 
 	// Mirrors manifest.json `engine` block. Static — kept in sync manually
-	// because the legacy `createEngine` factory is slated for removal in
-	// Phase 11; not worth wiring JSON imports just to delete it next release.
+	// because the legacy `createEngine` factory is slated for removal; not
+	// worth wiring JSON imports just to delete it next release.
 	readonly metadata = {
 		agentId: 'claude-code',
 		display: 'Claude Code',
@@ -147,7 +128,7 @@ export function createEngine(host: HostBridge): Engine {
 
 export default createEngine;
 
-// Phase 10: ACP-shaped engine surface. The legacy `createEngine` + `Engine`
-// above is retained for one release; new consumers target `AcpEngine`.
+// ACP-shaped engine surface. The legacy `createEngine` + `Engine` above is
+// retained for one release; new consumers target `AcpEngine`.
 export { createAcpEngine } from './acp-engine.js';
-export type { AcpHost, AcpUnlisten } from './acp-engine.js';
+export type { AcpHost, AcpUnlisten, HostBridge } from '@ikenga/contract/engine';

@@ -28,7 +28,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@ikenga/contract": "^0.4.0"
+    "@ikenga/contract": "^0.6.0"
   },
   "devDependencies": {
     "typescript": "^5.4.0"
