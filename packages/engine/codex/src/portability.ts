@@ -21,14 +21,19 @@
  *                deliberately diverge to keep uninstall clean.
  *   - AGENTS.md: skipped for v1 (out of scope).
  *
- * Env-substitution semantics (ADR §7 open question):
- *   Codex's behavior around env-var substitution in `[mcp_servers.<n>.env]`
- *   is unverified. v1 default posture: STRICT REFUSAL. Both secret-bearing
- *   plaintext env values AND `${IKENGA_SECRET:<key>}` placeholders are
- *   refused — because if Codex does NOT resolve the indirection the
- *   placeholder would leak literally to the spawned child. Result: Codex
- *   MCP entries are only written when (a) no env, or (b) all env values
- *   are plain non-secret strings. Re-verify when ADR §7 is closed.
+ * Env-substitution semantics (ADR §7 closed 2026-05-18):
+ *   Codex's `[mcp_servers.<n>.env]` table is documented as static literal
+ *   key-value pairs — no `${VAR}` or `${IKENGA_SECRET:...}` substitution.
+ *   However Codex DOES support a separate `env_vars = [...]` field on the
+ *   server table that forwards values from Codex's parent process env to
+ *   the MCP child. We use this as the secret indirection path:
+ *     - `${IKENGA_SECRET:foo}` placeholder → emit the key into `env_vars`
+ *       (the user must `export FOO_API_KEY=...` before invoking the
+ *       external `codex` CLI). Surfaces an informational warning.
+ *     - secret-shaped env key with a plaintext value → REFUSE the entry.
+ *       Plaintext secrets in a manifest are a pkg-author bug.
+ *     - everything else → emit into the literal `.env` subtable.
+ *   See: https://developers.openai.com/codex/mcp (`env_vars` schema).
  *
  * No external runtime deps — Node built-ins only.
  */
@@ -282,6 +287,8 @@ async function listMarkdownFiles(folder: string): Promise<string[]> {
 function emitMcpBlock(
 	pkgSlug: string,
 	server: McpServer,
+	envTable: Array<[string, string]>,
+	envVarsAllowlist: string[],
 ): { block: string; tableHeader: string } {
 	const tableName = `mcp_servers.ikenga.${pkgSlug}.${server.name}`;
 	const tableHeader = `[${tableName}]`;
@@ -289,23 +296,65 @@ function emitMcpBlock(
 	lines.push(`command = ${JSON.stringify(server.command)}`);
 	const args = server.args ?? [];
 	lines.push(`args = [${args.map((a) => JSON.stringify(a)).join(', ')}]`);
+	if (envVarsAllowlist.length > 0) {
+		const sorted = [...envVarsAllowlist].sort();
+		lines.push(
+			`env_vars = [${sorted.map((k) => JSON.stringify(k)).join(', ')}]`,
+		);
+	}
 	if (server.lifecycle === 'long-lived') {
 		// Disable in external configs by default (ADR §4) so Codex doesn't
 		// race the kernel's own SidecarSupervisor on the same stdio child.
 		lines.push('disabled = true');
 	}
-	const env = server.env ?? {};
-	const envKeys = Object.keys(env).sort();
-	if (envKeys.length > 0) {
+	if (envTable.length > 0) {
+		const sorted = [...envTable].sort((a, b) => a[0].localeCompare(b[0]));
 		lines.push('');
 		lines.push(`[${tableName}.env]`);
-		for (const k of envKeys) {
-			const v = env[k];
-			if (typeof v !== 'string') continue;
+		for (const [k, v] of sorted) {
 			lines.push(`${k} = ${JSON.stringify(v)}`);
 		}
 	}
 	return { block: lines.join('\n') + '\n', tableHeader };
+}
+
+/**
+ * Partition a manifest env block per ADR §7 (closed 2026-05-18): Codex's
+ * `[mcp_servers.<n>.env]` table is literal — no substitution — so
+ * `${IKENGA_SECRET:...}` placeholders translate to entries in a separate
+ * `env_vars` allowlist (Codex forwards those values from its own parent
+ * process env). Plaintext secret-shaped keys are still refused — pkg-
+ * author bug.
+ */
+function partitionEnv(spec: McpServer): {
+	envTable: Array<[string, string]>;
+	envVarsAllowlist: string[];
+	refuseWarnings: string[];
+	infoWarnings: string[];
+} {
+	const env = spec.env ?? {};
+	const envTable: Array<[string, string]> = [];
+	const envVarsAllowlist: string[] = [];
+	const refuseWarnings: string[] = [];
+	const infoWarnings: string[] = [];
+	for (const [key, value] of Object.entries(env)) {
+		if (typeof value !== 'string') continue;
+		if (value.startsWith(IKENGA_SECRET_PREFIX)) {
+			envVarsAllowlist.push(key);
+			infoWarnings.push(
+				`Codex MCP env \`${key}\` translated to \`env_vars\` allowlist — ` +
+					`export ${key}=... in your shell before invoking the external \`codex\` CLI`,
+			);
+		} else if (SECRET_KEY_PATTERN.test(key)) {
+			refuseWarnings.push(
+				`secret-bearing env var \`${key}\` must use \${IKENGA_SECRET:<vault-key>} ` +
+					`indirection — plaintext refused`,
+			);
+		} else {
+			envTable.push([key, value]);
+		}
+	}
+	return { envTable, envVarsAllowlist, refuseWarnings, infoWarnings };
 }
 
 /**
@@ -354,40 +403,6 @@ function findBlockRange(
 	return { start, end };
 }
 
-function buildMcpWarnings(spec: McpServer): string[] {
-	const warnings: string[] = [];
-	const env = spec.env ?? {};
-	let sawPlaceholder = false;
-	let sawSecretKey = false;
-	for (const [key, value] of Object.entries(env)) {
-		if (typeof value !== 'string') continue;
-		if (value.startsWith(IKENGA_SECRET_PREFIX)) {
-			sawPlaceholder = true;
-			continue;
-		}
-		if (SECRET_KEY_PATTERN.test(key)) {
-			sawSecretKey = true;
-			warnings.push(
-				`secret-bearing env var \`${key}\` must use \${IKENGA_SECRET:<vault-key>} indirection`,
-			);
-		}
-	}
-	if (sawPlaceholder) {
-		// Codex strict-refusal posture (ADR §7 open question): even the
-		// indirection form is refused for v1, because we haven't verified
-		// Codex's env-substitution behavior. Re-evaluate when the open
-		// question closes.
-		warnings.push(
-			`Codex MCP env-var indirection semantics unverified — refusing to write \`\${IKENGA_SECRET:...}\` placeholders to ~/.codex/config.toml. See ADR-012 §7.`,
-		);
-	}
-	// Avoid duplicate noise — drop the secret-key warning if the placeholder
-	// warning already covered the refusal cause.
-	if (sawPlaceholder && sawSecretKey) {
-		// keep both — they describe distinct authoring problems
-	}
-	return warnings;
-}
 
 export class CodexEngineAdapter implements EngineAdapter {
 	readonly id = 'codex';
@@ -533,12 +548,18 @@ export class CodexEngineAdapter implements EngineAdapter {
 		if (!spec.name) throw new Error('mcp server has empty name');
 		if (!spec.command) throw new Error(`mcp server \`${spec.name}\` has empty command`);
 
-		const warnings = buildMcpWarnings(spec);
-		if (warnings.length > 0) {
-			return { wrote: [], skipped: [], warnings };
+		const { envTable, envVarsAllowlist, refuseWarnings, infoWarnings } =
+			partitionEnv(spec);
+		if (refuseWarnings.length > 0) {
+			return { wrote: [], skipped: [], warnings: refuseWarnings };
 		}
 
-		const { block, tableHeader } = emitMcpBlock(pkgSlug, spec);
+		const { block, tableHeader } = emitMcpBlock(
+			pkgSlug,
+			spec,
+			envTable,
+			envVarsAllowlist,
+		);
 		const dest = configPath();
 		const existing = (await readFileOrNull(dest)) ?? '';
 
@@ -549,20 +570,20 @@ export class CodexEngineAdapter implements EngineAdapter {
 			const currentBlock = existing.slice(range.start, range.end);
 			// Normalize trailing whitespace for byte-stable comparison.
 			if (currentBlock.replace(/\s+$/, '') === block.replace(/\s+$/, '')) {
-				return { wrote: [], skipped: [entryRef], warnings: [] };
+				return { wrote: [], skipped: [entryRef], warnings: infoWarnings };
 			}
 			const before = existing.slice(0, range.start);
 			const after = existing.slice(range.end);
 			const merged = `${before}${block}${after.startsWith('\n') ? after : after.length > 0 ? `\n${after}` : ''}`;
 			await atomicWrite(dest, merged);
-			return { wrote: [entryRef], skipped: [], warnings: [] };
+			return { wrote: [entryRef], skipped: [], warnings: infoWarnings };
 		}
 
 		// Append. Ensure separation from any existing content.
 		const sep = existing.length === 0 || existing.endsWith('\n\n') ? '' : existing.endsWith('\n') ? '\n' : '\n\n';
 		const merged = `${existing}${sep}${block}`;
 		await atomicWrite(dest, merged);
-		return { wrote: [entryRef], skipped: [], warnings: [] };
+		return { wrote: [entryRef], skipped: [], warnings: infoWarnings };
 	}
 
 	async unregisterMcpServer(
@@ -672,12 +693,19 @@ export class CodexEngineAdapter implements EngineAdapter {
 		// MCP.
 		const existingToml = (await readFileOrNull(configPath())) ?? '';
 		for (const spec of snap.mcp) {
-			const entryWarnings = buildMcpWarnings(spec);
-			if (entryWarnings.length > 0) {
-				warnings.push(...entryWarnings);
+			const { envTable, envVarsAllowlist, refuseWarnings, infoWarnings } =
+				partitionEnv(spec);
+			if (refuseWarnings.length > 0) {
+				warnings.push(...refuseWarnings);
 				continue;
 			}
-			const { block, tableHeader } = emitMcpBlock(pkgSlug, spec);
+			warnings.push(...infoWarnings);
+			const { block, tableHeader } = emitMcpBlock(
+				pkgSlug,
+				spec,
+				envTable,
+				envVarsAllowlist,
+			);
 			const ref = `${configPath()}#${tableHeader.slice(1, -1)}`;
 			const range = findBlockRange(existingToml, tableHeader);
 			if (range !== null) {

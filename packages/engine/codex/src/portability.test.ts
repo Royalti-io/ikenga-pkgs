@@ -290,7 +290,7 @@ test('registerMcpServer writes a [mcp_servers.ikenga.<slug>.<name>] table to ~/.
 	}
 });
 
-test('registerMcpServer refuses ${IKENGA_SECRET:...} placeholders per Codex strict-refusal posture', async () => {
+test('registerMcpServer translates ${IKENGA_SECRET:...} placeholders to env_vars allowlist (ADR §7 closure)', async () => {
 	const s = await makeScratch();
 	try {
 		const adapter = new CodexEngineAdapter();
@@ -301,19 +301,44 @@ test('registerMcpServer refuses ${IKENGA_SECRET:...} placeholders per Codex stri
 		});
 
 		const report = await adapter.registerMcpServer(spec, PKG_ID, PKG_SLUG);
-		assert.deepEqual(report.wrote, []);
+		assert.equal(report.wrote.length, 1, 'entry should be written');
 		assert.deepEqual(report.skipped, []);
 		assert.ok(
-			report.warnings.some((w) => /env-var indirection semantics unverified/.test(w)),
-			`expected unverified-semantics warning, got ${JSON.stringify(report.warnings)}`,
+			report.warnings.some(
+				(w) => /env_vars/.test(w) && /EXA_API_KEY/.test(w),
+			),
+			`expected env_vars informational warning, got ${JSON.stringify(report.warnings)}`,
 		);
 
-		// File was never created.
+		// On disk: env_vars allowlist line present, no [.env] subtable.
 		const configPath = path.join(s.home, '.codex', 'config.toml');
-		await assert.rejects(
-			() => readFile(configPath, 'utf8'),
-			(err: NodeJS.ErrnoException) => err.code === 'ENOENT',
-		);
+		const written = await readFile(configPath, 'utf8');
+		assert.match(written, /env_vars = \["EXA_API_KEY"\]/);
+		assert.doesNotMatch(written, /\[mcp_servers\.ikenga\.[^\]]+\.exa\.env\]/);
+	} finally {
+		await s.cleanup();
+	}
+});
+
+test('registerMcpServer with mixed env emits both env_vars and .env subtable', async () => {
+	const s = await makeScratch();
+	try {
+		const adapter = new CodexEngineAdapter();
+		const spec = mcpSpec({
+			name: 'svc',
+			command: 'node',
+			env: {
+				FOO_API_KEY: '${IKENGA_SECRET:foo}',
+				PLAIN_DEBUG: '1',
+			},
+		});
+		const report = await adapter.registerMcpServer(spec, PKG_ID, PKG_SLUG);
+		assert.equal(report.wrote.length, 1);
+		const written = await readFile(path.join(s.home, '.codex', 'config.toml'), 'utf8');
+		assert.match(written, /env_vars = \["FOO_API_KEY"\]/);
+		assert.match(written, /PLAIN_DEBUG = "1"/);
+		// Secret placeholder must NOT appear in the literal subtable.
+		assert.doesNotMatch(written, /FOO_API_KEY = /);
 	} finally {
 		await s.cleanup();
 	}
