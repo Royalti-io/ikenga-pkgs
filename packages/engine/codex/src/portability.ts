@@ -15,10 +15,10 @@
  *   - Commands:  no first-class Codex primitive. Per ADR §5: if frontmatter
  *                has `allow_implicit_invocation: true` we materialize as a
  *                skill; otherwise we warn + skip per file.
- *   - Subagents: `~/.codex/agents/<slug>/<basename>.toml`. We namespace
- *                under the slug so uninstall is `rm -rf` of the dir. ADR §1
- *                shows a flat `~/.codex/agents/<name>.toml` layout — we
- *                deliberately diverge to keep uninstall clean.
+ *   - Subagents: `~/.codex/agents/<slug>/<basename>.toml` (per-file
+ *                MD→TOML). Namespaced under the pkg slug per ADR §1
+ *                (table amended 2026-05-18 to match §7's
+ *                "pkg-namespaced subdirs" rule).
  *   - AGENTS.md: skipped for v1 (out of scope).
  *
  * Env-substitution semantics (ADR §7 closed 2026-05-18):
