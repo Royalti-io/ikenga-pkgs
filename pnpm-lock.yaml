@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@ikenga/contract@^0.6.0': link:../contract
+
 importers:
 
   .:
@@ -20,9 +23,15 @@ importers:
   packages/engine/claude-code:
     dependencies:
       '@ikenga/contract':
-        specifier: ^0.6.0
-        version: 0.6.0
+        specifier: link:../../../../contract
+        version: link:../../../../contract
     devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.19
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
       typescript:
         specifier: ^5.4.0
         version: 5.9.3
@@ -325,9 +334,6 @@ packages:
 
   '@ikenga/contract@0.5.1':
     resolution: {integrity: sha512-tYMecxveWJoyeNG3iQPlk6AKYKYVfJ8OYPoOztxWKYgwuP95tJROiVwAontcoI4+6ZLgN/y7d7SJaao9uBwEQg==}
-
-  '@ikenga/contract@0.6.0':
-    resolution: {integrity: sha512-QBaSo3hPjavil2fvsgPecvrw8sf3N8bt+j6CxLQP54c3bIrZOpJTjn0ZwW3OqHK9ZpcMe76HyXQ5nAGwtxt9pA==}
 
   '@inquirer/external-editor@1.0.3':
     resolution: {integrity: sha512-RWbSrDiYmO4LbejWY7ttpxczuwQyZLBUyygsA9Nsv95hpzUWwnNTVQmAq3xuh7vNwCp07UTmE5i11XAEExx4RA==}
@@ -1289,11 +1295,6 @@ snapshots:
       zod-to-json-schema: 3.25.2(zod@3.25.76)
 
   '@ikenga/contract@0.5.1':
-    dependencies:
-      zod: 3.25.76
-      zod-to-json-schema: 3.25.2(zod@3.25.76)
-
-  '@ikenga/contract@0.6.0':
     dependencies:
       zod: 3.25.76
       zod-to-json-schema: 3.25.2(zod@3.25.76)

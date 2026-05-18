@@ -132,3 +132,7 @@ export default createEngine;
 // retained for one release; new consumers target `AcpEngine`.
 export { createAcpEngine } from './acp-engine.js';
 export type { AcpHost, AcpUnlisten, HostBridge } from '@ikenga/contract/engine';
+
+// Portability adapter (ADR-012 Track C) — exported alongside the runtime
+// engine. The kernel's `engine_assets` registry resolves both at load time.
+export { ClaudeCodeEngineAdapter } from './portability.js';
