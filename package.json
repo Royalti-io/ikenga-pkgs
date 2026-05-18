@@ -16,7 +16,7 @@
 	"packageManager": "pnpm@9.12.3",
 	"pnpm": {
 		"overrides": {
-			"@ikenga/contract@^0.6.0": "link:../contract"
+			"@ikenga/contract@^0.7.0": "link:../contract"
 		}
 	}
 }
