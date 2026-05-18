@@ -20,8 +20,8 @@ importers:
   packages/engine/claude-code:
     dependencies:
       '@ikenga/contract':
-        specifier: ^0.4.0
-        version: 0.4.0
+        specifier: ^0.5.0
+        version: 0.5.1
     devDependencies:
       typescript:
         specifier: ^5.4.0
