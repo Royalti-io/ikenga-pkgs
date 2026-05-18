@@ -1,6 +1,6 @@
 {
   "name": "@ikenga/mcp-iyke",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "mcpName": "io.github.Royalti-io/ikenga-pkg-mcp-iyke",
   "description": "Model Context Protocol (MCP) server that exposes the Ikenga desktop app's iyke control bridge — drive a running Tauri AI workspace from any MCP client (Claude, Cursor, etc.).",
   "license": "Apache-2.0",
