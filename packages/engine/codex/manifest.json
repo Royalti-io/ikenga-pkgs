@@ -1,0 +1,63 @@
+{
+  "id": "com.ikenga.engine-codex",
+  "name": "Codex CLI Engine",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "engine",
+
+  "author": {
+    "name": "Royalti",
+    "key": "royalti"
+  },
+
+  "ui": {},
+
+  "permissions": {
+    "shell.execute": ["codex"],
+    "fs.read": ["$pkg_data/sessions/**"],
+    "fs.write": ["$pkg_data/sessions/**"]
+  },
+
+  "settings": {
+    "schema": [
+      {
+        "key": "codex_binary",
+        "type": "string",
+        "label": "Path to `codex` CLI",
+        "default": "codex",
+        "description": "Resolved against $PATH if not absolute."
+      },
+      {
+        "key": "model",
+        "type": "string",
+        "label": "Default model",
+        "default": "o4-mini"
+      }
+    ]
+  },
+
+  "engine": {
+    "agentId": "codex",
+    "display": "Codex CLI",
+    "capabilities": {
+      "streaming": true,
+      "toolUse": true,
+      "thinking": true,
+      "artifacts": true,
+      "fileAttachments": true,
+      "imageInput": true,
+      "slashCommands": true,
+      "modelSwitching": true,
+      "promptCaching": true,
+      "agenticTools": true,
+      "mcp": true,
+      "sessionResume": true
+    },
+    "onboarding": {
+      "requiredVaultKeys": ["OPENAI_API_KEY"],
+      "requiredEnvVars": [],
+      "authCommand": "codex login",
+      "docsUrl": "https://developers.openai.com/codex/"
+    }
+  }
+}
