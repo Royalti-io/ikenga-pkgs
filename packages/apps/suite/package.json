@@ -1,0 +1,23 @@
+{
+  "name": "@ikenga/pkg-suite",
+  "version": "0.1.0",
+  "description": "Business suite — Tasks, Sales, Outbound, Email over Supabase. Multi-file iframe pkg, no build step.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/apps/suite"
+  },
+  "publishConfig": { "access": "public" },
+  "type": "module",
+  "files": [
+    "manifest.json",
+    "index.html",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "echo 'no build — multi-file ESM pkg'",
+    "typecheck": "echo 'no ts — multi-file ESM pkg'"
+  }
+}
