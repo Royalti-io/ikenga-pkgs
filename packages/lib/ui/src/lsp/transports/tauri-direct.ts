@@ -90,13 +90,17 @@ export function createTauriDirectTransport(
       return () => handlers.delete(handler);
     },
     dispose() {
+      // Detach FE listeners only. We deliberately do NOT call
+      // `pkg_sidecar_rpc_shutdown` here — that would drop the kernel's
+      // ChildStdin Arc, EOF the sidecar's stdin, and kill the long-lived
+      // bridge. React StrictMode double-mount + dispose cleanup would
+      // tear down the bridge mid-initialize on every page mount. If a
+      // consumer needs to explicitly shut down the sidecar (e.g. uninstall
+      // flow), it should invoke `pkg_sidecar_rpc_shutdown` directly.
       disposed = true;
       handlers.clear();
       unsubMessage.then((fn) => fn()).catch(() => {});
       unsubExit.then((fn) => fn()).catch(() => {});
-      invoke('pkg_sidecar_rpc_shutdown', { pkgId, name: sidecarName }).catch(
-        (err) => onError?.(err),
-      );
     },
   };
 }

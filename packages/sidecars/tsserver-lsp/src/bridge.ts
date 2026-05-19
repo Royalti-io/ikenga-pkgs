@@ -132,7 +132,6 @@ stdin.on('line', (line) => {
   const trimmed = line.trim();
   if (!trimmed) return;
   try {
-    // Validate JSON; if a caller passes garbage, log and drop.
     JSON.parse(trimmed);
   } catch (err) {
     log('drop non-json line', err);
