@@ -1,12 +1,12 @@
 {
-  "name": "@ikenga/pkg-engine-codex",
-  "version": "0.2.0",
-  "description": "Codex CLI engine adapter for Ikenga — install-time portability for the OpenAI `codex` CLI (ADR-012 Track C).",
+  "name": "@ikenga/pkg-engine-cursor-agent",
+  "version": "0.1.0",
+  "description": "Cursor agent CLI engine adapter for Ikenga (scaffold-only; runtime stubbed per ADR-013 Phase 4).",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
-    "directory": "packages/engine/codex"
+    "directory": "packages/engine/cursor-agent"
   },
   "publishConfig": {
     "access": "public"
@@ -29,7 +29,6 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test --import=tsx 'src/**/*.test.ts'",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -37,7 +36,6 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
-    "tsx": "^4.21.0",
     "typescript": "^5.4.0"
   }
 }

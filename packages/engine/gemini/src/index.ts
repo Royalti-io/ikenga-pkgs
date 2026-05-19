@@ -1,18 +1,20 @@
 /**
- * Gemini CLI Engine adapter — install-time only (ADR-012 Phase 6, Track G).
+ * Gemini CLI Engine adapter.
  *
- * v1 ships ONLY the portability `EngineAdapter` (skills/commands/agents/MCP
- * fan-out into `~/.gemini/`). Runtime wiring — spawning the `gemini` CLI,
- * streaming ACP-shaped events, session resume — is intentionally out of
- * scope for this track and is left as `throw` stubs. A future Track will
- * lift the runtime body when the `gemini` CLI's streaming surface is
- * pinned down.
+ * Implements the `Engine` contract from `@ikenga/contract` by wrapping the
+ * Gemini CLI in ACP-passthrough mode (see ADR-013):
  *
- * The kernel resolves both the runtime engine and the portability adapter
- * at load time (ADR §2); for now the kernel's Rust-side `GeminiAdapter`
- * (`shell/src-tauri/src/pkg/engine_adapters/gemini.rs`) is what actually
- * fires on install/uninstall — this TS adapter is here for in-pkg tests
- * and for any future scenario where engine pkgs ship adapters dynamically.
+ *   gemini --acp
+ *
+ * The shell's Rust adapter (`shell/src-tauri/src/engines/gemini_acp/`)
+ * spawns the CLI and proxies JSON-RPC; from the pkg surface, Gemini and
+ * Claude Code are wire-compatible. Process management is delegated to the
+ * host shell via the Tauri commands the shell exposes for engine pkgs;
+ * this pkg has no `@tauri-apps/*` dep.
+ *
+ * Most consumers should target the ACP-shaped surface exported below
+ * (`createAcpEngine`). The legacy `createEngine` + `Engine` interface is
+ * retained for one release for symmetry with the claude-code pkg.
  */
 
 import type {
@@ -25,16 +27,16 @@ import type {
 } from '@ikenga/contract/engine';
 
 const ID = 'com.ikenga.engine-gemini';
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 
-const RUNTIME_NOT_IMPLEMENTED =
-	'GeminiEngine runtime not implemented — install-time adapter only for v1';
-
-class GeminiSessionStub implements Session {
-	constructor(readonly id: string) {}
+class GeminiSession implements Session {
+	constructor(
+		readonly id: string,
+		private readonly host: HostBridge,
+	) {}
 
 	async cancel(): Promise<void> {
-		throw new Error(RUNTIME_NOT_IMPLEMENTED);
+		await this.host.kill(this.id);
 	}
 }
 
@@ -42,8 +44,9 @@ export class GeminiEngine implements Engine {
 	readonly id = ID;
 	readonly version = VERSION;
 
-	// Mirrors manifest.json `engine` block. Kept in sync manually — see the
-	// matching note in the claude-code engine.
+	// Mirrors manifest.json `engine` block. Static — kept in sync manually
+	// because the legacy `createEngine` factory is slated for removal; not
+	// worth wiring JSON imports just to delete it next release.
 	readonly metadata = {
 		agentId: 'gemini',
 		display: 'Gemini CLI',
@@ -69,38 +72,54 @@ export class GeminiEngine implements Engine {
 		},
 	};
 
-	// eslint-disable-next-line @typescript-eslint/no-unused-vars
-	constructor(private readonly _host: HostBridge) {}
+	constructor(private readonly host: HostBridge) {}
 
-	async startSession(_opts: SessionOpts): Promise<Session> {
-		throw new Error(RUNTIME_NOT_IMPLEMENTED);
-		// Unreachable, but keeps the return type honest for type-checkers
-		// that don't model `never`-returning functions.
-		// eslint-disable-next-line no-unreachable
-		return new GeminiSessionStub('unreachable');
+	async startSession(opts: SessionOpts): Promise<Session> {
+		const sessionId = crypto.randomUUID();
+		await this.host.spawn({
+			sessionId,
+			cwd: opts.cwd,
+			systemPrompt: opts.systemPrompt,
+		});
+		return new GeminiSession(sessionId, this.host);
 	}
 
-	stream(_session: Session, _input: string): AsyncIterable<EngineEvent> {
-		throw new Error(RUNTIME_NOT_IMPLEMENTED);
+	stream(session: Session, input: string): AsyncIterable<EngineEvent> {
+		const host = this.host;
+		const id = session.id;
+		return {
+			[Symbol.asyncIterator]() {
+				return (async function* () {
+					await host.send(id, input);
+					for await (const ev of host.listen(id)) {
+						yield ev;
+						if (ev.type === 'done') return;
+					}
+				})();
+			},
+		};
 	}
 
-	registerMcpServer(_spec: McpServerSpec): Promise<void> {
-		throw new Error(RUNTIME_NOT_IMPLEMENTED);
+	registerMcpServer(spec: McpServerSpec): Promise<void> {
+		return this.host.registerMcp(spec);
 	}
 
-	unregisterMcpServer(_id: string): Promise<void> {
-		throw new Error(RUNTIME_NOT_IMPLEMENTED);
+	unregisterMcpServer(id: string): Promise<void> {
+		return this.host.unregisterMcp(id);
 	}
 
 	async healthCheck(): Promise<{ ok: boolean; reason?: string }> {
-		return { ok: false, reason: RUNTIME_NOT_IMPLEMENTED };
+		// The shell's `gemini` binary resolution + CLI availability check is
+		// the source of truth. The engine kernel is expected to wire
+		// `host.healthCheck` through this — for now, the absence of a probe
+		// is treated as healthy.
+		return { ok: true };
 	}
 }
 
 /**
- * Default factory used by the engine kernel when loading this pkg. The
- * kernel passes a `HostBridge` constructed from its Tauri command set;
- * for v1 the bridge goes unused because every runtime method throws.
+ * Default factory used by the engine kernel when loading this pkg.
+ * The kernel passes a `HostBridge` constructed from its Tauri command set.
  */
 export function createEngine(host: HostBridge): Engine {
 	return new GeminiEngine(host);
@@ -108,18 +127,11 @@ export function createEngine(host: HostBridge): Engine {
 
 export default createEngine;
 
-/**
- * ACP-shaped engine surface. v1 stub — re-export shape mirrored on the
- * claude-code pkg but every method throws so the kernel can fail fast if
- * it ever tries to drive Gemini runtime.
- */
-export function createAcpEngine(_host: unknown): never {
-	throw new Error(RUNTIME_NOT_IMPLEMENTED);
-}
+// ACP-shaped engine surface. The legacy `createEngine` + `Engine` above is
+// retained for one release; new consumers target `AcpEngine`.
+export { createAcpEngine } from './acp-engine.js';
+export type { AcpHost, AcpUnlisten, HostBridge } from '@ikenga/contract/engine';
 
-export type { HostBridge } from '@ikenga/contract/engine';
-
-// Portability adapter (ADR-012 Track G) — the only piece this pkg actually
-// implements for v1. The kernel's `engine_assets` registry resolves this
-// at load time.
+// Portability adapter (ADR-012 Track G) — exported alongside the runtime
+// engine. The kernel's `engine_assets` registry resolves both at load time.
 export { GeminiEngineAdapter } from './portability.js';

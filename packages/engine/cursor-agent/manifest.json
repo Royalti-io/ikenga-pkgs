@@ -1,0 +1,55 @@
+{
+  "id": "com.ikenga.engine-cursor-agent",
+  "name": "Cursor Agent",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "engine",
+
+  "author": {
+    "name": "Royalti",
+    "key": "royalti"
+  },
+
+  "ui": {},
+
+  "permissions": {
+    "shell.execute": ["cursor-agent"]
+  },
+
+  "settings": {
+    "schema": [
+      {
+        "key": "cursor_agent_binary",
+        "type": "string",
+        "label": "Path to `cursor-agent` CLI",
+        "default": "cursor-agent",
+        "description": "Resolved against $PATH if not absolute. Runtime is stubbed per ADR-013 Phase 4 — setting this has no effect today."
+      }
+    ]
+  },
+
+  "engine": {
+    "agentId": "cursor-agent",
+    "display": "Cursor Agent",
+    "capabilities": {
+      "streaming": false,
+      "toolUse": false,
+      "thinking": false,
+      "artifacts": false,
+      "fileAttachments": false,
+      "imageInput": false,
+      "slashCommands": false,
+      "modelSwitching": false,
+      "promptCaching": false,
+      "agenticTools": false,
+      "mcp": false,
+      "sessionResume": false
+    },
+    "onboarding": {
+      "requiredVaultKeys": [],
+      "requiredEnvVars": [],
+      "authCommand": null,
+      "docsUrl": "https://cursor.com/docs"
+    }
+  }
+}
