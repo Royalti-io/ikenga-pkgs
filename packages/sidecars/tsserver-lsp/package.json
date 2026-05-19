@@ -1,0 +1,27 @@
+{
+  "name": "@ikenga/tsserver-lsp-sidecar",
+  "version": "0.1.0",
+  "description": "Long-lived sidecar that wraps typescript-language-server for the Ikenga shell. Bridges between the shell's line-delimited JSON-RPC sidecar envelope and LSP's Content-Length framed messages, so any pkg with a code editor can wire TypeScript IntelliSense via @ikenga/ui-lib.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/sidecars/tsserver-lsp"
+  },
+  "scripts": {
+    "dev": "bun run src/bridge.ts",
+    "build": "bash build.sh",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "typescript": "^5.4.0",
+    "typescript-language-server": "^4.3.3"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.5.0"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "id": "com.ikenga.tsserver-lsp",
+  "name": "TypeScript Language Server",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "embedded",
+
+  "author": {
+    "name": "Royalti",
+    "key": "royalti"
+  },
+
+  "sidecars": [
+    {
+      "name": "pa-com-ikenga-tsserver-lsp-bridge",
+      "bin": "dist/pa-com-ikenga-tsserver-lsp-bridge",
+      "stdio": "json",
+      "auto_restart": true
+    }
+  ]
+}
