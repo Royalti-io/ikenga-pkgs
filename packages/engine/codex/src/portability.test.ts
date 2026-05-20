@@ -261,7 +261,7 @@ test('installCommands without allow_implicit_invocation warns and skips per file
 	}
 });
 
-test('registerMcpServer writes a [mcp_servers.ikenga.<slug>.<name>] table to ~/.codex/config.toml', async () => {
+test('registerMcpServer writes a [mcp_servers."ikenga.<slug>.<name>"] (quoted) table to ~/.codex/config.toml', async () => {
 	const s = await makeScratch();
 	try {
 		const adapter = new CodexEngineAdapter();
@@ -273,11 +273,14 @@ test('registerMcpServer writes a [mcp_servers.ikenga.<slug>.<name>] table to ~/.
 		const first = await adapter.registerMcpServer(spec, PKG_ID, PKG_SLUG);
 
 		const configPath = path.join(s.home, '.codex', 'config.toml');
-		const ref = `${configPath}#mcp_servers.ikenga.${PKG_SLUG}.royalti-cms`;
+		// Ref + on-disk header use the quoted form — without quoting, TOML
+		// parses the dotted id as nested tables and codex errors at config
+		// load ("invalid transport").
+		const ref = `${configPath}#mcp_servers."ikenga.${PKG_SLUG}.royalti-cms"`;
 		assert.deepEqual(first.wrote, [ref]);
 
 		const toml = await readFile(configPath, 'utf8');
-		assert.match(toml, /\[mcp_servers\.ikenga\.com-ikenga-test\.royalti-cms\]/);
+		assert.match(toml, /\[mcp_servers\."ikenga\.com-ikenga-test\.royalti-cms"\]/);
 		assert.match(toml, /command = "bun"/);
 		assert.match(toml, /args = \["run", "src\/index\.ts"\]/);
 
@@ -314,7 +317,9 @@ test('registerMcpServer translates ${IKENGA_SECRET:...} placeholders to env_vars
 		const configPath = path.join(s.home, '.codex', 'config.toml');
 		const written = await readFile(configPath, 'utf8');
 		assert.match(written, /env_vars = \["EXA_API_KEY"\]/);
-		assert.doesNotMatch(written, /\[mcp_servers\.ikenga\.[^\]]+\.exa\.env\]/);
+		// Match both legacy unquoted + new quoted forms so this assertion
+		// survives the quoting change.
+		assert.doesNotMatch(written, /\[mcp_servers\.[^\]]*exa[^\]]*\.env\]/);
 	} finally {
 		await s.cleanup();
 	}
@@ -393,11 +398,11 @@ test('unregisterMcpServer removes only this pkg’s table and leaves user conten
 			PKG_SLUG,
 		);
 
-		// Sanity: both tables present.
+		// Sanity: both tables present (ours uses the new quoted form).
 		let toml = await readFile(configPath, 'utf8');
 		assert.match(toml, /\[user\]/);
 		assert.match(toml, /\[mcp_servers\.user-thing\]/);
-		assert.match(toml, new RegExp(`\\[mcp_servers\\.ikenga\\.${PKG_SLUG}\\.mine\\]`));
+		assert.match(toml, new RegExp(`\\[mcp_servers\\."ikenga\\.${PKG_SLUG}\\.mine"\\]`));
 
 		await adapter.unregisterMcpServer('mine', PKG_ID, PKG_SLUG);
 
@@ -406,7 +411,7 @@ test('unregisterMcpServer removes only this pkg’s table and leaves user conten
 		assert.match(toml, /\[mcp_servers\.user-thing\]/);
 		assert.doesNotMatch(
 			toml,
-			new RegExp(`\\[mcp_servers\\.ikenga\\.${PKG_SLUG}\\.mine\\]`),
+			new RegExp(`\\[mcp_servers\\."ikenga\\.${PKG_SLUG}\\.mine"\\]`),
 		);
 	} finally {
 		await s.cleanup();
@@ -429,6 +434,81 @@ test('uninstallAgents removes the per-slug agents dir', async () => {
 
 		await adapter.uninstallAgents(PKG_ID, PKG_SLUG);
 		await assert.rejects(() => lstat(perPkg));
+	} finally {
+		await s.cleanup();
+	}
+});
+
+test('registerMcpServer migrates a pre-existing legacy unquoted entry to the quoted form (regression: codex TOML parse)', async () => {
+	const s = await makeScratch();
+	try {
+		const adapter = new CodexEngineAdapter();
+		const configPath = path.join(s.home, '.codex', 'config.toml');
+
+		// Seed: an entry written by an older buggy build — unquoted dotted
+		// key, which codex's TOML parser interprets as 4 nested tables and
+		// rejects at load time ("invalid transport"). A fresh register must
+		// strip it and replace with the new quoted form.
+		await mkdir(path.dirname(configPath), { recursive: true });
+		await writeFile(
+			configPath,
+			[
+				`[mcp_servers.ikenga.${PKG_SLUG}.thing]`,
+				'command = "bun"',
+				'args = ["run", "old.ts"]',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		const report = await adapter.registerMcpServer(
+			mcpSpec({ name: 'thing', command: 'bun', args: ['run', 'new.ts'] }),
+			PKG_ID,
+			PKG_SLUG,
+		);
+		assert.equal(report.wrote.length, 1);
+
+		const toml = await readFile(configPath, 'utf8');
+		// Legacy entry gone, new quoted entry present.
+		assert.doesNotMatch(
+			toml,
+			new RegExp(`\\[mcp_servers\\.ikenga\\.${PKG_SLUG}\\.thing\\]`),
+		);
+		assert.match(toml, new RegExp(`\\[mcp_servers\\."ikenga\\.${PKG_SLUG}\\.thing"\\]`));
+		// And the args of the NEW spec, not the seed.
+		assert.match(toml, /args = \["run", "new\.ts"\]/);
+		assert.doesNotMatch(toml, /args = \["run", "old\.ts"\]/);
+	} finally {
+		await s.cleanup();
+	}
+});
+
+test('unregisterMcpServer cleans up a legacy unquoted entry (forward-compat cleanup)', async () => {
+	const s = await makeScratch();
+	try {
+		const adapter = new CodexEngineAdapter();
+		const configPath = path.join(s.home, '.codex', 'config.toml');
+
+		// Older builds left these on disk; the new unregister must catch
+		// them so users get a clean config back on uninstall.
+		await mkdir(path.dirname(configPath), { recursive: true });
+		await writeFile(
+			configPath,
+			[
+				`[mcp_servers.ikenga.${PKG_SLUG}.thing]`,
+				'command = "bun"',
+				'',
+			].join('\n'),
+			'utf8',
+		);
+
+		await adapter.unregisterMcpServer('thing', PKG_ID, PKG_SLUG);
+
+		const toml = await readFile(configPath, 'utf8');
+		assert.doesNotMatch(
+			toml,
+			new RegExp(`mcp_servers\\.ikenga\\.${PKG_SLUG}\\.thing`),
+		);
 	} finally {
 		await s.cleanup();
 	}

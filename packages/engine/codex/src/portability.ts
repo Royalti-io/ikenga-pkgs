@@ -290,7 +290,16 @@ function emitMcpBlock(
 	envTable: Array<[string, string]>,
 	envVarsAllowlist: string[],
 ): { block: string; tableHeader: string } {
-	const tableName = `mcp_servers.ikenga.${pkgSlug}.${server.name}`;
+	// Quote the namespaced id as a single TOML literal key. Without quoting
+	// `[mcp_servers.ikenga.<slug>.<name>]` is parsed as four nested tables —
+	// codex then reports "invalid transport" at the dotted header because
+	// none of the nested intermediates carry the `command`/`args` fields it
+	// expects. Quoting makes TOML treat the whole thing as one server name.
+	// JSON.stringify produces TOML-compatible double-quoted strings (TOML
+	// basic-string escape rules match JSON for the chars we emit).
+	const id = `ikenga.${pkgSlug}.${server.name}`;
+	const quotedId = JSON.stringify(id);
+	const tableName = `mcp_servers.${quotedId}`;
 	const tableHeader = `[${tableName}]`;
 	const lines: string[] = [tableHeader];
 	lines.push(`command = ${JSON.stringify(server.command)}`);
@@ -561,7 +570,22 @@ export class CodexEngineAdapter implements EngineAdapter {
 			envVarsAllowlist,
 		);
 		const dest = configPath();
-		const existing = (await readFileOrNull(dest)) ?? '';
+		let existing = (await readFileOrNull(dest)) ?? '';
+
+		// Strip any legacy unquoted entry for this same id before writing the
+		// new quoted form — older builds wrote `[mcp_servers.ikenga.<slug>.<name>]`
+		// which TOML mis-parsed as nested tables (codex then errored at config
+		// load). Touching the entry on re-register migrates it forward without
+		// needing a separate one-shot cleanup.
+		const legacyHeader = `[mcp_servers.ikenga.${pkgSlug}.${spec.name}]`;
+		if (legacyHeader !== tableHeader) {
+			const legacyRange = findBlockRange(existing, legacyHeader);
+			if (legacyRange !== null) {
+				const before = existing.slice(0, legacyRange.start);
+				const after = existing.slice(legacyRange.end);
+				existing = (before + after).replace(/\n{3,}/g, '\n\n');
+			}
+		}
 
 		const range = findBlockRange(existing, tableHeader);
 		const entryRef = `${dest}#${tableHeader.slice(1, -1)}`;
@@ -594,13 +618,27 @@ export class CodexEngineAdapter implements EngineAdapter {
 		const dest = configPath();
 		const existing = await readFileOrNull(dest);
 		if (existing === null) return;
-		const tableHeader = `[mcp_servers.ikenga.${pkgSlug}.${serverName}]`;
-		const range = findBlockRange(existing, tableHeader);
-		if (range === null) return;
-		const before = existing.slice(0, range.start);
-		const after = existing.slice(range.end);
-		const merged = (before + after).replace(/\n{3,}/g, '\n\n');
-		await atomicWrite(dest, merged);
+		// Try the canonical quoted form first; fall back to the legacy
+		// unquoted form so we still clean up entries written by older
+		// builds (which TOML mis-parsed as nested tables — that's the bug
+		// this commit fixes; the cleanup keeps existing installs migrating
+		// forward on uninstall/update).
+		const id = `ikenga.${pkgSlug}.${serverName}`;
+		const tried = [
+			`[mcp_servers.${JSON.stringify(id)}]`,
+			`[mcp_servers.ikenga.${pkgSlug}.${serverName}]`,
+		];
+		let current = existing;
+		let anyHit = false;
+		for (const tableHeader of tried) {
+			const range = findBlockRange(current, tableHeader);
+			if (range === null) continue;
+			anyHit = true;
+			const before = current.slice(0, range.start);
+			const after = current.slice(range.end);
+			current = (before + after).replace(/\n{3,}/g, '\n\n');
+		}
+		if (anyHit) await atomicWrite(dest, current);
 	}
 
 	async plan(
