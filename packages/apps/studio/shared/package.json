@@ -1,0 +1,41 @@
+{
+  "name": "@ikenga/studio-schema",
+  "version": "0.1.0",
+  "description": "com.ikenga.studio — Zod v1 schema (source of truth). Project / Script / Cell / RenderRecord shapes plus rung helpers, shared across the studio sidecar, MCP server, and iframe UI.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/apps/studio/shared"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "main": "./dist/schema.js",
+  "types": "./dist/schema.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "schema.ts",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

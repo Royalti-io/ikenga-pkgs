@@ -1,2 +1,6 @@
 packages:
   - "packages/*/*"
+  # com.ikenga.studio is a multi-pkg app: its shared Zod schema lives one level
+  # deeper than the standard `packages/<group>/<pkg>` layout, so it needs an
+  # explicit glob entry to be linked into the workspace.
+  - "packages/apps/studio/*"
