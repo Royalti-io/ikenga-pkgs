@@ -1,18 +1,51 @@
 /*
  * com.ikenga.studio · iframe-local styles
  *
- * The canonical design tokens come from @ikenga/tokens. Importing the CSS
- * here is the WP-07 fix for G21 (Round 8): the iframe sandbox must own its
- * own --bg-*, --fg-*, --border-*, --font-* namespace. Without this import the
- * canvas (and every other view) renders with browser-default colours because
- * the shell's chrome stylesheet doesn't leak through the iframe boundary.
+ * Order matters: Tailwind first, then the canonical token surface, then the
+ * @theme map that lets Tailwind utilities resolve to those tokens. Same
+ * pattern as shell/src/styles.css.
  *
- * Iframe-local helpers (link-pulse @keyframes, focus-ring overrides, layout
- * helpers) belong in this file too — they're not generic enough to live in
- * @ikenga/tokens, but they're not view-scoped either.
+ * Importing @ikenga/tokens here is the WP-07 fix for G21 (Round 8): the
+ * iframe sandbox must own its own --bg-*, --fg-*, --border-*, --font-*
+ * namespace, because the shell's chrome stylesheet doesn't leak through the
+ * iframe boundary. The AppBridge host-context handshake (bridge.ts) layers
+ * runtime theme/mode overrides on top via applyHostStyleVariables.
  */
 
+@import 'tailwindcss';
 @import '@ikenga/tokens/tokens.css';
+
+/* ---------------------------------------------------------------------------
+ * Tailwind 4 @theme map — Ikenga semantic tokens → utility names.
+ *
+ * Lets view code write `bg-base`, `text-fg-muted`, `border-soft` etc. and
+ * have them resolve to the active theme/mode token (set per
+ * [data-mode] in tokens.css, overridden at runtime by the host handshake).
+ * Arbitrary values (`bg-[var(--bg-raised)]`) also work for one-offs; these
+ * named utilities cover the common surfaces so the views read cleanly.
+ * ------------------------------------------------------------------------- */
+
+@theme {
+  --color-base:    var(--bg-base);
+  --color-sunken:  var(--bg-sunken);
+  --color-surface: var(--bg-surface);
+  --color-raised:  var(--bg-raised);
+
+  --color-fg:       var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-faint: var(--fg-faint);
+
+  --color-border:      var(--border);
+  --color-border-soft: var(--border-soft);
+
+  --color-achievement: var(--achievement);
+  --color-live:        var(--live);
+  --color-agent:       var(--agent);
+  --color-danger:      var(--danger);
+
+  --font-display: var(--font-display);
+  --font-mono:    var(--font-mono);
+}
 
 html, body, #root {
   height: 100%;
@@ -26,6 +59,11 @@ html, body, #root {
   position: relative;
   isolation: isolate;
 }
+
+/* ---------------------------------------------------------------------------
+ * Scaffold placeholder (commit 1–4 boot screen). Replaced when <App /> takes
+ * over in commit 5; the mode chip stays useful for the launcher fallback.
+ * ------------------------------------------------------------------------- */
 
 .studio-scaffold {
   display: grid;

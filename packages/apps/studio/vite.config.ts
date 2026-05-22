@@ -1,12 +1,14 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 
 // Single-bundle iframe app. `dist/index.html` is what the manifest's ui.routes
-// points at — Vite resolves the @ikenga/tokens CSS import via the workspace
-// symlink in src/studio/styles/index.css. Nothing externalized at this stage;
-// later commits (bridge, store, MCP mock, views) all land inside the bundle.
+// points at. Tailwind 4 runs through its Vite plugin (same setup as the shell);
+// @ikenga/tokens is mapped into the @theme registry in src/studio/styles/
+// index.css so utilities like `bg-base` / `text-fg` resolve to the active
+// theme's CSS vars. Nothing externalized — views, store, MCP mock all bundle.
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   build: {
     target: 'es2022',
     sourcemap: true,
