@@ -32,37 +32,11 @@ import {
   useSharedStore,
 } from '../shared-state';
 import type { Rung } from '../mcp-types';
-
-// ─── Mock cells (mirrors designs/canvas.html MOCK_CELLS) ────────────────
-//
-// Replaced in commit 12 by the live storyboard slice off the MCP mock; until
-// then this gives the canvas a recognisable shape so reviewers see the
-// archetype-explainer storyboard the design promises.
-
-type CellColor = 'amber' | 'rose' | 'emerald' | 'sky' | 'violet' | 'neutral';
-
-interface MockCell {
-  uid: string;
-  beat: string;
-  rung: Rung;
-  approved: boolean;
-  color: CellColor;
-  /** present iff a render is in flight; bottom-edge progress bar + corner % */
-  progress?: number;
-}
-
-const MOCK_CELLS: MockCell[] = [
-  { uid: 'c01', beat: 'hook',     rung: '2_hifi',       approved: true,  color: 'amber'   },
-  { uid: 'c02', beat: 'problem',  rung: '2_hifi',       approved: true,  color: 'rose'    },
-  { uid: 'c03', beat: 'agitate',  rung: '2_hifi',       approved: false, color: 'rose'    },
-  { uid: 'c04', beat: 'solution', rung: '2_hifi',       approved: false, color: 'emerald', progress: 0.62 },
-  { uid: 'c05', beat: 'proof',    rung: '2_hifi',       approved: false, color: 'sky',     progress: 0.18 },
-  { uid: 'c06', beat: 'cta',      rung: '2_hifi',       approved: false, color: 'violet'  },
-  { uid: 'c07', beat: 'hook',     rung: '1_lofi',       approved: true,  color: 'neutral' },
-  { uid: 'c08', beat: 'problem',  rung: '1_lofi',       approved: true,  color: 'neutral' },
-  { uid: 'c09', beat: 'agitate',  rung: '1_lofi',       approved: true,  color: 'neutral' },
-  { uid: 'c10', beat: 'hook',     rung: '0_beat_sheet', approved: true,  color: 'neutral' },
-];
+import {
+  MOCK_CELLS,
+  type CellColor,
+  type MockCell,
+} from '../__mocks__/cells';
 
 const COLUMN_X = (col: number) => col * 200;
 const ROW_Y: Record<Rung, number> = {

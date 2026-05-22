@@ -8,12 +8,12 @@
 
 import { VIEWS, type ViewId } from '../routes';
 
-// Each view commit removes its own entry as it lands; canvas (commit 6) is
-// already gone. Partial<…> so the type narrows naturally as the registry in
-// App.tsx fills out — `LANDS_IN[view]` returns undefined for landed views,
-// which is fine because PanePlaceholder is no longer rendered for them.
+// Each view commit removes its own entry as it lands; canvas (commit 6) and
+// cell (commit 7) are gone. Partial<…> so the type narrows naturally as the
+// registry in App.tsx fills out — `LANDS_IN[view]` returns undefined for
+// landed views, which is fine because PanePlaceholder is no longer rendered
+// for them.
 const LANDS_IN: Partial<Record<ViewId, string>> = {
-  cell:        'commit 7',
   composition: 'commit 8',
   script:      'commit 9',
   archetype:   'commit 10',
