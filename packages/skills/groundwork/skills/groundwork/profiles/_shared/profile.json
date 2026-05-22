@@ -1,0 +1,20 @@
+{
+  "name": "_shared",
+  "spine_version": "1",
+  "labels": {
+    "work_unit": "work item",
+    "isolation_axis": "owner + scope",
+    "freeze_gate_noun": "decision lock"
+  },
+  "optional_blocks": [],
+  "produces_designs": false,
+  "spine": [
+    "00-README.md",
+    "01-plan.md",
+    "02-research-external.md",
+    "03-research-internal.md",
+    "04-discussion.md",
+    "05-tracking.md"
+  ],
+  "spine_overrides": {}
+}

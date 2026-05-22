@@ -1,6 +1,6 @@
 {
   "name": "@ikenga/ui-lib",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shared React UI primitives for Ikenga pkgs. Ships a CodeMirror 6 backed <CodeEditor> themable from @ikenga/tokens, with optional LSP wiring.",
   "license": "Apache-2.0",
   "repository": {
@@ -48,7 +48,7 @@
     "clean": "rm -rf dist"
   },
   "peerDependencies": {
-    "@ikenga/tokens": "workspace:*",
+    "@ikenga/tokens": "^0.2.0",
     "react": ">=19.0.0",
     "react-dom": ">=19.0.0"
   },

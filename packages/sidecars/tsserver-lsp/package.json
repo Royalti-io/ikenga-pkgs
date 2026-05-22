@@ -1,6 +1,6 @@
 {
   "name": "@ikenga/tsserver-lsp-sidecar",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Long-lived sidecar that wraps typescript-language-server for the Ikenga shell. Bridges between the shell's line-delimited JSON-RPC sidecar envelope and LSP's Content-Length framed messages, so any pkg with a code editor can wire TypeScript IntelliSense via @ikenga/ui-lib.",
   "license": "Apache-2.0",
   "private": true,
