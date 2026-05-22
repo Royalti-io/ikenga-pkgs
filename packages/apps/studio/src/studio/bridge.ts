@@ -30,7 +30,7 @@ import {
   applyHostStyleVariables,
   applyHostFonts,
   type McpUiHostContext,
-} from '@modelcontextprotocol/ext-apps/app';
+} from '@modelcontextprotocol/ext-apps';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 // ─── Host-context contract ────────────────────────────────────────────────
