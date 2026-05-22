@@ -60,14 +60,25 @@ function listFiles(dir, base = dir) {
   return out;
 }
 
-/** Strip a previously-injected banner from content (idempotency). */
+// A banner sitting right after a YAML frontmatter block (the SKILL.md case).
+const FM_BANNER_RE = /^(---\n[\s\S]*?\n---\n)<!--\s*GENERATED — edit \.claude\/skills\/groundwork\/ instead\. Synced by sync-from-dev\.mjs\.\s*-->\n?/;
+
+/** Strip a previously-injected banner from content (idempotency).
+ *  The banner may sit at the very top OR — for files with leading YAML
+ *  frontmatter — immediately after the closing `---`. Strip both forms. */
 function stripBanner(content) {
-  return content.replace(HTML_BANNER_RE, '');
+  return content.replace(HTML_BANNER_RE, '').replace(FM_BANNER_RE, '$1');
 }
 
-/** Add the GENERATED banner to .md/.html content (after stripping any old one). */
+/** Add the GENERATED banner to .md/.html content (after stripping any old one).
+ *  Files that lead with a YAML frontmatter block (`---` on line 1, e.g.
+ *  SKILL.md) MUST keep that frontmatter on line 1 — the `skills add` CLI only
+ *  detects `name`/`description` when the frontmatter is the very first thing in
+ *  the file. So for those, the banner is inserted AFTER the closing `---`. */
 function withBanner(content) {
   const body = stripBanner(content);
+  const fm = body.match(/^(---\n[\s\S]*?\n---\n)/);
+  if (fm) return `${fm[1]}${HTML_BANNER}\n${body.slice(fm[1].length)}`;
   return `${HTML_BANNER}\n${body}`;
 }
 
