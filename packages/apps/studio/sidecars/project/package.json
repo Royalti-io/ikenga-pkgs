@@ -1,0 +1,12 @@
+{
+  "name": "@ikenga/studio-project-sidecar",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Long-lived JSON-RPC-over-stdio sidecar for com.ikenga.studio — owns project FS, render queue, and pkg events. Local config holder; NOT a workspace participant (the parent @ikenga/studio package owns its deps).",
+  "type": "module",
+  "scripts": {
+    "build": "bash build.sh",
+    "dev": "bash build.sh --watch",
+    "typecheck": "tsc -p ../../tsconfig.json --noEmit"
+  }
+}

@@ -5,12 +5,19 @@
   "type": "module",
   "description": "com.ikenga.studio app pkg — sidecars/project, mcp, src/studio. (WP-05a scaffolding minimum.)",
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build:sidecar": "bash sidecars/project/build.sh",
+    "dev:sidecar": "bash sidecars/project/build.sh --watch"
   },
   "dependencies": {
-    "@ikenga/studio-schema": "workspace:*"
+    "@ikenga/studio-schema": "workspace:*",
+    "better-sqlite3": "^11.3.0",
+    "chokidar": "^3.6.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^20.11.0",
     "typescript": "^5.4.0"
   }
 }
