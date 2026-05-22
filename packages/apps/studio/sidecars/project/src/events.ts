@@ -32,6 +32,13 @@ export interface RenderProgressPayload {
   /** 0..1 */
   progress: number;
   frame?: number;
+  /**
+   * Discriminates per-cell renders from full-composition exports (WP-07c).
+   * Defaults to 'render' when absent so existing consumers are unaffected.
+   * Export progress carries `kind: 'export'`; `cellId` is the exportId and
+   * `engine` is the literal 'export' for those frames.
+   */
+  kind?: 'render' | 'export';
 }
 
 export interface RenderDonePayload {
@@ -41,6 +48,8 @@ export interface RenderDonePayload {
   status: 'done' | 'failed' | 'cancelled';
   outputPath?: string;
   error?: string;
+  /** See RenderProgressPayload.kind. */
+  kind?: 'render' | 'export';
 }
 
 export type EventPayload =

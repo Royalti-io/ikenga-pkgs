@@ -97,4 +97,8 @@ export type RpcMethod =
   | 'render.status'
   | 'render.cancel'
   | 'render.list'
-  | 'render.list_engines';
+  | 'render.list_engines'
+  // export.* (WP-07c / G-38)
+  | 'export.compose'
+  | 'export.status'
+  | 'export.list';

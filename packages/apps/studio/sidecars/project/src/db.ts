@@ -39,6 +39,27 @@ export interface RenderQueueRow {
   error: string | null;
 }
 
+/**
+ * Export queue row (WP-07c, G-38). A *parallel* table to `render_queue`
+ * rather than a `kind` column on the existing one — exports key on a
+ * project (not a cell), carry a different options shape (music preset,
+ * explicit cellIds/rung selection), and never resolve an engine. Keeping
+ * them separate avoids overloading the render queue's cell-centric columns
+ * and its single-cell drain semantics. The export runner drains this table
+ * with the same serial model the render runner uses for `render_queue`.
+ */
+export interface ExportQueueRow {
+  export_id: string;
+  project_id: string;
+  options: string; // JSON — { rung?, cellIds?, music_preset?, outputPath? }
+  status: 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+  created_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  output_path: string | null;
+  error: string | null;
+}
+
 const MIGRATIONS: string[] = [
   `CREATE TABLE IF NOT EXISTS render_queue (
      record_id   TEXT PRIMARY KEY,
@@ -62,6 +83,19 @@ const MIGRATIONS: string[] = [
      name         TEXT NOT NULL,
      last_opened  INTEGER NOT NULL
    );`,
+  `CREATE TABLE IF NOT EXISTS export_queue (
+     export_id   TEXT PRIMARY KEY,
+     project_id  TEXT NOT NULL,
+     options     TEXT NOT NULL,
+     status      TEXT NOT NULL CHECK (status IN ('queued','running','done','failed','cancelled')),
+     created_at  INTEGER NOT NULL,
+     started_at  INTEGER,
+     finished_at INTEGER,
+     output_path TEXT,
+     error       TEXT
+   );
+   CREATE INDEX IF NOT EXISTS export_queue_status_idx  ON export_queue(status);
+   CREATE INDEX IF NOT EXISTS export_queue_project_idx ON export_queue(project_id);`,
 ];
 
 export function resolvePkgDataDir(): string {

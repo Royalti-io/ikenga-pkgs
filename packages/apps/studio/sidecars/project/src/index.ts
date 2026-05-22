@@ -61,6 +61,7 @@ import * as anchors from './anchors.js';
 import * as assets from './assets.js';
 import * as archetypes from './archetypes.js';
 import { RenderRunner, type ProjectLookup } from './render-runner.js';
+import { ExportRunner, type ExportLookup, type MusicPreset } from './exporter.js';
 import { getAdapter, listEngines, resolveEngineWithRequest, EngineResolutionError } from './registry.js';
 import { stdoutEventWriter } from './events.js';
 import type { RenderContext } from './renderers/types.js';
@@ -250,6 +251,19 @@ function buildHandlers(db: Db): RpcHandlers {
   // Recover any 'running' rows orphaned by a prior crash, then start draining.
   runner.recover();
 
+  // Export runner (WP-07c / G-38) — composes per-cell MP4s into one
+  // deliverable. Mirrors RenderRunner's serial-drain + recover semantics.
+  const exportLookup: ExportLookup = {
+    projectRoot: (projectId) => open.get(projectId)?.path,
+    project: (projectId) => open.get(projectId)?.project,
+    resolution: (projectId) => {
+      const p = open.get(projectId)?.project;
+      return p ? defaultResolution(p) : undefined;
+    },
+  };
+  const exporter = new ExportRunner({ db, lookup: exportLookup, writer: stdoutEventWriter });
+  exporter.recover();
+
   // Helper: resolve an open project's root path or return a structured error.
   const rootOf = (projectId: unknown): { root: string } | { err: GenericResult } => {
     if (typeof projectId !== 'string') {
@@ -309,11 +323,23 @@ function buildHandlers(db: Db): RpcHandlers {
   const extended = async (method: RpcMethod, rawParams: unknown): Promise<GenericResult> => {
     const params = (rawParams ?? {}) as Record<string, unknown>;
 
-    // Methods that need an open project root resolve it once up-front.
-    const needsRoot = !method.startsWith('render.list_engines');
+    // Methods that DON'T need an open project root resolved up-front: the
+    // engine-list, render-record lookups, and export-record lookups all key
+    // on an id rather than an open-project path. `export.compose` resolves
+    // (and validates the selection against) the open project inside the
+    // runner, so it's exempt here too.
+    const NO_ROOT = new Set<RpcMethod>([
+      'render.list_engines',
+      'render.status',
+      'render.cancel',
+      'render.list',
+      'export.compose',
+      'export.status',
+      'export.list',
+    ]);
 
     let root = '';
-    if (needsRoot && method !== 'render.status' && method !== 'render.cancel' && method !== 'render.list') {
+    if (!NO_ROOT.has(method)) {
       const r = rootOf(params.projectId);
       if ('err' in r) return r.err;
       root = r.root;
@@ -421,6 +447,20 @@ function buildHandlers(db: Db): RpcHandlers {
         });
       case 'render.list_engines':
         return { ok: true, engines: listEngines() };
+
+      // ── export.* (WP-07c / G-38) ──
+      case 'export.compose':
+        return exporter.compose(params.projectId as string, {
+          rung: params.rung as number | undefined,
+          cellIds: params.cellIds as string[] | undefined,
+          music_preset: params.music_preset as MusicPreset | undefined,
+          outputPath: params.outputPath as string | undefined,
+          engine: params.engine as string | undefined,
+        });
+      case 'export.status':
+        return exporter.status(params.exportId as string);
+      case 'export.list':
+        return exporter.list(params.projectId as string | undefined);
 
       default:
         return { ok: false, error: 'method-not-implemented', message: method };

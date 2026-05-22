@@ -11,7 +11,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-import type { RenderQueueRow } from './db.js';
+import type { ExportQueueRow, RenderQueueRow } from './db.js';
 
 // ─────────────────────────────────────────────────────────────────────────
 // LRU cell cache
@@ -256,5 +256,72 @@ export function markDone(
     fields.outputPath ?? null,
     fields.error ?? null,
     recordId,
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Export queue ops (SQLite-backed — parallel to the render queue; WP-07c)
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface EnqueueExportParams {
+  exportId: string;
+  projectId: string;
+  options: unknown;
+}
+
+export function enqueueExport(db: Db, params: EnqueueExportParams): void {
+  db.prepare(
+    `INSERT INTO export_queue
+       (export_id, project_id, options, status, created_at)
+       VALUES (?, ?, ?, 'queued', ?)`,
+  ).run(
+    params.exportId,
+    params.projectId,
+    JSON.stringify(params.options ?? {}),
+    Date.now(),
+  );
+}
+
+export function listExportQueue(db: Db, projectId?: string): ExportQueueRow[] {
+  if (projectId) {
+    return db
+      .prepare(
+        `SELECT * FROM export_queue WHERE project_id = ? ORDER BY created_at DESC`,
+      )
+      .all(projectId) as ExportQueueRow[];
+  }
+  return db
+    .prepare(`SELECT * FROM export_queue ORDER BY created_at DESC`)
+    .all() as ExportQueueRow[];
+}
+
+export function getExport(db: Db, exportId: string): ExportQueueRow | undefined {
+  return db
+    .prepare(`SELECT * FROM export_queue WHERE export_id = ?`)
+    .get(exportId) as ExportQueueRow | undefined;
+}
+
+export function markExportStarted(db: Db, exportId: string): void {
+  db.prepare(
+    `UPDATE export_queue SET status = 'running', started_at = ? WHERE export_id = ?`,
+  ).run(Date.now(), exportId);
+}
+
+export function markExportDone(
+  db: Db,
+  exportId: string,
+  outcome: 'done' | 'failed' | 'cancelled',
+  fields: { outputPath?: string; error?: string } = {},
+): void {
+  db.prepare(
+    `UPDATE export_queue
+        SET status = ?, finished_at = ?, output_path = ?, error = ?
+      WHERE export_id = ?`,
+  ).run(
+    outcome,
+    Date.now(),
+    fields.outputPath ?? null,
+    fields.error ?? null,
+    exportId,
   );
 }
