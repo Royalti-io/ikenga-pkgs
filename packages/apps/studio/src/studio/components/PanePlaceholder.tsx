@@ -8,8 +8,11 @@
 
 import { VIEWS, type ViewId } from '../routes';
 
-const LANDS_IN: Record<ViewId, string> = {
-  canvas:      'commit 6',
+// Each view commit removes its own entry as it lands; canvas (commit 6) is
+// already gone. Partial<…> so the type narrows naturally as the registry in
+// App.tsx fills out — `LANDS_IN[view]` returns undefined for landed views,
+// which is fine because PanePlaceholder is no longer rendered for them.
+const LANDS_IN: Partial<Record<ViewId, string>> = {
   cell:        'commit 7',
   composition: 'commit 8',
   script:      'commit 9',
@@ -18,12 +21,15 @@ const LANDS_IN: Record<ViewId, string> = {
 
 export function PanePlaceholder({ view }: { view: ViewId }) {
   const meta = VIEWS[view];
+  const landsIn = LANDS_IN[view];
   return (
     <div className="flex h-full flex-col items-center justify-center gap-1.5 bg-base p-6 text-center">
       <span className="font-display text-sm text-fg-muted">{meta.label}</span>
-      <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">
-        view lands in WP-07 {LANDS_IN[view]}
-      </span>
+      {landsIn && (
+        <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">
+          view lands in WP-07 {landsIn}
+        </span>
+      )}
     </div>
   );
 }

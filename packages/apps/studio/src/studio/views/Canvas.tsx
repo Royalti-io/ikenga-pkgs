@@ -1,0 +1,314 @@
+// com.ikenga.studio · Canvas view
+//
+// Beat × rung storyboard. Mounts the local stub of @ikenga/contract/canvas
+// (swapped to the real import in WP-07 commit 16, post-G-CANVAS) with a fixed
+// set of mock cells so the view is visually credible before the MCP wiring
+// in commit 12 lands. Reads `cellUid` from the shared store for selection
+// and writes back on every selection change, which is what makes
+// click-to-focus cross-linking light up across panes once the other views
+// register their components.
+//
+// Visual contract: designs/canvas.html (Round 8 / patched Round 9). The
+// header chrome (folder path + archetype chip + Reset view + Edit layout)
+// is hand-rolled here; the rung gutter (hi-fi / lo-fi / beat sheet) and
+// the cells are rendered as canvas items so they pan with the surface.
+//
+// Anchor bar, render-progress overlays, agent activity feed, and the right-
+// side details panel are not in scope for this commit — they land alongside
+// the cross-link work (commit 12) and the empty/edge-state pass (commit 13).
+
+import { useMemo, useRef, useState } from 'react';
+
+import {
+  Canvas,
+  asItemId,
+  type CanvasHandle,
+  type ItemId,
+  type Placement,
+  type Viewport,
+} from '../__stubs__/canvas';
+import {
+  selectCellUid,
+  useSharedStore,
+} from '../shared-state';
+import type { Rung } from '../mcp-types';
+
+// ─── Mock cells (mirrors designs/canvas.html MOCK_CELLS) ────────────────
+//
+// Replaced in commit 12 by the live storyboard slice off the MCP mock; until
+// then this gives the canvas a recognisable shape so reviewers see the
+// archetype-explainer storyboard the design promises.
+
+type CellColor = 'amber' | 'rose' | 'emerald' | 'sky' | 'violet' | 'neutral';
+
+interface MockCell {
+  uid: string;
+  beat: string;
+  rung: Rung;
+  approved: boolean;
+  color: CellColor;
+  /** present iff a render is in flight; bottom-edge progress bar + corner % */
+  progress?: number;
+}
+
+const MOCK_CELLS: MockCell[] = [
+  { uid: 'c01', beat: 'hook',     rung: '2_hifi',       approved: true,  color: 'amber'   },
+  { uid: 'c02', beat: 'problem',  rung: '2_hifi',       approved: true,  color: 'rose'    },
+  { uid: 'c03', beat: 'agitate',  rung: '2_hifi',       approved: false, color: 'rose'    },
+  { uid: 'c04', beat: 'solution', rung: '2_hifi',       approved: false, color: 'emerald', progress: 0.62 },
+  { uid: 'c05', beat: 'proof',    rung: '2_hifi',       approved: false, color: 'sky',     progress: 0.18 },
+  { uid: 'c06', beat: 'cta',      rung: '2_hifi',       approved: false, color: 'violet'  },
+  { uid: 'c07', beat: 'hook',     rung: '1_lofi',       approved: true,  color: 'neutral' },
+  { uid: 'c08', beat: 'problem',  rung: '1_lofi',       approved: true,  color: 'neutral' },
+  { uid: 'c09', beat: 'agitate',  rung: '1_lofi',       approved: true,  color: 'neutral' },
+  { uid: 'c10', beat: 'hook',     rung: '0_beat_sheet', approved: true,  color: 'neutral' },
+];
+
+const COLUMN_X = (col: number) => col * 200;
+const ROW_Y: Record<Rung, number> = {
+  '2_hifi':       0,
+  '1_lofi':       180,
+  '0_beat_sheet': 360,
+};
+const CELL_W = 176; // ~w-44 in the design
+const CELL_H = 132; // 96 thumb + ~36 footer
+
+// Bias each beat to its own column so the storyboard reads left→right per
+// rung. Done here rather than in the cells themselves so the column-walk
+// stays a property of the canvas placement, not the entity.
+const COLUMN_BY_BEAT: Record<string, number> = {
+  hook: 0, problem: 1, agitate: 2, solution: 3, proof: 4, cta: 5,
+};
+
+// ─── Rung labels — also canvas items so they pan with the cells ─────────
+
+interface RungLabel {
+  kind: 'rung-label';
+  id: string;
+  text: string;
+  rung: Rung;
+}
+
+const RUNG_LABELS: RungLabel[] = [
+  { kind: 'rung-label', id: 'gutter-2_hifi',       text: 'hi-fi',      rung: '2_hifi'       },
+  { kind: 'rung-label', id: 'gutter-1_lofi',       text: 'lo-fi',      rung: '1_lofi'       },
+  { kind: 'rung-label', id: 'gutter-0_beat_sheet', text: 'beat sheet', rung: '0_beat_sheet' },
+];
+
+// ─── Item discriminator for the Canvas generic ──────────────────────────
+
+type Item =
+  | (MockCell & { kind: 'cell' })
+  | RungLabel;
+
+const isCell = (item: Item): item is MockCell & { kind: 'cell' } => item.kind === 'cell';
+
+// ─── Per-color thumb tint (matches the design) ──────────────────────────
+
+const THUMB_TINT: Record<CellColor, string> = {
+  amber:   'bg-[color-mix(in_oklab,var(--achievement)_18%,var(--bg-raised))]',
+  rose:    'bg-[color-mix(in_oklab,var(--danger)_18%,var(--bg-raised))]',
+  emerald: 'bg-[color-mix(in_oklab,var(--success,#3dab7f)_18%,var(--bg-raised))]',
+  sky:     'bg-[color-mix(in_oklab,var(--info,#5bb3e0)_18%,var(--bg-raised))]',
+  violet:  'bg-[color-mix(in_oklab,var(--agent)_18%,var(--bg-raised))]',
+  neutral: 'bg-raised',
+};
+
+function rungGlyph(rung: Rung): string {
+  if (rung === '1_lofi') return '○ ○ ○';
+  if (rung === '0_beat_sheet') return '≡ beat sheet';
+  return 'cell.html';
+}
+
+// ─── View ───────────────────────────────────────────────────────────────
+
+export function CanvasView() {
+  const selectedCellUid = useSharedStore(selectCellUid);
+  const setCellUid = useSharedStore((s) => s.setCellUid);
+
+  const [viewport, setViewport] = useState<Viewport>({ x: 80, y: 30, scale: 0.9 });
+  const [editMode, setEditMode] = useState(false);
+
+  // Items + layout are derived from MOCK_CELLS for now; the layout map is
+  // local state so dragging in edit mode mutates it (and commit 12's MCP
+  // wiring can swap it for a controlled-from-store layout later).
+
+  const items = useMemo<Item[]>(() => {
+    const cells: Item[] = MOCK_CELLS.map((c) => ({ ...c, kind: 'cell' as const }));
+    return [...RUNG_LABELS, ...cells];
+  }, []);
+
+  const [layout, setLayout] = useState<Record<ItemId, Placement>>(() => {
+    const map: Record<ItemId, Placement> = {};
+    for (const c of MOCK_CELLS) {
+      map[asItemId(c.uid)] = {
+        x: COLUMN_X(COLUMN_BY_BEAT[c.beat] ?? 0),
+        y: ROW_Y[c.rung],
+        w: CELL_W,
+        h: CELL_H,
+      };
+    }
+    for (const l of RUNG_LABELS) {
+      map[asItemId(l.id)] = {
+        x: -70,
+        y: ROW_Y[l.rung] + 60,
+        w: 60,
+        h: 14,
+      };
+    }
+    return map;
+  });
+
+  const canvasRef = useRef<CanvasHandle | null>(null);
+  const selectedId: ItemId | null =
+    selectedCellUid ? asItemId(selectedCellUid) : null;
+
+  return (
+    <div className="relative flex h-full flex-col bg-base text-fg">
+      {/* Top chrome — header bar (design: folder path + archetype chip + actions).
+          Marked .ikenga-canvas-bar so the canvas stub excludes it from gestures. */}
+      <div className="ikenga-canvas-bar flex items-center justify-between gap-2 border-b border-soft bg-sunken px-3 py-1.5 text-[11px]">
+        <div className="flex items-center gap-2 text-fg-muted">
+          <span className="font-mono">~/Projects/retention-explainer/</span>
+          <span className="rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-[var(--achievement)] ring-1 ring-inset ring-[color-mix(in_oklab,var(--achievement)_40%,transparent)]">
+            studio
+          </span>
+          <span className="text-fg-faint">·</span>
+          <span className="text-fg-faint">archetype</span>
+          <span className="font-mono text-fg">explainer</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={() => {
+              setViewport({ x: 80, y: 30, scale: 0.9 });
+              setCellUid(null);
+            }}
+            className="rounded px-2 py-1 text-fg-muted hover:bg-raised hover:text-fg"
+          >
+            Reset view
+          </button>
+          <button
+            type="button"
+            onClick={() => canvasRef.current?.autoFit(true)}
+            className="rounded px-2 py-1 text-fg-muted hover:bg-raised hover:text-fg"
+          >
+            Fit
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditMode((m) => !m)}
+            className={
+              'rounded px-2 py-1 ' +
+              (editMode
+                ? 'bg-[color-mix(in_oklab,var(--achievement)_20%,transparent)] text-[var(--achievement)] ring-1 ring-inset ring-[color-mix(in_oklab,var(--achievement)_40%,transparent)]'
+                : 'text-fg-muted hover:bg-raised hover:text-fg')
+            }
+          >
+            {editMode ? 'Editing layout' : 'Edit layout'}
+          </button>
+        </div>
+      </div>
+
+      {/* Canvas stage */}
+      <div className="relative min-h-0 flex-1">
+        <Canvas<Item>
+          ref={canvasRef}
+          items={items}
+          itemId={(item) => asItemId(isCell(item) ? item.uid : item.id)}
+          itemKind={(item) => (isCell(item) ? 'cell' : 'rung-label')}
+          layout={layout}
+          viewport={viewport}
+          editMode={editMode}
+          selectedId={selectedId}
+          gridSnap={24}
+          autoFitOnResize={false}
+          onViewportChange={setViewport}
+          onLayoutChange={setLayout}
+          onEditModeChange={setEditMode}
+          onSelectionChange={(id) => {
+            if (id === null) {
+              setCellUid(null);
+              return;
+            }
+            // Rung labels are non-selectable — clicking them is a no-op
+            // (the canvas stub still fires onSelectionChange; we filter).
+            const item = items.find((it) => (isCell(it) ? it.uid : it.id) === id);
+            if (!item || !isCell(item)) return;
+            setCellUid(item.uid);
+          }}
+          renderItem={(item, state) => {
+            if (!isCell(item)) {
+              return (
+                <div className="pointer-events-none font-mono text-[10px] uppercase tracking-wider text-fg-faint">
+                  {item.text}
+                </div>
+              );
+            }
+            const tint = THUMB_TINT[item.color];
+            const isRendering = item.progress != null && item.progress < 1;
+            return (
+              <button
+                type="button"
+                className={[
+                  'cell-card group rounded-md text-left transition-shadow',
+                  'border border-[var(--border)] bg-surface hover:shadow-lg',
+                  state.isSelected
+                    ? 'outline-2 outline outline-offset-2 outline-[var(--achievement)]'
+                    : '',
+                  state.isEditMode
+                    ? 'ring-1 ring-dashed ring-[color-mix(in_oklab,var(--achievement)_50%,transparent)]'
+                    : '',
+                ].join(' ')}
+                style={{ height: CELL_H }}
+              >
+                <div
+                  className={[
+                    'relative flex h-24 items-center justify-center rounded-t-md',
+                    'border-b border-[var(--border)] font-mono text-[10px] text-fg-muted',
+                    tint,
+                  ].join(' ')}
+                >
+                  {rungGlyph(item.rung)}
+                  {isRendering && (
+                    <>
+                      <div className="absolute right-1.5 top-1.5 flex items-center gap-1 font-mono text-[9px] text-[var(--info,#5bb3e0)]">
+                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--info,#5bb3e0)]" />
+                        {Math.round((item.progress ?? 0) * 100)}%
+                      </div>
+                      <div className="absolute inset-x-0 bottom-0 h-0.5 bg-[var(--bg-sunken)]">
+                        <div
+                          className="h-full bg-[var(--info,#5bb3e0)]"
+                          style={{ width: `${(item.progress ?? 0) * 100}%` }}
+                        />
+                      </div>
+                    </>
+                  )}
+                </div>
+                <div className="px-2 py-1.5">
+                  <div className="flex items-center justify-between gap-1">
+                    <span className="truncate text-[11px] font-medium text-fg">{item.beat}</span>
+                    {item.approved && (
+                      <span
+                        aria-label="approved"
+                        className="font-mono text-[10px] text-[var(--success,#3dab7f)]"
+                      >
+                        ✓
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-0.5 font-mono text-[10px] text-fg-faint">{item.uid}</div>
+                </div>
+              </button>
+            );
+          }}
+        />
+
+        {/* Viewport HUD (out of the transformed space; bottom-left mono ms-style readout). */}
+        <div className="pointer-events-none absolute bottom-2 left-2 font-mono text-[10px] text-fg-faint">
+          pan {Math.round(viewport.x)}, {Math.round(viewport.y)} · scale {viewport.scale.toFixed(2)}
+        </div>
+      </div>
+    </div>
+  );
+}

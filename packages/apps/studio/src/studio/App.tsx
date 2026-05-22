@@ -17,12 +17,13 @@ import type { PaneIndex, ViewComponentRegistry } from './routes';
 import { LayoutSwitcher } from './components/LayoutSwitcher';
 import { ViewSwitcher } from './components/ViewSwitcher';
 import { PanePlaceholder } from './components/PanePlaceholder';
+import { CanvasView } from './views/Canvas';
 
-// View component registry. Empty at commit 5 — every pane falls through to
-// PanePlaceholder. Each view commit adds its entry here, e.g.
-//   import { CanvasView } from './views/Canvas';
-//   canvas: CanvasView,
-const VIEW_COMPONENTS: ViewComponentRegistry = {};
+// View component registry. Each view commit (6–11) adds its entry here.
+// Until a view registers, App.tsx falls through to PanePlaceholder for it.
+const VIEW_COMPONENTS: ViewComponentRegistry = {
+  canvas: CanvasView,
+};
 
 function Pane({ index }: { index: PaneIndex }) {
   const view = useLayoutStore((s) => s.paneViews[index]);
