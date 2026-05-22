@@ -1,0 +1,31 @@
+{
+  "id": "hook.stat",
+  "kind": "hook",
+  "name": "Stat hook",
+  "description": "Open on a single arresting statistic to earn the next 3 seconds.",
+  "default_renderer": "hyperframes",
+  "template_path": "blocks/hook/stat/index.html",
+  "parameters": [
+    {
+      "name": "stat",
+      "type": "string",
+      "default": "90%",
+      "required": true,
+      "description": "The headline number/figure."
+    },
+    {
+      "name": "context",
+      "type": "string",
+      "default": "of viewers drop in 3s",
+      "required": false
+    }
+  ],
+  "tags": [
+    "hook",
+    "opener",
+    "data"
+  ],
+  "metadata": {},
+  "category": "narrative",
+  "default_duration_ms": 3000
+}

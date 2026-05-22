@@ -1,0 +1,34 @@
+{
+  "id": "narrative",
+  "name": "Narrative (Fountain)",
+  "description": "Story-driven piece. Fountain-aware: reads <project>/script.fountain natively.",
+  "builtin": true,
+  "chain": [
+    {
+      "block_id": "hook.cold-open",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.problem",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.agitate",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.solution",
+      "bindings": {}
+    },
+    {
+      "block_id": "cta.link",
+      "bindings": {}
+    }
+  ],
+  "default_total_duration_ms": 90000,
+  "metadata": {
+    "fountain_aware": true,
+    "script_file": "script.fountain",
+    "narration_pattern": "narration.save-the-cat-15"
+  }
+}

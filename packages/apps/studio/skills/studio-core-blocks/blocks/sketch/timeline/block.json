@@ -1,0 +1,24 @@
+{
+  "id": "sketch.timeline",
+  "kind": "sketch",
+  "name": "Timeline sketch",
+  "description": "Lo-fi horizontal timeline scene.",
+  "default_renderer": "auto",
+  "template_path": "blocks/sketch/timeline/template.excalidraw",
+  "parameters": [
+    {
+      "name": "title",
+      "type": "string",
+      "default": "Timeline sketch",
+      "required": false
+    }
+  ],
+  "tags": [
+    "sketch",
+    "lofi"
+  ],
+  "metadata": {
+    "renderer_hint": "excalidraw"
+  },
+  "category": "visual"
+}

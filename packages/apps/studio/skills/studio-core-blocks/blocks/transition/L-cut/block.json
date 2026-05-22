@@ -1,0 +1,34 @@
+{
+  "id": "transition.L-cut",
+  "kind": "transition",
+  "name": "L-cut",
+  "description": "Audio of current scene lingers over next picture.",
+  "default_renderer": "hyperframes",
+  "template_path": "blocks/transition/L-cut/index.html",
+  "parameters": [
+    {
+      "name": "duration_ms",
+      "type": "number",
+      "default": 400,
+      "required": false
+    },
+    {
+      "name": "easing",
+      "type": "enum",
+      "default": "ease-in-out",
+      "required": false,
+      "enum_values": [
+        "linear",
+        "ease-in",
+        "ease-out",
+        "ease-in-out"
+      ]
+    }
+  ],
+  "tags": [
+    "transition"
+  ],
+  "metadata": {},
+  "category": "timing",
+  "default_duration_ms": 400
+}

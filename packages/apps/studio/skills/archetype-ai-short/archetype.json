@@ -1,0 +1,33 @@
+{
+  "id": "ai_short",
+  "name": "AI short",
+  "description": "AI-generated vertical short: pattern-break hook → fast beats → cliffhanger close.",
+  "builtin": true,
+  "chain": [
+    {
+      "block_id": "hook.pattern-break",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.agitate",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.solution",
+      "bindings": {}
+    },
+    {
+      "block_id": "hook.cliffhanger",
+      "bindings": {}
+    },
+    {
+      "block_id": "cta.subscribe",
+      "bindings": {}
+    }
+  ],
+  "default_total_duration_ms": 20000,
+  "metadata": {
+    "aspect_ratio": "9:16",
+    "renderer_hint": "ai"
+  }
+}

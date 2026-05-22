@@ -1,0 +1,24 @@
+{
+  "id": "hook.cliffhanger",
+  "kind": "hook",
+  "name": "Cliffhanger hook",
+  "description": "Promise a payoff that only resolves later in the video.",
+  "default_renderer": "hyperframes",
+  "template_path": "blocks/hook/cliffhanger/index.html",
+  "parameters": [
+    {
+      "name": "teaser",
+      "type": "string",
+      "default": "Stick around — the last number will surprise you.",
+      "required": true
+    }
+  ],
+  "tags": [
+    "hook",
+    "opener",
+    "retention"
+  ],
+  "metadata": {},
+  "category": "narrative",
+  "default_duration_ms": 3000
+}

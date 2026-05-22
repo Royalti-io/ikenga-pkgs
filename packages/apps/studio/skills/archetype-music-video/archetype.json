@@ -1,0 +1,33 @@
+{
+  "id": "music_video",
+  "name": "Music video",
+  "description": "Audio-led cut: beats snap to a detected beat-grid (run studio-beat-detect first).",
+  "builtin": true,
+  "chain": [
+    {
+      "block_id": "hook.cold-open",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.demo",
+      "bindings": {}
+    },
+    {
+      "block_id": "transition.J-cut",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.proof",
+      "bindings": {}
+    },
+    {
+      "block_id": "cta.link",
+      "bindings": {}
+    }
+  ],
+  "default_total_duration_ms": 180000,
+  "metadata": {
+    "requires_audio_analysis": true,
+    "music_preset": "music.calm-narrative"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "id": "explainer",
+  "name": "Explainer",
+  "description": "Concept-first short: hook → problem → clarify → solution → CTA. Narration-led.",
+  "builtin": true,
+  "chain": [
+    {
+      "block_id": "hook.question",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.problem",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.clarify",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.solution",
+      "bindings": {}
+    },
+    {
+      "block_id": "cta.link",
+      "bindings": {}
+    }
+  ],
+  "default_total_duration_ms": 45000,
+  "metadata": {
+    "narration_pattern": "narration.AIDA",
+    "fountain_aware": false
+  }
+}

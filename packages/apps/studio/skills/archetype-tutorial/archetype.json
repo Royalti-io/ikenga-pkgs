@@ -1,0 +1,32 @@
+{
+  "id": "tutorial",
+  "name": "Tutorial",
+  "description": "Step-by-step how-to: question hook → clarify → demo → feature-list → CTA.",
+  "builtin": true,
+  "chain": [
+    {
+      "block_id": "hook.question",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.clarify",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.demo",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.feature-list",
+      "bindings": {}
+    },
+    {
+      "block_id": "cta.subscribe",
+      "bindings": {}
+    }
+  ],
+  "default_total_duration_ms": 120000,
+  "metadata": {
+    "narration_pattern": "narration.FAB"
+  }
+}

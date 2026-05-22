@@ -1,0 +1,29 @@
+{
+  "id": "beat.feature-list",
+  "kind": "beat",
+  "name": "Feature-list beat",
+  "description": "Enumerate the key capabilities crisply.",
+  "default_renderer": "hyperframes",
+  "template_path": "blocks/beat/feature-list/index.html",
+  "parameters": [
+    {
+      "name": "headline",
+      "type": "string",
+      "default": "Feature-list beat",
+      "required": true
+    },
+    {
+      "name": "body",
+      "type": "string",
+      "default": "",
+      "required": false
+    }
+  ],
+  "tags": [
+    "features",
+    "fab"
+  ],
+  "metadata": {},
+  "category": "narrative",
+  "default_duration_ms": 4000
+}

@@ -1,0 +1,29 @@
+{
+  "id": "beat.counter",
+  "kind": "beat",
+  "name": "Counter beat",
+  "description": "Pre-empt and dismantle the obvious objection.",
+  "default_renderer": "hyperframes",
+  "template_path": "blocks/beat/counter/index.html",
+  "parameters": [
+    {
+      "name": "headline",
+      "type": "string",
+      "default": "Counter beat",
+      "required": true
+    },
+    {
+      "name": "body",
+      "type": "string",
+      "default": "",
+      "required": false
+    }
+  ],
+  "tags": [
+    "counter",
+    "objection"
+  ],
+  "metadata": {},
+  "category": "narrative",
+  "default_duration_ms": 4000
+}

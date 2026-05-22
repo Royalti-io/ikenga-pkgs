@@ -1,0 +1,24 @@
+{
+  "id": "hook.question",
+  "kind": "hook",
+  "name": "Question hook",
+  "description": "Pose a sharp question the viewer wants answered.",
+  "default_renderer": "hyperframes",
+  "template_path": "blocks/hook/question/index.html",
+  "parameters": [
+    {
+      "name": "question",
+      "type": "string",
+      "default": "What if your splits paid out instantly?",
+      "required": true
+    }
+  ],
+  "tags": [
+    "hook",
+    "opener",
+    "curiosity"
+  ],
+  "metadata": {},
+  "category": "narrative",
+  "default_duration_ms": 2500
+}
