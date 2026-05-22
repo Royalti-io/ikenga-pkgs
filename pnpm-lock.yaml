@@ -17,6 +17,26 @@ importers:
 
   packages/apps/hello: {}
 
+  packages/apps/studio:
+    dependencies:
+      '@ikenga/studio-schema':
+        specifier: workspace:*
+        version: link:shared
+    devDependencies:
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+
+  packages/apps/studio/shared:
+    dependencies:
+      zod:
+        specifier: ^3.23.0
+        version: 3.25.76
+    devDependencies:
+      typescript:
+        specifier: ^5.4.0
+        version: 5.9.3
+
   packages/apps/suite: {}
 
   packages/engine/claude-code:

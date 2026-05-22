@@ -1,0 +1,16 @@
+{
+  "name": "@ikenga/studio",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "com.ikenga.studio app pkg — sidecars/project, mcp, src/studio. (WP-05a scaffolding minimum.)",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ikenga/studio-schema": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}
