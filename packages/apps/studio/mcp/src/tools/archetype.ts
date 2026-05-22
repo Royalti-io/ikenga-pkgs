@@ -1,18 +1,24 @@
 /**
  * `archetype.*` tools — catalog-backed (no open project required for list/get).
  *
- * `archetype.instantiate_into_project` scaffolds a known archetype into
- * an open project. P1 calls down to `project.create` on the sidecar (which
- * accepts an `archetype_id`) — but that scaffolds a brand-new project on
- * disk, not into an already-open one. Until a sidecar RPC exists for
- * in-place scaffolding, P1 returns `sidecar-method-not-implemented` for
- * `instantiate_into_project`.
+ * `archetype.instantiate_into_project` scaffolds a known archetype into an
+ * already-open project. WP-03b wired it to the sidecar's in-place scaffold
+ * RPC, which materializes the archetype chain into the project cells. When
+ * no archetype definition is found yet, the sidecar returns the honest
+ * domain error `archetype-not-found` (definitions ship in WP-09) — never a
+ * not-implemented stub.
  */
 
 import type { Catalog } from '../catalog.js';
+import { SidecarClient } from '../sidecar-client.js';
+import { callSidecar } from './project.js';
 import type { OpenProjectRegistry, ToolDef } from './types.js';
 
-export function archetypeTools(catalog: Catalog, registry: OpenProjectRegistry): ToolDef[] {
+export function archetypeTools(
+  catalog: Catalog,
+  registry: OpenProjectRegistry,
+  sidecar: SidecarClient,
+): ToolDef[] {
   return [
     {
       name: 'archetype.list',
@@ -64,7 +70,8 @@ export function archetypeTools(catalog: Catalog, registry: OpenProjectRegistry):
     },
     {
       name: 'archetype.instantiate_into_project',
-      description: 'Scaffold an archetype into an already-open project. Sidecar method not implemented in P1.',
+      description:
+        'Scaffold an archetype into an already-open project. Forwards to the sidecar, which materializes the archetype chain into the project cells. Returns archetype-not-found (WP-09) if no definition exists yet.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -74,13 +81,11 @@ export function archetypeTools(catalog: Catalog, registry: OpenProjectRegistry):
         required: ['archetype_id', 'project_id'],
         additionalProperties: false,
       },
-      async handler() {
-        return {
-          ok: false,
-          error: 'sidecar-method-not-implemented',
-          message: 'archetype.instantiate_into_project ships in WP-?',
-        };
-      },
+      handler: (args) =>
+        callSidecar(sidecar, 'archetype.instantiate_into_project', {
+          projectId: args.project_id,
+          archetypeId: args.archetype_id,
+        }),
     },
     {
       name: 'archetype.save_custom',

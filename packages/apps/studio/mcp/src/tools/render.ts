@@ -1,64 +1,52 @@
 /**
- * `render.*` tools.
+ * `render.*` tools — now LIVE against the sidecar queue (WP-03b).
  *
- * `render.list_engines` is hard-coded for P1 (HF + Excalidraw) per the brief
- * — when WP-05/WP-05b ship, this list will move to a sidecar-side registry
- * adapters self-register into.
+ * `render.list_engines` sources the G2 capability matrix from the sidecar
+ * registry (`render.list_engines` RPC) instead of the old hardcoded P1
+ * array — the response shape is unchanged (`{ ok, engines: [{id, capabilities}] }`)
+ * so WP-07's eventual swap is unaffected.
  *
- * `render.status / cancel / list` query the in-memory `RenderShim` from
- * composition.ts; that shim is replaced wholesale once the sidecar grows
- * real queue RPCs.
+ * `render.status / cancel / list` query the sidecar's SQLite render_queue
+ * (the in-memory RenderShim is gone).
  */
 
-import type { ToolDef, ToolResult } from './types.js';
-import { P1_ENGINE_CAPABILITIES } from './types.js';
-import type { RenderShim } from './composition.js';
+import { SidecarClient } from '../sidecar-client.js';
+import { callSidecar } from './project.js';
+import type { ToolDef } from './types.js';
 
-export function renderTools(shim: RenderShim): ToolDef[] {
+export function renderTools(sidecar: SidecarClient): ToolDef[] {
   return [
     {
       name: 'render.list_engines',
-      description: 'Return the G2 capability matrix for every renderer adapter known to this MCP. No open project required.',
+      description: 'Return the G2 capability matrix for every renderer adapter known to the sidecar registry. No open project required.',
       inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-      async handler() {
-        return { ok: true, engines: P1_ENGINE_CAPABILITIES } as ToolResult;
-      },
+      handler: () => callSidecar(sidecar, 'render.list_engines', {}),
     },
     {
       name: 'render.status',
-      description: 'Look up a render record by id (in-memory P1 shim).',
+      description: 'Look up a render record by id from the sidecar queue.',
       inputSchema: {
         type: 'object',
         properties: { recordId: { type: 'string' } },
         required: ['recordId'],
         additionalProperties: false,
       },
-      async handler(args) {
-        const r = shim.get(args.recordId as string);
-        if (!r) return { ok: false, error: 'render-record-not-found', message: `recordId ${args.recordId}` };
-        return { ok: true, record: r };
-      },
+      handler: (args) => callSidecar(sidecar, 'render.status', { recordId: args.recordId }),
     },
     {
       name: 'render.cancel',
-      description: 'Cancel a queued or running render (in-memory P1 shim — flips status to cancelled).',
+      description: 'Cancel a queued or running render (aborts the in-flight adapter or marks a queued row cancelled).',
       inputSchema: {
         type: 'object',
         properties: { recordId: { type: 'string' } },
         required: ['recordId'],
         additionalProperties: false,
       },
-      async handler(args) {
-        const ok = shim.cancel(args.recordId as string);
-        if (!ok) {
-          return { ok: false, error: 'render-cancel-failed', message: 'record missing or already terminal' };
-        }
-        return { ok: true };
-      },
+      handler: (args) => callSidecar(sidecar, 'render.cancel', { recordId: args.recordId }),
     },
     {
       name: 'render.list',
-      description: 'List render records. Optional projectId + status filters.',
+      description: 'List render records from the sidecar queue. Optional projectId + status filters.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -67,19 +55,8 @@ export function renderTools(shim: RenderShim): ToolDef[] {
         },
         additionalProperties: false,
       },
-      async handler(args) {
-        const records = shim.list({
-          projectId: args.projectId as string | undefined,
-          status: args.status as
-            | 'queued'
-            | 'running'
-            | 'done'
-            | 'failed'
-            | 'cancelled'
-            | undefined,
-        });
-        return { ok: true, records };
-      },
+      handler: (args) =>
+        callSidecar(sidecar, 'render.list', { projectId: args.projectId, status: args.status }),
     },
   ];
 }

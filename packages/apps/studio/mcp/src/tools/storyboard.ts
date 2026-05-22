@@ -1,26 +1,17 @@
 /**
- * `storyboard.*` tools.
+ * `storyboard.*` tools — now LIVE (WP-03b).
  *
- * The WP-03 sidecar does NOT implement these yet — they ship in a future
- * WP (likely WP-11 / WP-12 once storyboard FS writes land). For P1 we
- * return a structured `sidecar-method-not-implemented` envelope so the
- * iframe and the agent get a deterministic, parseable failure instead of
- * a `methodNotFound` JSON-RPC error.
+ * Every handler forwards to the matching sidecar `storyboard.*` JSON-RPC
+ * method via the shared `callSidecar` helper. The sidecar owns the
+ * storyboard.json read / atomic-write + Zod re-validation; mutations land on
+ * disk and the FS watcher emits `cells/changed`.
  */
 
-import type { ToolDef, ToolResult } from './types.js';
+import { SidecarClient } from '../sidecar-client.js';
+import { callSidecar } from './project.js';
+import type { ToolDef } from './types.js';
 
-const STUB_WP = 'WP-?'; // unknown until storyboard FS writes are scheduled
-
-function stub(method: string): ToolResult {
-  return {
-    ok: false,
-    error: 'sidecar-method-not-implemented',
-    message: `${method} ships in ${STUB_WP}`,
-  };
-}
-
-export function storyboardTools(): ToolDef[] {
+export function storyboardTools(sidecar: SidecarClient): ToolDef[] {
   return [
     {
       name: 'storyboard.read',
@@ -31,9 +22,7 @@ export function storyboardTools(): ToolDef[] {
         required: ['projectId'],
         additionalProperties: false,
       },
-      async handler() {
-        return stub('storyboard.read');
-      },
+      handler: (args) => callSidecar(sidecar, 'storyboard.read', { projectId: args.projectId }),
     },
     {
       name: 'storyboard.read_cell',
@@ -47,9 +36,8 @@ export function storyboardTools(): ToolDef[] {
         required: ['projectId', 'cellId'],
         additionalProperties: false,
       },
-      async handler() {
-        return stub('storyboard.read_cell');
-      },
+      handler: (args) =>
+        callSidecar(sidecar, 'storyboard.read_cell', { projectId: args.projectId, cellId: args.cellId }),
     },
     {
       name: 'storyboard.write_cell',
@@ -63,9 +51,8 @@ export function storyboardTools(): ToolDef[] {
         required: ['projectId', 'cell'],
         additionalProperties: false,
       },
-      async handler() {
-        return stub('storyboard.write_cell');
-      },
+      handler: (args) =>
+        callSidecar(sidecar, 'storyboard.write_cell', { projectId: args.projectId, cell: args.cell }),
     },
     {
       name: 'storyboard.create_cell',
@@ -79,9 +66,8 @@ export function storyboardTools(): ToolDef[] {
         required: ['projectId', 'cell'],
         additionalProperties: false,
       },
-      async handler() {
-        return stub('storyboard.create_cell');
-      },
+      handler: (args) =>
+        callSidecar(sidecar, 'storyboard.create_cell', { projectId: args.projectId, cell: args.cell }),
     },
     {
       name: 'storyboard.delete_cell',
@@ -95,22 +81,28 @@ export function storyboardTools(): ToolDef[] {
         required: ['projectId', 'cellId'],
         additionalProperties: false,
       },
-      async handler() {
-        return stub('storyboard.delete_cell');
-      },
+      handler: (args) =>
+        callSidecar(sidecar, 'storyboard.delete_cell', { projectId: args.projectId, cellId: args.cellId }),
     },
     {
       name: 'storyboard.list_cells',
-      description: 'List cells in an open project.',
+      description: 'List cells in an open project. Optional beat_id + rung filters.',
       inputSchema: {
         type: 'object',
-        properties: { projectId: { type: 'string' } },
+        properties: {
+          projectId: { type: 'string' },
+          beat_id: { type: 'string' },
+          rung: { type: 'string', enum: ['0_beat_sheet', '1_lofi', '2_hifi'] },
+        },
         required: ['projectId'],
         additionalProperties: false,
       },
-      async handler() {
-        return stub('storyboard.list_cells');
-      },
+      handler: (args) =>
+        callSidecar(sidecar, 'storyboard.list_cells', {
+          projectId: args.projectId,
+          beat_id: args.beat_id,
+          rung: args.rung,
+        }),
     },
     {
       name: 'storyboard.upsert_beat',
@@ -124,26 +116,31 @@ export function storyboardTools(): ToolDef[] {
         required: ['projectId', 'beat'],
         additionalProperties: false,
       },
-      async handler() {
-        return stub('storyboard.upsert_beat');
-      },
+      handler: (args) =>
+        callSidecar(sidecar, 'storyboard.upsert_beat', { projectId: args.projectId, beat: args.beat }),
     },
     {
       name: 'storyboard.upsert_rung',
-      description: 'Insert or update a per-rung block (beatsheet/lofi/hifi) on a cell.',
+      description:
+        'Insert or update a per-rung block (beatsheet/lofi/hifi) on a cell. Defaults to the cell\'s own rung when rungKey is omitted.',
       inputSchema: {
         type: 'object',
         properties: {
           projectId: { type: 'string' },
           cellId: { type: 'string' },
           rung: { type: 'object', additionalProperties: true },
+          rungKey: { type: 'string', enum: ['0_beat_sheet', '1_lofi', '2_hifi'] },
         },
         required: ['projectId', 'cellId', 'rung'],
         additionalProperties: false,
       },
-      async handler() {
-        return stub('storyboard.upsert_rung');
-      },
+      handler: (args) =>
+        callSidecar(sidecar, 'storyboard.upsert_rung', {
+          projectId: args.projectId,
+          cellId: args.cellId,
+          rung: args.rung,
+          rungKey: args.rungKey,
+        }),
     },
     {
       name: 'storyboard.set_approved',
@@ -158,9 +155,12 @@ export function storyboardTools(): ToolDef[] {
         required: ['projectId', 'cellId', 'approved'],
         additionalProperties: false,
       },
-      async handler() {
-        return stub('storyboard.set_approved');
-      },
+      handler: (args) =>
+        callSidecar(sidecar, 'storyboard.set_approved', {
+          projectId: args.projectId,
+          cellId: args.cellId,
+          approved: args.approved,
+        }),
     },
   ];
 }

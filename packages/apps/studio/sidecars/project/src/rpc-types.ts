@@ -54,10 +54,47 @@ export type ProjectInfoResult =
   | { ok: true; project: Project; openCells: number; queueDepth: number }
   | { ok: false; error: ErrorCode; message?: string };
 
+/**
+ * Generic envelope for the WP-03b method surface (storyboard / anchor /
+ * asset / composition / archetype / render). Handlers return a plain
+ * `Record<string, unknown>` that already carries `ok: true|false`; the
+ * dispatcher writes it straight onto the JSON-RPC `result`.
+ */
+export type GenericResult = Record<string, unknown>;
+
 /** Dispatch-table value type. */
 export type RpcMethod =
   | 'project.open'
   | 'project.close'
   | 'project.list'
   | 'project.create'
-  | 'project.info';
+  | 'project.info'
+  // storyboard.*
+  | 'storyboard.read'
+  | 'storyboard.read_cell'
+  | 'storyboard.write_cell'
+  | 'storyboard.create_cell'
+  | 'storyboard.delete_cell'
+  | 'storyboard.list_cells'
+  | 'storyboard.upsert_beat'
+  | 'storyboard.upsert_rung'
+  | 'storyboard.set_approved'
+  // anchor.*
+  | 'anchor.list'
+  | 'anchor.create'
+  | 'anchor.delete'
+  // asset.*
+  | 'asset.list'
+  | 'asset.import'
+  | 'asset.resolve'
+  // composition.*
+  | 'composition.preview'
+  | 'composition.validate'
+  // archetype.*
+  | 'archetype.instantiate_into_project'
+  // render.*
+  | 'render.enqueue'
+  | 'render.status'
+  | 'render.cancel'
+  | 'render.list'
+  | 'render.list_engines';

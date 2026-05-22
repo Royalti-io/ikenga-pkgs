@@ -20,12 +20,14 @@
 
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, isAbsolute, join, resolve } from 'node:path';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import {
   DEFAULT_RESOLUTION,
   ProjectSchema,
+  type AspectRatio,
+  type Cell,
   type Project,
 } from '@ikenga/studio-schema';
 
@@ -45,13 +47,23 @@ import {
 } from './rpc.js';
 import type {
   ErrorCode,
+  GenericResult,
   ProjectInfoResult,
   ProjectListResult,
   ProjectOpenResult,
   ProjectSummary,
+  RpcMethod,
 } from './rpc-types.js';
 import { startWatcher, type WatcherHandle } from './watcher.js';
 import { requestProjectAccess } from './trust.js';
+import * as storyboard from './storyboard.js';
+import * as anchors from './anchors.js';
+import * as assets from './assets.js';
+import * as archetypes from './archetypes.js';
+import { RenderRunner, type ProjectLookup } from './render-runner.js';
+import { getAdapter, listEngines, resolveEngineWithRequest, EngineResolutionError } from './registry.js';
+import { stdoutEventWriter } from './events.js';
+import type { RenderContext } from './renderers/types.js';
 
 // ─────────────────────────────────────────────────────────────────────────
 // CLI-flag fast paths
@@ -202,8 +214,221 @@ function bootstrapProjectOnDisk(args: {
 // Handlers
 // ─────────────────────────────────────────────────────────────────────────
 
+// Shared between the extended handlers + the render runner: refresh the
+// in-memory project copy after a mutation so subsequent reads (and the render
+// runner's cell lookup) see the new state without a disk round-trip.
+function syncOpenProject(projectId: string, project: Project): void {
+  const o = open.get(projectId);
+  if (o) o.project = project;
+}
+
+function defaultResolution(p: Project): { w: number; h: number } {
+  return p.resolution ?? DEFAULT_RESOLUTION[p.aspect_ratio];
+}
+
+function cellDirOf(projectRoot: string, cell: Cell): string {
+  const abs = isAbsolute(cell.content_path)
+    ? cell.content_path
+    : resolve(projectRoot, cell.content_path);
+  return dirname(abs);
+}
+
 function buildHandlers(db: Db): RpcHandlers {
+  // ProjectLookup over the in-memory open-project map for the render runner.
+  const lookup: ProjectLookup = {
+    projectRoot: (projectId) => open.get(projectId)?.path,
+    cell: (projectId, cellId) =>
+      open.get(projectId)?.project.cells.find((c) => c.uid === cellId),
+    aspectRatio: (projectId) => open.get(projectId)?.project.aspect_ratio as AspectRatio | undefined,
+    resolution: (projectId) => {
+      const p = open.get(projectId)?.project;
+      return p ? defaultResolution(p) : undefined;
+    },
+  };
+
+  const runner = new RenderRunner({ db, lookup, writer: stdoutEventWriter });
+  // Recover any 'running' rows orphaned by a prior crash, then start draining.
+  runner.recover();
+
+  // Helper: resolve an open project's root path or return a structured error.
+  const rootOf = (projectId: unknown): { root: string } | { err: GenericResult } => {
+    if (typeof projectId !== 'string') {
+      return { err: { ok: false, error: 'invalid-args', message: 'projectId must be a string' } };
+    }
+    const o = open.get(projectId);
+    if (!o) return { err: { ok: false, error: 'project-not-open', message: `projectId ${projectId} is not open` } };
+    return { root: o.path };
+  };
+
+  // composition.preview / composition.validate — resolve engine by extension
+  // (G23) and call the adapter's preview/validate with a RenderContext.
+  const compositionCall = async (
+    kind: 'preview' | 'validate',
+    params: Record<string, unknown>,
+  ): Promise<GenericResult> => {
+    const projectId = params.projectId;
+    const cellId = params.cellId;
+    const r = rootOf(projectId);
+    if ('err' in r) return r.err;
+    const cell = lookup.cell(projectId as string, cellId as string);
+    if (!cell) return { ok: false, error: 'cell-not-found', message: `cell ${String(cellId)} not found` };
+    let engine: string;
+    try {
+      engine = resolveEngineWithRequest(cell.content_path, params.engine as string | undefined);
+    } catch (e) {
+      if (e instanceof EngineResolutionError) return { ok: false, error: e.code, message: e.message };
+      return { ok: false, error: 'internal-error', message: (e as Error).message };
+    }
+    const adapter = getAdapter(engine);
+    if (!adapter) return { ok: false, error: 'unresolvable-engine', message: `no adapter for ${engine}` };
+
+    const p = open.get(projectId as string)!.project;
+    const aspect = (p.aspect_ratio as AspectRatio) ?? '16:9';
+    const ctx: RenderContext = {
+      projectRoot: r.root,
+      cellDir: cellDirOf(r.root, cell),
+      rendersDir: join(r.root, 'renders'),
+      aspectRatio: aspect,
+      resolution: defaultResolution(p),
+      vault: { get: async () => undefined },
+      emit: () => {}, // preview/validate are cheap + synchronous-ish; no progress
+      signal: new AbortController().signal,
+    };
+    try {
+      if (kind === 'preview') {
+        const url = await adapter.preview(cell, ctx);
+        return { ok: true, engine, preview: url };
+      }
+      const diagnostics = await adapter.validate(cell, ctx);
+      return { ok: true, engine, diagnostics };
+    } catch (e) {
+      return { ok: false, error: 'internal-error', message: (e as Error).message };
+    }
+  };
+
+  const extended = async (method: RpcMethod, rawParams: unknown): Promise<GenericResult> => {
+    const params = (rawParams ?? {}) as Record<string, unknown>;
+
+    // Methods that need an open project root resolve it once up-front.
+    const needsRoot = !method.startsWith('render.list_engines');
+
+    let root = '';
+    if (needsRoot && method !== 'render.status' && method !== 'render.cancel' && method !== 'render.list') {
+      const r = rootOf(params.projectId);
+      if ('err' in r) return r.err;
+      root = r.root;
+    }
+
+    switch (method) {
+      // ── storyboard.* ──
+      case 'storyboard.read':
+        return storyboard.read(root).result;
+      case 'storyboard.read_cell':
+        return storyboard.readCell(root, params.cellId as string).result;
+      case 'storyboard.list_cells':
+        return storyboard.listCells(root, {
+          beat_id: params.beat_id as string | undefined,
+          rung: params.rung as never,
+        }).result;
+      case 'storyboard.create_cell': {
+        const r = storyboard.createCell(root, params.cell);
+        if (r.project) syncOpenProject(params.projectId as string, r.project);
+        return r.result;
+      }
+      case 'storyboard.write_cell': {
+        const r = storyboard.writeCell(root, params.cell);
+        if (r.project) syncOpenProject(params.projectId as string, r.project);
+        return r.result;
+      }
+      case 'storyboard.delete_cell': {
+        const r = storyboard.deleteCell(root, params.cellId as string);
+        if (r.project) syncOpenProject(params.projectId as string, r.project);
+        return r.result;
+      }
+      case 'storyboard.set_approved': {
+        const r = storyboard.setApproved(root, params.cellId as string, Boolean(params.approved));
+        if (r.project) syncOpenProject(params.projectId as string, r.project);
+        return r.result;
+      }
+      case 'storyboard.upsert_beat': {
+        const r = storyboard.upsertBeat(root, params.beat);
+        if (r.project) syncOpenProject(params.projectId as string, r.project);
+        return r.result;
+      }
+      case 'storyboard.upsert_rung': {
+        const r = storyboard.upsertRung(
+          root,
+          params.cellId as string,
+          params.rung,
+          params.rungKey as string | undefined,
+        );
+        if (r.project) syncOpenProject(params.projectId as string, r.project);
+        return r.result;
+      }
+
+      // ── anchor.* ──
+      case 'anchor.list':
+        return anchors.list(root).result;
+      case 'anchor.create': {
+        const r = anchors.create(root, params.anchor);
+        if (r.project) syncOpenProject(params.projectId as string, r.project);
+        return r.result;
+      }
+      case 'anchor.delete': {
+        const r = anchors.remove(root, params.anchorId as string);
+        if (r.project) syncOpenProject(params.projectId as string, r.project);
+        return r.result;
+      }
+
+      // ── asset.* ──
+      case 'asset.list':
+        return assets.list(root, params.kind as string | undefined).result;
+      case 'asset.import':
+        return (await assets.importAsset(root, params.source as string, params.kind as string | undefined)).result;
+      case 'asset.resolve':
+        return assets.resolveAsset(root, params.assetId as string).result;
+
+      // ── composition.* ──
+      case 'composition.preview':
+        return compositionCall('preview', params);
+      case 'composition.validate':
+        return compositionCall('validate', params);
+
+      // ── archetype.* ──
+      case 'archetype.instantiate_into_project': {
+        const r = archetypes.instantiateIntoProject(root, params.archetypeId as string);
+        if (r.project) syncOpenProject(params.projectId as string, r.project);
+        return r.result;
+      }
+
+      // ── render.* ──
+      case 'render.enqueue':
+        return runner.enqueue(params.projectId as string, params.cellId as string, {
+          engine: params.engine as string | undefined,
+          aspect_ratio: params.aspect_ratio as never,
+          resolution: params.resolution as { w: number; h: number } | undefined,
+          variant: params.variant as string | undefined,
+          range: params.range as { start_ms?: number; end_ms?: number } | undefined,
+        });
+      case 'render.status':
+        return runner.status(params.recordId as string);
+      case 'render.cancel':
+        return runner.cancel(params.recordId as string);
+      case 'render.list':
+        return runner.list({
+          projectId: params.projectId as string | undefined,
+          status: params.status as string | undefined,
+        });
+      case 'render.list_engines':
+        return { ok: true, engines: listEngines() };
+
+      default:
+        return { ok: false, error: 'method-not-implemented', message: method };
+    }
+  };
+
   const handlers: RpcHandlers = {
+    extended,
     async open({ path }): Promise<ProjectOpenResult> {
       const abs = ensureAbsolute(path);
       const existing = findOpenByPath(abs);

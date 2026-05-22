@@ -1,22 +1,17 @@
 /**
- * `asset.*` tools — stubbed against the WP-03 sidecar (no asset RPCs yet).
+ * `asset.*` tools — now LIVE (WP-03b). Forward to the sidecar's asset.*
+ * RPCs (files under `<projectRoot>/assets/`).
  */
 
-import type { ToolDef, ToolResult } from './types.js';
+import { SidecarClient } from '../sidecar-client.js';
+import { callSidecar } from './project.js';
+import type { ToolDef } from './types.js';
 
-function stub(method: string): ToolResult {
-  return {
-    ok: false,
-    error: 'sidecar-method-not-implemented',
-    message: `${method} ships in WP-?`,
-  };
-}
-
-export function assetTools(): ToolDef[] {
+export function assetTools(sidecar: SidecarClient): ToolDef[] {
   return [
     {
       name: 'asset.list',
-      description: 'List assets in a project. Optional `kind` filter (image, video, audio, etc.).',
+      description: 'List assets in a project. Optional `kind` filter (image, video, audio, font).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -26,9 +21,8 @@ export function assetTools(): ToolDef[] {
         required: ['projectId'],
         additionalProperties: false,
       },
-      async handler() {
-        return stub('asset.list');
-      },
+      handler: (args) =>
+        callSidecar(sidecar, 'asset.list', { projectId: args.projectId, kind: args.kind }),
     },
     {
       name: 'asset.import',
@@ -43,13 +37,16 @@ export function assetTools(): ToolDef[] {
         required: ['projectId', 'source'],
         additionalProperties: false,
       },
-      async handler() {
-        return stub('asset.import');
-      },
+      handler: (args) =>
+        callSidecar(sidecar, 'asset.import', {
+          projectId: args.projectId,
+          source: args.source,
+          kind: args.kind,
+        }),
     },
     {
       name: 'asset.resolve',
-      description: 'Resolve an AssetRef to an absolute on-disk path + URL.',
+      description: 'Resolve an AssetRef (project-relative asset id) to an absolute on-disk path + metadata.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -59,9 +56,8 @@ export function assetTools(): ToolDef[] {
         required: ['projectId', 'assetId'],
         additionalProperties: false,
       },
-      async handler() {
-        return stub('asset.resolve');
-      },
+      handler: (args) =>
+        callSidecar(sidecar, 'asset.resolve', { projectId: args.projectId, assetId: args.assetId }),
     },
   ];
 }

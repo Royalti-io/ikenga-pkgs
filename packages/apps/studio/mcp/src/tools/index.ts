@@ -4,6 +4,11 @@
  * `buildTools()` returns the flat ToolDef[] in stable order; the MCP
  * adapter at ../index.ts maps it into `setRequestHandler(ListTools…)` and
  * `setRequestHandler(CallTool…)`.
+ *
+ * WP-03b: the in-memory RenderShim is gone — composition/render forward to
+ * the sidecar queue. Every former stub (storyboard / anchor / asset /
+ * composition.preview|validate / archetype.instantiate_into_project) now
+ * forwards to a real sidecar RPC.
  */
 
 import type { SidecarClient } from '../sidecar-client.js';
@@ -12,7 +17,7 @@ import { projectTools } from './project.js';
 import { storyboardTools } from './storyboard.js';
 import { anchorTools } from './anchor.js';
 import { assetTools } from './asset.js';
-import { compositionTools, RenderShim } from './composition.js';
+import { compositionTools } from './composition.js';
 import { renderTools } from './render.js';
 import { blockTools } from './block.js';
 import { archetypeTools } from './archetype.js';
@@ -22,20 +27,18 @@ export function buildTools(opts: {
   sidecar: SidecarClient;
   catalog: Catalog;
   registry: OpenProjectRegistry;
-  shim: RenderShim;
 }): ToolDef[] {
-  const { sidecar, catalog, registry, shim } = opts;
+  const { sidecar, catalog, registry } = opts;
   return [
     ...projectTools(sidecar, registry),
-    ...storyboardTools(),
-    ...anchorTools(),
-    ...assetTools(),
-    ...compositionTools(sidecar, registry, shim),
-    ...renderTools(shim),
+    ...storyboardTools(sidecar),
+    ...anchorTools(sidecar),
+    ...assetTools(sidecar),
+    ...compositionTools(sidecar, registry),
+    ...renderTools(sidecar),
     ...blockTools(catalog, registry),
-    ...archetypeTools(catalog, registry),
+    ...archetypeTools(catalog, registry, sidecar),
   ];
 }
 
-export { RenderShim };
 export type { ToolDef, OpenProjectRegistry } from './types.js';

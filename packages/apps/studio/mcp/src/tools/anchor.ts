@@ -1,18 +1,14 @@
 /**
- * `anchor.*` tools — stubbed against the WP-03 sidecar (no anchor RPCs yet).
+ * `anchor.*` tools — now LIVE (WP-03b). Forward to the sidecar's anchor.*
+ * RPCs, which mutate the project-level `Project.anchors[]` array in
+ * storyboard.json (atomic write; watcher emits cells/changed).
  */
 
-import type { ToolDef, ToolResult } from './types.js';
+import { SidecarClient } from '../sidecar-client.js';
+import { callSidecar } from './project.js';
+import type { ToolDef } from './types.js';
 
-function stub(method: string): ToolResult {
-  return {
-    ok: false,
-    error: 'sidecar-method-not-implemented',
-    message: `${method} ships in WP-?`,
-  };
-}
-
-export function anchorTools(): ToolDef[] {
+export function anchorTools(sidecar: SidecarClient): ToolDef[] {
   return [
     {
       name: 'anchor.list',
@@ -23,9 +19,7 @@ export function anchorTools(): ToolDef[] {
         required: ['projectId'],
         additionalProperties: false,
       },
-      async handler() {
-        return stub('anchor.list');
-      },
+      handler: (args) => callSidecar(sidecar, 'anchor.list', { projectId: args.projectId }),
     },
     {
       name: 'anchor.create',
@@ -39,9 +33,8 @@ export function anchorTools(): ToolDef[] {
         required: ['projectId', 'anchor'],
         additionalProperties: false,
       },
-      async handler() {
-        return stub('anchor.create');
-      },
+      handler: (args) =>
+        callSidecar(sidecar, 'anchor.create', { projectId: args.projectId, anchor: args.anchor }),
     },
     {
       name: 'anchor.delete',
@@ -55,9 +48,8 @@ export function anchorTools(): ToolDef[] {
         required: ['projectId', 'anchorId'],
         additionalProperties: false,
       },
-      async handler() {
-        return stub('anchor.delete');
-      },
+      handler: (args) =>
+        callSidecar(sidecar, 'anchor.delete', { projectId: args.projectId, anchorId: args.anchorId }),
     },
   ];
 }

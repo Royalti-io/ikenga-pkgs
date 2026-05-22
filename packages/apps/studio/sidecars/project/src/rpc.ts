@@ -18,6 +18,7 @@ import {
 
 import type {
   ErrorCode,
+  GenericResult,
   ProjectCloseParams,
   ProjectCreateParams,
   ProjectInfoParams,
@@ -65,6 +66,13 @@ export interface RpcHandlers {
   list(): Promise<ProjectListResult>;
   create(params: ProjectCreateParams): Promise<ProjectOpenResult>;
   info(params: ProjectInfoParams): Promise<ProjectInfoResult>;
+  /**
+   * Catch-all for the WP-03b method surface (storyboard / anchor / asset /
+   * composition / archetype / render). The handler owns its own per-method
+   * param validation and returns an `{ ok, ... }` envelope written straight
+   * onto the JSON-RPC result.
+   */
+  extended(method: RpcMethod, params: unknown): Promise<GenericResult>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -115,6 +123,33 @@ function parseError(): void {
     error: { code: -32700, message: 'parse error' },
   });
 }
+
+/** WP-03b method names routed to `handlers.extended`. */
+const EXTENDED_METHODS = new Set<string>([
+  'storyboard.read',
+  'storyboard.read_cell',
+  'storyboard.write_cell',
+  'storyboard.create_cell',
+  'storyboard.delete_cell',
+  'storyboard.list_cells',
+  'storyboard.upsert_beat',
+  'storyboard.upsert_rung',
+  'storyboard.set_approved',
+  'anchor.list',
+  'anchor.create',
+  'anchor.delete',
+  'asset.list',
+  'asset.import',
+  'asset.resolve',
+  'composition.preview',
+  'composition.validate',
+  'archetype.instantiate_into_project',
+  'render.enqueue',
+  'render.status',
+  'render.cancel',
+  'render.list',
+  'render.list_engines',
+]);
 
 export function startRpcLoop(handlers: RpcHandlers): { close(): void } {
   const rl: Interface = createInterface({
@@ -173,8 +208,14 @@ export function startRpcLoop(handlers: RpcHandlers): { close(): void } {
           writeResponse({ jsonrpc: '2.0', id, result: await handlers.info(p.data) });
           return;
         }
-        default:
+        default: {
+          if (EXTENDED_METHODS.has(req.method)) {
+            const result = await handlers.extended(req.method as RpcMethod, req.params);
+            writeResponse({ jsonrpc: '2.0', id, result });
+            return;
+          }
           return methodNotFound(id, req.method);
+        }
       }
     } catch (err) {
       logErr(`handler threw on ${req.method}: ${(err as Error).message}`);

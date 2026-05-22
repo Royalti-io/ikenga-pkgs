@@ -24,7 +24,7 @@ import {
 
 import { SidecarClient } from './sidecar-client.js';
 import { Catalog } from './catalog.js';
-import { buildTools, RenderShim } from './tools/index.js';
+import { buildTools } from './tools/index.js';
 import type { OpenProjectRegistry, OpenProjectEntry } from './tools/types.js';
 
 const NAME = 'studio-mcp';
@@ -51,12 +51,11 @@ async function main(): Promise<void> {
   const sidecar = new SidecarClient();
   const catalog = new Catalog();
   const registry = new InMemoryRegistry();
-  const shim = new RenderShim();
 
   // Boot sidecar eagerly so the smoke test can ps for it.
   sidecar.start();
 
-  const tools = buildTools({ sidecar, catalog, registry, shim });
+  const tools = buildTools({ sidecar, catalog, registry });
   const byName = new Map(tools.map((t) => [t.name, t]));
 
   const server = new Server(
