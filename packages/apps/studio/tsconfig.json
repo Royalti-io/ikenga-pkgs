@@ -10,5 +10,5 @@
     "forceConsistentCasingInFileNames": true,
     "lib": ["ES2022", "DOM"]
   },
-  "include": ["sidecars/project/src/**/*"]
+  "include": ["sidecars/project/src/**/*", "mcp/src/**/*"]
 }

@@ -1,0 +1,12 @@
+{
+  "name": "@ikenga/studio-mcp",
+  "version": "0.0.0",
+  "private": true,
+  "description": "MCP server for com.ikenga.studio — thin JSON-RPC client over the project sidecar exposing the P1 tool surface. Local config holder; NOT a workspace participant (the parent @ikenga/studio package owns its deps).",
+  "type": "module",
+  "scripts": {
+    "build": "bash build.sh",
+    "dev": "bash build.sh --watch",
+    "typecheck": "tsc -p ../tsconfig.json --noEmit"
+  }
+}
