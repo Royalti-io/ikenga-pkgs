@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <!-- GSAP vendored locally so the composition renders network-free (the
+         studio HF adapter declares requires_network:false). -->
+    <script src="gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        width: 1920px; height: 1080px; overflow: hidden;
+        background: #0b0b0f;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      #root { position: relative; width: 1920px; height: 1080px; }
+      .scene-content {
+        position: absolute; inset: 0;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 48px; color: #f5f5f7; text-align: center; padding: 120px;
+      }
+      .ring {
+        width: 220px; height: 220px; border-radius: 50%;
+        border: 10px solid #6366f1;
+      }
+      h1 { font-size: 132px; color: #6366f1; line-height: 1; }
+      .sub { font-size: 40px; opacity: .85; }
+    </style>
+  </head>
+  <body>
+    <!-- Root composition: landscape 1920×1080, 3s. Duration is in SECONDS for HF. -->
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="3"
+      data-width="1920"
+      data-height="1080"
+    >
+      <div id="card" class="clip" data-start="0" data-duration="3" data-track-index="0">
+        <div class="scene-content">
+          <div id="ring" class="ring"></div>
+          <h1 id="title">Hello, Studio</h1>
+          <div id="sub" class="sub">com.ikenga.studio &mdash; WP-11 smoke fixture (hi-fi rung)</div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // The capture engine reads window.__timelines["main"] synchronously
+      // after load — build the timeline inline, paused, no infinite repeats.
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      // Entrances: animate FROM offscreen/invisible to the CSS hero position.
+      tl.from("#title", { opacity: 0, y: 60, duration: 1, ease: "power2.out" }, 0);
+      tl.from("#sub", { opacity: 0, y: 30, duration: 1, ease: "power2.out" }, 0.4);
+      // Ring pulse — finite repeat count derived from the 3s duration
+      // (cycle 1.5s → ceil(3 / 1.5) - 1 = 1 repeat).
+      tl.fromTo(
+        "#ring",
+        { scale: 0.85, opacity: 0.5 },
+        { scale: 1.1, opacity: 1, duration: 0.75, yoyo: true, repeat: 3, ease: "sine.inOut" },
+        0
+      );
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "slug": "sample",
+  "title": "Studio Smoke Fixture",
+  "created_at": "2026-05-22T22:18:00.000Z",
+  "updated_at": "2026-05-22T22:18:00.000Z",
+  "mode": "studio",
+  "archetype_id": "explainer",
+  "aspect_ratio": "16:9",
+  "resolution": { "w": 1920, "h": 1080 },
+  "current_rung": 0,
+  "anchors": [],
+  "script": {
+    "schema_version": 1,
+    "archetype": "explainer",
+    "title": "Studio Smoke Fixture",
+    "duration_ms": 6000,
+    "style_anchors": [],
+    "beats": [
+      {
+        "id": "beat-hello",
+        "scene_id": "sc1",
+        "shot_id": "sc1_sh1",
+        "vo": "Hello from the Studio smoke fixture.",
+        "on_screen_text": "Hello, Studio",
+        "action": "Title card with a pulsing ring (hi-fi) and a wireframe sketch (lo-fi).",
+        "duration_ms": 6000,
+        "sfx": [],
+        "metadata": {}
+      }
+    ],
+    "metadata": {}
+  },
+  "cells": [
+    {
+      "uid": "hello-hifi",
+      "beat_id": "beat-hello",
+      "rung": "2_hifi",
+      "index": 0,
+      "label": "Hello (hi-fi)",
+      "time": { "start": 0, "end": 3 },
+      "frames": { "start": 0, "end": 90 },
+      "narration_excerpt": "Hello from the Studio smoke fixture.",
+      "intent": "Title card, hi-fi HyperFrames scene.",
+      "shot_type": "unset",
+      "camera_move": "unset",
+      "duration_ms": 3000,
+      "prompt": "",
+      "anchors": [],
+      "renderer": "hyperframes",
+      "content_path": "cells/hifi/hello-hifi/index.html",
+      "notes": "HF cell — index.html with a CSS animation and data-duration=3000.",
+      "reference_layer": [],
+      "rungs": {
+        "0_beat_sheet": { "status": "pending" },
+        "1_lofi": { "status": "pending" },
+        "2_hifi": { "status": "pending" }
+      },
+      "comments": [],
+      "approved": false,
+      "last_edited": "2026-05-22T22:18:00.000Z",
+      "renders": [],
+      "metadata": {}
+    },
+    {
+      "uid": "hello-lofi",
+      "beat_id": "beat-hello",
+      "rung": "1_lofi",
+      "index": 0,
+      "label": "Hello (lo-fi)",
+      "time": { "start": 0, "end": 3 },
+      "frames": { "start": 0, "end": 90 },
+      "narration_excerpt": "Hello from the Studio smoke fixture.",
+      "intent": "Wireframe sketch, lo-fi Excalidraw scene.",
+      "shot_type": "unset",
+      "camera_move": "unset",
+      "duration_ms": 3000,
+      "prompt": "",
+      "anchors": [],
+      "renderer": "excalidraw",
+      "content_path": "cells/lofi/hello-lofi/content.excalidraw",
+      "notes": "Excalidraw cell — 2 shapes + 1 text element. Static (no metadata.animation).",
+      "reference_layer": [],
+      "rungs": {
+        "0_beat_sheet": { "status": "pending" },
+        "1_lofi": { "status": "pending" },
+        "2_hifi": { "status": "pending" }
+      },
+      "comments": [],
+      "approved": false,
+      "last_edited": "2026-05-22T22:18:00.000Z",
+      "renders": [],
+      "metadata": {}
+    }
+  ],
+  "narration": null,
+  "approved": false,
+  "metadata": {
+    "fixture": "wp-11-smoke",
+    "note": "Self-contained smoke fixture exercising HF (hi-fi) + Excalidraw (lo-fi) render adapters."
+  }
+}
