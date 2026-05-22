@@ -48,3 +48,19 @@ html, body, #root {
   font-family: var(--font-mono);
   font-size: 0.85rem;
 }
+
+.studio-scaffold__mode {
+  margin: 1rem 0 0;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-raised);
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+}
+
+.studio-scaffold__mode[data-mode='shell']      { color: var(--live); }
+.studio-scaffold__mode[data-mode='standalone'] { color: var(--achievement); }
+.studio-scaffold__mode[data-mode='connecting'] { color: var(--fg-faint); }
