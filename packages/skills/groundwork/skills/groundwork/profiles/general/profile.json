@@ -1,0 +1,20 @@
+{
+  "name": "general",
+  "extends": "_shared",
+  "spine_version": "1",
+  "labels": {
+    "work_unit": "workstream",
+    "isolation_axis": "owner + non-overlapping scope",
+    "freeze_gate_noun": "decision lock"
+  },
+  "optional_blocks": [
+    "stakeholders",
+    "deliverables",
+    "success_metrics"
+  ],
+  "produces_designs": false,
+  "spine_overrides": {
+    "01-plan.md": "templates/01-plan.md",
+    "05-tracking.md": "templates/05-tracking.md"
+  }
+}

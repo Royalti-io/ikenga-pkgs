@@ -1,0 +1,21 @@
+{
+  "name": "software",
+  "extends": "_shared",
+  "spine_version": "1",
+  "labels": {
+    "work_unit": "work package",
+    "isolation_axis": "git repo + disjoint dirs",
+    "freeze_gate_noun": "interface freeze"
+  },
+  "optional_blocks": [
+    "schema",
+    "manifest",
+    "adapter_contracts",
+    "critical_files"
+  ],
+  "produces_designs": true,
+  "spine_overrides": {
+    "01-plan.md": "templates/01-plan.md",
+    "05-tracking.md": "templates/05-tracking.md"
+  }
+}
