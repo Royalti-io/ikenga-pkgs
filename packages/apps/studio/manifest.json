@@ -1,0 +1,152 @@
+{
+  "id": "com.ikenga.studio",
+  "name": "Studio",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "embedded",
+  "author": { "name": "Royalti", "key": "royalti" },
+
+  "skills": "skills",
+
+  "ui": {
+    "nav": [
+      {
+        "id": "studio.index",
+        "label": "Studio",
+        "icon": "clapperboard",
+        "section": "ops",
+        "route": "/pkg/com.ikenga.studio/studio"
+      }
+    ],
+    "routes": [
+      {
+        "path": "/studio",
+        "kind": "iframe",
+        "source": "dist/studio/index.html"
+      }
+    ],
+    "csp": {
+      "default-src": ["'self'"],
+      "script-src": [
+        "'self'",
+        "'unsafe-inline'",
+        "https://esm.sh",
+        "https://cdn.jsdelivr.net",
+        "https://cdn.tailwindcss.com"
+      ],
+      "style-src": [
+        "'self'",
+        "'unsafe-inline'",
+        "https://esm.sh",
+        "https://cdn.jsdelivr.net",
+        "https://cdn.tailwindcss.com"
+      ],
+      "font-src": ["'self'", "https://esm.sh", "https://cdn.jsdelivr.net", "data:"],
+      "img-src": ["'self'", "data:", "blob:", "file:"],
+      "media-src": ["'self'", "blob:", "file:"],
+      "connect-src": [
+        "'self'",
+        "http://127.0.0.1:*",
+        "https://esm.sh",
+        "https://cdn.jsdelivr.net",
+        "https://*.supabase.co",
+        "wss://*.supabase.co"
+      ]
+    }
+  },
+
+  "sidecars": [
+    {
+      "name": "pa-com-ikenga-studio-project",
+      "bin": "sidecars/project/dist/sidecar.js",
+      "stdio": "json",
+      "restart_when_changed": ["sidecars/project/dist/sidecar.js"],
+      "auto_restart": true
+    }
+  ],
+
+  "mcp": [
+    {
+      "name": "studio",
+      "command": "node",
+      "args": ["mcp/dist/index.js"],
+      "lifecycle": "long-lived",
+      "restart_when_changed": ["mcp/dist/index.js"],
+      "auto_restart": true
+    }
+  ],
+
+  "iyke": {
+    "routes": [
+      {
+        "method": "POST",
+        "path": "/pkg/com.ikenga.studio/project/open",
+        "handler": "sidecar:pa-com-ikenga-studio-project project.open"
+      },
+      {
+        "method": "POST",
+        "path": "/pkg/com.ikenga.studio/project/close",
+        "handler": "sidecar:pa-com-ikenga-studio-project project.close"
+      },
+      {
+        "method": "GET",
+        "path": "/pkg/com.ikenga.studio/project/list",
+        "handler": "sidecar:pa-com-ikenga-studio-project project.list"
+      },
+      {
+        "method": "POST",
+        "path": "/pkg/com.ikenga.studio/render/enqueue",
+        "handler": "sidecar:pa-com-ikenga-studio-project render.enqueue"
+      }
+    ],
+    "events": [
+      "pkg://com.ikenga.studio/cells/changed",
+      "pkg://com.ikenga.studio/render/progress",
+      "pkg://com.ikenga.studio/render/done"
+    ]
+  },
+
+  "settings": {
+    "schema": [
+      {
+        "key": "default_engine",
+        "type": "string",
+        "label": "Default render engine",
+        "default": "auto",
+        "description": "Renderer used when a cell does not pin one. 'auto' resolves the best available adapter."
+      },
+      {
+        "key": "veo_api_key",
+        "type": "secret",
+        "label": "Veo API key",
+        "description": "Phase 3 — Google Veo AI-generation adapter. Unused in Phase 1."
+      },
+      {
+        "key": "kling_api_key",
+        "type": "secret",
+        "label": "Kling API key",
+        "description": "Phase 3 — Kling AI-generation adapter. Unused in Phase 1."
+      },
+      {
+        "key": "runway_api_key",
+        "type": "secret",
+        "label": "Runway API key",
+        "description": "Phase 3 — Runway AI-generation adapter. Unused in Phase 1."
+      }
+    ]
+  },
+
+  "permissions": {
+    "shell.execute": ["bun", "npx", "node", "ffmpeg", "chromium", "python3"],
+    "fs.read": ["$pkg_data/**"],
+    "fs.write": ["$pkg_data/**"],
+    "net": [
+      "http://127.0.0.1:*",
+      "https://esm.sh",
+      "https://cdn.jsdelivr.net",
+      "https://cdn.tailwindcss.com",
+      "https://*.supabase.co"
+    ],
+    "vault.keys": ["studio.veo", "studio.kling", "studio.runway"]
+  }
+}
