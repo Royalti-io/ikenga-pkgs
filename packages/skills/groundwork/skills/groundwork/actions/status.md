@@ -5,6 +5,8 @@
 
 **Reads first**: `../lib/state.md`, `.groundwork.json`, every doc in the spine.
 
+**Spine-version**: `expected = "1"`. Runs [`../lib/state.md` §"Spine-version preamble gate"](../lib/state.md#spine-version-preamble-gate) as the first step after loading `.groundwork.json` — read-only action, so on anchor-too-old it **refuses with the migrate hint** (status of a not-yet-migrated folder isn't meaningful), but on anchor-too-new it **warns and proceeds with read-only semantics** (the report degrades gracefully and explicitly tags fields it can't interpret). No-op at v1=current.
+
 **Read-only.** Never writes to disk. The cheapest possible action — makes the stateless-invocation problem legible to the user.
 
 ---

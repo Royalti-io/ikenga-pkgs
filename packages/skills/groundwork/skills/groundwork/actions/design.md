@@ -5,6 +5,8 @@
 
 **Reads first**: `../lib/state.md`, the current `01-plan.md` (for what's being designed), and `.groundwork.json.designs` (existing coverage).
 
+**Spine-version**: `expected = "1"`. Runs [`../lib/state.md` §"Spine-version preamble gate"](../lib/state.md#spine-version-preamble-gate) as the first step after loading `.groundwork.json` — writing action (registers designs in `.groundwork.json` + appends design-lock to `04`), so refuses on either direction of mismatch. No-op at v1=current.
+
 **Profile-gated**: runs only when `profile.json.produces_designs === true`. For `general` profile (default `false`), refuses with "this profile isn't visual; skip the design action." If a user on `general` insists, they can opt in for one run with `--allow-non-visual`.
 
 **Composes** (in invocation order):

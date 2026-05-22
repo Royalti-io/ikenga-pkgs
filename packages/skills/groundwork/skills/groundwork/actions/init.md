@@ -5,6 +5,8 @@
 
 **Reads first**: `../lib/state.md` (state machine spec — every write obeys it).
 
+**Spine-version**: produces (and `--migrate` upgrades to) `spine_version: "1"`. **Owns** the `--migrate` path described in [`../lib/state.md` §"Per-version transform table"](../lib/state.md#per-version-transform-table-deferred-until-v2) — bare `init` against an existing older anchor declines and points the user at `init --migrate`; `init --migrate` walks the transform table forward. At v1=current the migrate path is a no-op.
+
 **Idempotent**: re-running `init` on an already-initialized folder is a no-op (per hash-diff semantics in `lib/state.md`). Use `--force` to overwrite hand-edited files (rare; ask the user first).
 
 ---

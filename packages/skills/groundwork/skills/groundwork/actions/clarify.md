@@ -5,6 +5,8 @@
 
 **Reads first**: `../lib/state.md`, the current `01-plan.md`, `04-discussion.md`, `05-tracking.md`, and `.groundwork.json`.
 
+**Spine-version**: `expected = "1"`. Runs [`../lib/state.md` §"Spine-version preamble gate"](../lib/state.md#spine-version-preamble-gate) as the first step after loading `.groundwork.json` — read-only-by-default action, so on anchor-too-old **refuses with the migrate hint**, on anchor-too-new **warns and proceeds with read-only semantics** (returns a partial readiness report with the version-skew explicitly flagged). With `--fix` passed it treats itself as a writing action and refuses on either direction of mismatch. No-op at v1=current.
+
 **Read-only by default** — does not write to disk unless `--fix` is passed (and even then, only updates `.groundwork.json` flags; no doc content). spec-kit's `/clarify` precedent: catching ambiguity before planning measurably cuts downstream rework.
 
 ---

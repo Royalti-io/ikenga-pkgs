@@ -64,6 +64,7 @@ Lives at the root of every groundwork plan folder (alongside `00-README.md`). It
 - **`docs.<path>.hash`** — sha256 of the whole file's bytes as last written by a groundwork action. If the current on-disk hash differs, hand edits exist somewhere — actions still honor fences but `status` reports the drift.
 - **`docs.<path>.generated_regions[]`** — one entry per `<!-- groundwork:auto:start ID -->` block in that file. The `hash` is over the **inner content only** (excluding the fence comments themselves) so a fence-position move counts as a hand edit, not a regenerated block.
 - **`ids`** — the **traceability backbone** (Round 2). Every `G-NN` / `WP-NN` / `G-<NAME>` ID lives here with its origin doc and the set of docs it touches. The review action computes the affected-doc set from this registry + region hashes — no guessing.
+- **`ids[WP-NN].drift_log[]`** (Round 8 · G-13) — *optional* per-WP audit trail of in-flight scope changes. Empty by default; only present when the shipped code diverged from the WP's sub-plan or brief. Each entry: `{round: <N>, commit: "<sha>", scope_change: "<one line>", justification: "<one line>", subplan_section: "<§ name>" | null}`. Populated by the orchestrator when a WP report mentions a "beyond the diff plan" decision (mirrors the matching `## Drift log` row in the diff-plan sub-plan). Surfaces in `review` and `status`: a future review pass greps `drift_log[]` for "shipped code matches plan?" verification. WPs that match plan keep the field absent — empty `drift_log[]` is a positive signal, not noise.
 - **`designs`** — Round 3 design-coverage registry; `clarify` checks for visual-profile readiness, `status` reports gaps, `orchestrate` cites locked designs in the relevant WP briefs.
 - **`subplans`** — Focused `NN-*.md` sub-plans (numbered ≥ 06). `subplan` action creates them; `status` lists them; `review` notes when a finding touches one. **No `SP-NN` ID** — sub-plans are file-numbered, not ID-allocated; cross-references happen by filename (and by the optional `ref` field linking to a WP / gap / section). `status` field is hand-edited: `active` / `landed` / `abandoned` / `deferred`.
 - **`research`** — freshness stamps surfaced on the board.
@@ -71,6 +72,52 @@ Lives at the root of every groundwork plan folder (alongside `00-README.md`). It
 ### Atomic writes
 
 Every write to `.groundwork.json` is `write tmp → rename` so a crash mid-write never leaves a corrupt anchor.
+
+### Spine-version preamble gate
+
+Every action — read-only and writing alike — runs the **spine-version gate** as its first step after reading the anchor. The gate makes the "newer skill sees older anchor → offer migrate or operate read-only" promise enforceable instead of aspirational. **At spine_version=1=current, the gate is a no-op** (every check passes); it earns its keep the moment the first incompatible v2 spine bump lands.
+
+Each action declares its `expected_spine_version` (currently `"1"` for all nine). The gate's contract:
+
+```
+gate(anchor.spine_version, action.expected_spine_version):
+    if anchor.spine_version == action.expected_spine_version:
+        proceed                                                     # the v1=v1 common case
+    elif anchor.spine_version < action.expected_spine_version:
+        refuse with: "plan is on spine_version={anchor}, this skill expects {expected}.
+                      Run `groundwork init --migrate` to bring the folder forward."
+    elif anchor.spine_version > action.expected_spine_version:
+        if action is read-only (status, clarify):
+            warn: "plan is on spine_version={anchor}, this skill is on {expected} — running read-only."
+            proceed with read-only semantics
+        else:
+            refuse with: "plan is on spine_version={anchor}, this skill is on {expected}.
+                          Upgrade the groundwork skill (`npx skills add royalti-io/groundwork`) before writing."
+```
+
+Three clauses, hence three failure modes: **anchor-too-old** (most common at first v2 bump), **anchor-too-new + writing action** (user is on a newer plan than the installed skill), **anchor-too-new + read-only action** (degrade gracefully, return what we can).
+
+The gate **never silently mis-writes** — refusal is the only behavior on incompatibility. It is intentionally implemented at the preamble of every action rather than at a central dispatcher, because each action file is the canonical home of its own behavior and the gate is part of that behavior.
+
+#### Per-version transform table (deferred until v2)
+
+When the first incompatible v2 spine lands, `actions/init.md` gains a `--migrate` path whose transform table is keyed by version pairs:
+
+```
+transforms = {
+  ("1", "2"): [
+    add_fence("01-plan.md", "risks-index", anchor_after="goal"),
+    rename_fence("artifact/board.html", "board-data", "tracking-data"),
+    add_doc("10-metrics.md", from_template="profiles/_shared/templates/10-metrics.md"),
+    add_anchor_key("metrics", default={}),
+  ],
+  # ("2", "3"): [ … ],
+}
+```
+
+Each transform is **structural** (insert / rename / scaffold) and **fence-preserving** — hand-authored prose outside every fence is byte-identical post-migration. No transform may invoke an agent; if a hypothetical future migration needs semantic re-flow of prose, it earns its own verb instead of riding `init --migrate`.
+
+The transform table format is deliberately out of scope for v1 — the gate alone is enough to keep us honest until there is something to transform. See [`plans/groundwork/07-spine-version-migration.md`](../../../../plans/groundwork/07-spine-version-migration.md) for the full decision history.
 
 ---
 

@@ -5,6 +5,8 @@
 
 **Reads first**: `../lib/state.md`, `../agents/researcher.md`, the plan's current `01-plan.md` (so the agent knows what to research).
 
+**Spine-version**: `expected = "1"`. Runs [`../lib/state.md` §"Spine-version preamble gate"](../lib/state.md#spine-version-preamble-gate) as the first step after loading `.groundwork.json` — writing action, so refuses on either direction of mismatch. No-op at v1=current.
+
 **Spawns**: one researcher agent (via the `Agent` tool, `general-purpose` subagent by default).
 
 ---

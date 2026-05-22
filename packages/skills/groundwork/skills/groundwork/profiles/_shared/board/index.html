@@ -306,19 +306,25 @@
     .seg button.is-on { background: var(--bg-raised); color: var(--fg); box-shadow: var(--shadow-1); }
     .seg-dot { width: 8px; height: 8px; border-radius: 50%; }
 
-    /* Page chrome — the page-head IS the entire chrome (no separate sticky controls bar). */
+    /* Page chrome — the page-head IS the entire chrome (no separate sticky controls bar).
+       Round-8 layout pass (G-15 sibling polish): the entire page-head scrolls away
+       with the page. The table thead pins as the new top-of-viewport once the user
+       scrolls past the hero. Sidebar sticks separately. Net header drop ~510 → ~210px. */
     .page-head {
       padding: var(--space-5) var(--space-6) var(--space-4);
       border-bottom: 1px solid var(--border-soft);
       background: var(--bg-surface);
     }
+    /* Scroll area — wraps page-head + board-grid so they scroll as one. */
+    .scroll-area { flex: 1; overflow: auto; min-height: 0; display: flex; flex-direction: column; }
     .page-head-top {
       display: flex; align-items: flex-start; justify-content: space-between;
       gap: var(--space-5); margin-bottom: var(--space-3);
     }
     .page-head-titles { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; }
     .page-head-titles .eyebrow { margin-bottom: -2px; }
-    .plan-title { font-family: var(--font-display); font-weight: 500; font-size: var(--text-h1); letter-spacing: -.012em; color: var(--fg); margin: 0; line-height: 1.15; }
+    /* h1 shrunk from --text-h1 to a clamped scale — dashboards don't earn marketing-page type. */
+    .plan-title { font-family: var(--font-display); font-weight: 500; font-size: clamp(22px, 2.4vw, 30px); letter-spacing: -.012em; color: var(--fg); margin: 0; line-height: 1.18; }
     .plan-title em { font-style: italic; color: var(--primary); }
     .plan-goal { font-size: var(--text-body); color: var(--fg-muted); margin: 6px 0 0; max-width: 70ch; }
 
@@ -389,12 +395,45 @@
       padding: 4px 8px; border-radius: var(--radius-xs);
       background: var(--bg-base); color: var(--fg-muted); border: 1px solid var(--border-soft);
     }
+    /* Compact Kickoff (Round 8) — collapses to a slim button once orchestrate has
+       fired at least once (meta.orchestrated_at populated). One click re-fires. */
+    .kickoff-compact {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin: var(--space-3) 0 0;
+      padding: 6px 12px;
+      border-radius: var(--radius-pill);
+      background: var(--primary-soft);
+      border: 1px solid var(--primary);
+      color: var(--fg);
+      cursor: pointer; font-family: inherit;
+      font-size: var(--text-body-sm);
+      transition: filter var(--motion-fast) var(--ease-calm);
+    }
+    .kickoff-compact:hover { filter: brightness(1.06); }
+    .kickoff-compact .kickoff-compact-glyph { color: var(--primary); }
+    .kickoff-compact .kickoff-compact-when { color: var(--fg-faint); font-family: var(--font-mono); font-size: var(--text-micro); margin-left: 4px; }
 
     /* Gate banner */
     .gates {
       display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap;
       padding: var(--space-3) 0 0;
     }
+    /* Collapsed gates summary chip (Round 8) — click to expand the full list. */
+    .gates-summary {
+      display: inline-flex; align-items: center; gap: 8px;
+      margin-top: var(--space-3);
+      padding: 4px 10px;
+      border-radius: var(--radius-pill);
+      background: var(--bg-raised); color: var(--fg-muted);
+      border: 1px solid var(--border-soft);
+      font-family: var(--font-mono); font-size: 10px;
+      letter-spacing: .08em; text-transform: uppercase;
+      cursor: pointer;
+      transition: background var(--motion-fast) var(--ease-calm), color var(--motion-fast) var(--ease-calm);
+    }
+    .gates-summary:hover { background: var(--bg-surface); color: var(--fg); }
+    .gates-summary-caret { font-size: 9px; opacity: .7; }
+    .gates-summary strong { color: var(--achievement); font-weight: 600; }
     .gate {
       display: inline-flex; align-items: center; gap: 6px;
       font-family: var(--font-mono); font-size: 10px;
@@ -420,7 +459,9 @@
     .filter-chip-count { font-size: 9px; color: var(--fg-faint); margin-left: 4px; }
 
     /* Layout grid (Mission Control) */
-    .board-grid { display: grid; grid-template-columns: 1fr 280px; min-height: 0; height: 100%; }
+    /* Round-8: dropped the forced height:100% — the App-level .scroll-area is the
+       single scroller and the grid should size to its natural content height. */
+    .board-grid { display: grid; grid-template-columns: 1fr 280px; min-height: 0; }
 
     /* Table list (Mission Control) */
     .wp-table { width: 100%; border-collapse: collapse; font-size: var(--text-body-sm); }
@@ -446,10 +487,18 @@
     .wp-status-cell { display: inline-flex; align-items: center; gap: 6px; font-size: 11.5px; color: var(--fg); }
     .wp-actions { display: inline-flex; gap: 4px; }
 
-    /* Right rail — shared by Mission Control + Kanban via <PaneRail>. */
+    /* Right rail — shared by Mission Control + Kanban via <PaneRail>.
+       Round-8: the rail cell stretches to full grid height; an inner
+       .rail-sticky wrapper does the pinning. Sticky directly on a grid item
+       (with align-self:start) flakes on WebKitGTK — the inner-wrapper pattern
+       is the cross-browser-reliable sticky-sidebar idiom. */
     .rail {
       border-left: 1px solid var(--border-soft);
       background: var(--bg-surface);
+    }
+    .rail-sticky {
+      position: sticky; top: 0;
+      max-height: 100vh; max-height: 100dvh;
       overflow: auto;
       padding: var(--space-4);
       display: flex; flex-direction: column; gap: var(--space-4);
@@ -542,11 +591,15 @@
     .subplan-ref-cross { font-style: italic; }
     .subplan-status { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-faint); }
 
-    /* Kanban layout — columns by status (was Wave Board; wave info now lives on cards). */
+    /* Kanban layout — columns by status (was Wave Board; wave info now lives on cards).
+       Round-8 layout pass: inherits the App-level .scroll-area scroller, so this only
+       controls horizontal overflow within the column strip; vertical scroll falls
+       through to the scroll-area. Columns stretch to viewport-minus-header height. */
     .kanban-strip {
       display: flex; gap: var(--space-3);
       padding: var(--space-4) var(--space-6);
-      overflow-x: auto; height: 100%; align-items: stretch;
+      overflow-x: auto; align-items: stretch;
+      min-height: calc(100vh - 220px);
     }
     .kanban-col {
       flex: 1 1 240px; min-width: 240px;
@@ -796,10 +849,11 @@
     Standalone: postMessage to a same-window parent is a no-op; inShell=false.
     In-shell:  the host receives `{__iyke:true, kind:'state', payload}` per
                iframe and exposes them via `iyke iframe-state <pane>`.
-    Seeded sessions: the polyfill round-trips `host.startChatSession` to the
-    host (iyke iframe-registry), which user-confirms + starts the session and
-    replies keyed by request_id; standalone (no host) it resolves {ok:false}
-    and the caller copy-prompts.
+    Seeded sessions: the polyfill round-trips `host.openSessionDialog` to the
+    host (iyke iframe-registry), which opens the shell's New-Session dialog
+    pre-filled with the args (the dialog IS consent — user sees + can edit
+    the prompt before clicking Start) and replies keyed by request_id;
+    standalone (no host) it resolves {ok:false} and the caller copy-prompts.
     Host-context handshake (theme/mode/density push from shell) is also
     polyfilled — the shell sets data-mode/data-theme on this iframe's <html>
     via a separate AppBridge message; we listen for it here too.
@@ -823,28 +877,34 @@
       return Promise.resolve({
         host: { kind: inShell ? 'ikenga' : 'browser' },
         publishState: (key, value) => post('state', { key, value }),
-        // Round-trips to the host (iyke iframe-registry), which runs the
-        // user-confirm + startSeededChat and replies with {ok, threadId}
-        // keyed by request_id. Standalone (no host): resolves {ok:false}.
-        startChatSession: (args) => {
-          if (!inShell) return Promise.resolve({ ok: false, mocked: true });
+        // openSessionDialog (WP-27 / G-SESSION-DIALOG, Round 7 2026-05-22) —
+        // round-trips to the host (iyke iframe-registry), which opens the
+        // shell's New-Session dialog pre-filled with the args. The dialog IS
+        // the consent surface: user sees + can edit the prompt + picks
+        // chat/terminal + engine + cwd before clicking Start. Replaces the
+        // retired host.startChatSession + WP-10's bespoke confirm modal.
+        // Resolves: { ok:true, kind:'chat', threadId } | { ok:true, kind:'terminal', paneId } | { ok:false, reason:'cancelled'|'scope-denied'|'timeout' }.
+        // Standalone (no host): resolves {ok:false, reason:'no-shell'} so the
+        // caller falls back to clipboard.
+        openSessionDialog: (args) => {
+          if (!inShell) return Promise.resolve({ ok: false, reason: 'no-shell' });
           return new Promise((resolve) => {
-            const reqId = 'scs-' + Math.random().toString(36).slice(2) + '-' + Date.now();
+            const reqId = 'osd-' + Math.random().toString(36).slice(2) + '-' + Date.now();
             const onMsg = (ev) => {
               const m = ev.data;
-              if (!m || !m.__iyke || m.kind !== 'host.startChatSession:result' || m.request_id !== reqId) return;
+              if (!m || !m.__iyke || m.kind !== 'host.openSessionDialog:result' || m.request_id !== reqId) return;
               window.removeEventListener('message', onMsg);
               clearTimeout(timer);
-              resolve(m.payload || { ok: false });
+              resolve(m.payload || { ok: false, reason: 'empty-payload' });
             };
-            const timer = setTimeout(() => { window.removeEventListener('message', onMsg); resolve({ ok: false, timeout: true }); }, 180000);
+            const timer = setTimeout(() => { window.removeEventListener('message', onMsg); resolve({ ok: false, reason: 'timeout' }); }, 180000);
             window.addEventListener('message', onMsg);
-            window.parent.postMessage({ __iyke: true, kind: 'host.startChatSession', request_id: reqId, payload: args }, '*');
+            window.parent.postMessage({ __iyke: true, kind: 'host.openSessionDialog', request_id: reqId, payload: args }, '*');
           });
         },
-        // host.sendToActiveSession (WP-22) — sibling to startChatSession. Round-trips
+        // host.sendToActiveSession (WP-22) — sibling to openSessionDialog. Round-trips
         // a request_id over postMessage and resolves with { ok, threadId?, reason? }
-        // matching the WP-22 verb signature. Mirrors startChatSession's structure:
+        // matching the WP-22 verb signature. Same shape as openSessionDialog:
         // standalone returns {ok:false} immediately so the palette can fall back to
         // clipboard; in-shell uses the same 180s timeout convention.
         sendToActiveSession: (args) => {
@@ -1033,7 +1093,7 @@ WHAT TO DO RIGHT NOW
     /* ─────── ACTIONS — the 9 groundwork actions surfaced by the ⌘K palette ───────
        Each row carries both a standalone-slash form (clipboard fallback when no
        shell verb is available) and a seeded-session form (substituted at runtime
-       against board-meta and handed to art.startChatSession / art.sendToActiveSession).
+       against board-meta and handed to art.openSessionDialog / art.sendToActiveSession).
        The standalone form is the unconditional floor — clipboard always works.
        Disabled actions (subplan · init) need argument pickers that arrive in WP-23.
        SYNC-WITH: .claude/skills/groundwork/actions/<id>.md §Click-to-fire prompt
@@ -1452,10 +1512,18 @@ WHAT TO DO RIGHT NOW
        sticky controls bar — the page-head IS the chrome. Theme / mode / density
        are NEVER switchable here; the shell pushes them via host-context. */
     function PageHead({ data, meta, filter, setFilter, counts, layout, setLayout, inShell, done, onKickoff, onOpenPalette }) {
-      const planTitle = meta.title || data.plan?.title || \'this plan\';
+      const planTitle = meta.title || data.plan?.title || 'this plan';
       const kickoffHint = inShell
-        ? \'Spawns the orchestrator agent · mirrors WPs to Tasks · drives waves to completion.\'
-        : \'Outside Ikenga — copies the orchestrator brief to your clipboard.\';
+        ? 'Spawns the orchestrator agent · mirrors WPs to Tasks · drives waves to completion.'
+        : 'Outside Ikenga — copies the orchestrator brief to your clipboard.';
+      // Round-8 density wins:
+      //  - slim Kickoff once orchestrate has fired at least once (meta.orchestrated_at)
+      //  - gates collapsed to a summary chip by default; click expands.
+      const hasOrchestrated = !!meta.orchestrated_at;
+      const [gatesExpanded, setGatesExpanded] = React.useState(false);
+      const gates = data.gates || [];
+      const gatesPassed = gates.filter(g => g.status === 'passed').length;
+      const gatesCancelled = gates.filter(g => g.status === 'cancelled').length;
       return (
         <header className="page-head">
           <div className="page-head-top">
@@ -1496,43 +1564,91 @@ WHAT TO DO RIGHT NOW
             </div>
           </div>
 
-          {/* Kickoff card (WP-20) — the one-button autonomous-loop kickoff.
-              In-shell: seeds a session with the orchestrator brief via
-              art.startChatSession. Standalone: copies the brief to clipboard. */}
-          <button
-            type="button"
-            className="kickoff"
-            onClick={onKickoff}
-            title={inShell ? 'Spawn the orchestrator agent for the whole plan' : 'Copy orchestrator brief to clipboard'}
-            aria-label={`Kickoff orchestrator for ${planTitle}`}
-          >
-            <span className="kickoff-glyph"><Icon name="play" size={14} /></span>
-            <span className="kickoff-body">
-              <span className="kickoff-eyebrow">Kickoff</span>
-              <span className="kickoff-title">Spawn the orchestrator for {planTitle}</span>
-              <span className="kickoff-hint">{kickoffHint}</span>
-            </span>
-            <span className="kickoff-mode">{inShell ? 'seed session' : 'copy brief'}</span>
-          </button>
-
-          <div className="gates">
-            <span className="section-tag" style={{ marginRight: 'var(--space-2)' }}>freeze gates</span>
-            {(data.gates || []).map(g => (
-              <span key={g.id} className={`gate ${g.status === 'passed' ? 'passed' : ''}`} title={`${g.label} (${g.wp})`}>
-                {g.status === 'passed' ? <Icon name="check" size={11} /> : <Icon name="circle" size={9} />}
-                <span>{g.id}</span>
-                <span style={{ color: 'currentColor', opacity: .6 }}>· {g.label}</span>
+          {/* Kickoff (WP-20) — full card on cold boards (no orchestrate.last_run);
+              slim button once orchestrate has fired at least once. Round 8 density. */}
+          {hasOrchestrated ? (
+            <button
+              type="button"
+              className="kickoff-compact"
+              onClick={onKickoff}
+              title={inShell ? 'Re-spawn the orchestrator agent for the whole plan' : 'Copy orchestrator brief to clipboard'}
+              aria-label={`Re-kickoff orchestrator for ${planTitle}`}
+            >
+              <span className="kickoff-compact-glyph"><Icon name="play" size={11} /></span>
+              <span>Re-kickoff</span>
+              <span className="kickoff-compact-when">last run {meta.orchestrated_at}</span>
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="kickoff"
+              onClick={onKickoff}
+              title={inShell ? 'Spawn the orchestrator agent for the whole plan' : 'Copy orchestrator brief to clipboard'}
+              aria-label={`Kickoff orchestrator for ${planTitle}`}
+            >
+              <span className="kickoff-glyph"><Icon name="play" size={14} /></span>
+              <span className="kickoff-body">
+                <span className="kickoff-eyebrow">Kickoff</span>
+                <span className="kickoff-title">Spawn the orchestrator for {planTitle}</span>
+                <span className="kickoff-hint">{kickoffHint}</span>
               </span>
-            ))}
-            <div className="filters">
-              {FILTERS.map(f => (
-                <button key={f} className={`filter-chip ${filter === f ? 'is-on' : ''}`} onClick={() => setFilter(f)}>
-                  {f.replace('_', ' ')}
-                  {f !== 'all' && counts[f] ? <span className="filter-chip-count">{counts[f]}</span> : null}
-                </button>
-              ))}
+              <span className="kickoff-mode">{inShell ? 'send to your chi' : 'copy brief'}</span>
+            </button>
+          )}
+
+          {/* Freeze gates — collapsed to a summary chip by default; click expands.
+              Round 8: saves ~110px of vertical real estate on warm boards. */}
+          {!gatesExpanded ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
+              <button
+                type="button"
+                className="gates-summary"
+                onClick={() => setGatesExpanded(true)}
+                title="Show every freeze gate"
+                aria-expanded="false"
+              >
+                <span className="gates-summary-caret">▸</span>
+                <strong>{gatesPassed}/{gates.length - gatesCancelled}</strong> gates passed
+                {gatesCancelled > 0 && <span> · {gatesCancelled} cancelled</span>}
+              </button>
+              <div className="filters">
+                {FILTERS.map(f => (
+                  <button key={f} className={`filter-chip ${filter === f ? 'is-on' : ''}`} onClick={() => setFilter(f)}>
+                    {f.replace('_', ' ')}
+                    {f !== 'all' && counts[f] ? <span className="filter-chip-count">{counts[f]}</span> : null}
+                  </button>
+                ))}
+              </div>
             </div>
-          </div>
+          ) : (
+            <div className="gates">
+              <button
+                type="button"
+                className="gates-summary"
+                onClick={() => setGatesExpanded(false)}
+                title="Collapse"
+                style={{ marginRight: 'var(--space-2)', marginTop: 0 }}
+                aria-expanded="true"
+              >
+                <span className="gates-summary-caret">▾</span> freeze gates
+              </button>
+              {gates.map(g => (
+                <span key={g.id} className={`gate ${g.status === 'passed' ? 'passed' : ''}`} title={`${g.label} (${g.wp})`}>
+                  {g.status === 'passed' ? <Icon name="check" size={11} /> : <Icon name="circle" size={9} />}
+                  <span>{g.id}</span>
+                  <span style={{ color: 'currentColor', opacity: .6 }}>· {g.label}</span>
+                </span>
+              ))}
+              <div className="filters">
+                {FILTERS.map(f => (
+                  <button key={f} className={`filter-chip ${filter === f ? 'is-on' : ''}`} onClick={() => setFilter(f)}>
+                    {f.replace('_', ' ')}
+                    {f !== 'all' && counts[f] ? <span className="filter-chip-count">{counts[f]}</span> : null}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </header>
       );
     }
@@ -1592,7 +1708,7 @@ WHAT TO DO RIGHT NOW
           {wp.status !== 'done' && (
             <div className="detail-actions">
               <button className="btn" onClick={() => onCopy(wp)}><Icon name="copy" size={11} /> Copy brief</button>
-              <button className="btn is-primary" onClick={() => onStart(wp)} title={inShell ? 'Start a seeded session' : 'Copy-prompt path'}><Icon name="play" size={10} /> Start</button>
+              <button className="btn is-primary" onClick={() => onStart(wp)} title={inShell ? "Send this WP's brief to your Chi" : 'Copy-prompt path'}><Icon name="play" size={10} /> Start</button>
             </div>
           )}
         </section>
@@ -1607,6 +1723,7 @@ WHAT TO DO RIGHT NOW
     function PaneRail({ data, selectedWp, subplan, onCopy, onStart, onClear, inShell }) {
       return (
         <aside className="rail">
+          <div className="rail-sticky">
           <WpDetailCard
             wp={selectedWp} subplan={subplan}
             onCopy={onCopy} onStart={onStart} onClear={onClear}
@@ -1663,6 +1780,7 @@ WHAT TO DO RIGHT NOW
               </div>
             </section>
           )}
+          </div>
         </aside>
       );
     }
@@ -1672,8 +1790,11 @@ WHAT TO DO RIGHT NOW
       const rows = useMemo(() => filter === 'all' ? data.wps : data.wps.filter(w => w.status === filter), [filter, data.wps]);
 
       return (
-        <div className="board-grid" style={{ flex: 1 }}>
-          <main style={{ overflow: 'auto' }}>
+        <div className="board-grid">
+          {/* Table column — no per-section overflow; the App-level
+              <main.scroll-area> is the single scroller. The thead's
+              position:sticky;top:0 pins to that container. */}
+          <div>
             <table className="wp-table">
               <thead>
                 <tr>
@@ -1699,7 +1820,7 @@ WHAT TO DO RIGHT NOW
                       {wp.status !== 'done' && (
                         <span className="wp-actions">
                           <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); onCopy(wp); }}><Icon name="copy" size={11} /> Copy</button>
-                          <button className="btn btn-sm is-primary" onClick={(e) => { e.stopPropagation(); onStart(wp); }} title={inShell ? 'Start a seeded session' : 'Copy-prompt path'}><Icon name="play" size={10} /> Start</button>
+                          <button className="btn btn-sm is-primary" onClick={(e) => { e.stopPropagation(); onStart(wp); }} title={inShell ? "Send this WP's brief to your Chi" : 'Copy-prompt path'}><Icon name="play" size={10} /> Start</button>
                         </span>
                       )}
                     </td>
@@ -1707,7 +1828,7 @@ WHAT TO DO RIGHT NOW
                 ))}
               </tbody>
             </table>
-          </main>
+          </div>
 
           <PaneRail
             data={data} selectedWp={selectedWp} subplan={subplan}
@@ -1736,8 +1857,8 @@ WHAT TO DO RIGHT NOW
         cards: data.wps.filter(w => w.status === col.id),
       }));
       return (
-        <div className="board-grid" style={{ flex: 1 }}>
-          <main className="kanban-strip">
+        <div className="board-grid">
+          <div className="kanban-strip">
             {colsWithCards.map(col => (
             <div key={col.id} className={`kanban-col status-${col.id}`}>
               <div className="kanban-col-head">
@@ -1776,7 +1897,7 @@ WHAT TO DO RIGHT NOW
               </div>
             </div>
           ))}
-          </main>
+          </div>
           <PaneRail
             data={data} selectedWp={selectedWp} subplan={subplan}
             onCopy={onCopy} onStart={onStart} onClear={onClear}
@@ -1793,10 +1914,13 @@ WHAT TO DO RIGHT NOW
       const [selected, setSelected] = useState((DATA.wps[0] || {}).id);
       const [toast,    setToast]    = useState(null);
       const [paletteOpen, setPaletteOpen] = useState(false);
-      // Argument-picker modal state (WP-23). null when closed; { action } when a
-      // parameterized action (subplan / init) is mid-collection. Lives here
-      // alongside paletteOpen so the palette can close + the picker open in one
-      // flow (palette → modal → confirm → dispatch).
+      // Picker modal state (WP-23). null when closed; otherwise { kind:
+      // 'subplan'|'init', action }. WP-23 pickers collect action arguments;
+      // they live alongside paletteOpen so the palette can close + the picker
+      // open in one flow (palette → modal → submit → dispatch). Engine choice
+      // is NOT collected here (Round 7 / WP-25R) — the shell's New-Session
+      // dialog (WP-27) handles engine + chat/terminal + cwd as part of its
+      // own consent surface, opened by art.openSessionDialog.
       const [picker, setPicker] = useState(null);
       const inShell = art.inShell;
 
@@ -1837,31 +1961,56 @@ WHAT TO DO RIGHT NOW
         try { navigator.clipboard.writeText(text); } catch (e) {}
         flash(`Copied ${wp.id} brief`);
       };
+      const planTitle = META.title || DATA.plan?.title || 'plan';
+
+      /* flashResult — unified result→toast handler for openSessionDialog.
+         Result shape from WP-27:
+           · { ok: true, kind: 'chat', threadId }       → "Started <label> session"
+           · { ok: true, kind: 'terminal', paneId }     → "Started <label> in terminal"
+           · { ok: false, reason: 'cancelled' }         → "Cancelled — <label> not started"
+           · { ok: false, reason: <anything else> }     → caller does clipboard floor
+         Returns true if we handled it (success or explicit cancel); false if
+         the caller should fall through to clipboard. */
+      const flashResult = (label, res) => {
+        if (res && res.ok) {
+          flash(res.kind === 'terminal' ? `Started ${label} in terminal` : `Started ${label} session`);
+          return true;
+        }
+        if (res && res.reason === 'cancelled') {
+          flash(`Cancelled — ${label} not started`);
+          return true;
+        }
+        return false;
+      };
+
       const onStart = async (wp) => {
         const text = briefFor(wp);
-        // In-shell: round-trip to the host verb (user-confirm → seeded session).
-        // Copy-prompt is the fallback when the verb is absent / declined / fails.
-        if (inShell && art.startChatSession) {
-          const res = await art.startChatSession({ prompt: text, title: `${wp.id} — ${wp.title}` });
-          if (res && res.ok) { flash(`Started ${wp.id} session`); return; }
-          if (res && res.declined) { flash(`Cancelled — ${wp.id} not started`); return; }
+        const label = `${wp.id} — ${wp.title}`;
+        // In-shell: round-trip to art.openSessionDialog (WP-27) — the shell's
+        // New-Session dialog opens pre-filled with the brief, user picks
+        // chat/terminal + engine + cwd + clicks Start. Clipboard is the floor
+        // when the verb is absent / dialog cancelled / standalone.
+        if (inShell && art.openSessionDialog) {
+          const res = await art.openSessionDialog({ initialPrompt: text, title: label, source: 'wp-card' });
+          if (flashResult(wp.id, res)) return;
         }
         try { navigator.clipboard.writeText(text); } catch (e) {}
         flash(inShell ? `Copied ${wp.id} brief (verb unavailable)` : `Outside Ikenga → copied ${wp.id} brief`);
       };
 
       // Kickoff (WP-20) — seeds the orchestrator brief for the whole plan.
-      // In-shell: round-trips host.startChatSession with the substituted
-      // orchestrator brief. Outside-shell (or verb absent / failed): copies
-      // the brief to clipboard. Mirrors onStart's UX so the flash messages
-      // read consistently in both surfaces.
+      // Round 7 (WP-25R): no TargetPicker pre-step — the New-Session dialog
+      // (WP-27) is the consent + target-choice surface. One click → dialog
+      // opens pre-filled with the orchestrator brief.
       const onKickoff = async () => {
         const brief = buildOrchestratorBrief(META, DATA);
-        const planTitle = META.title || DATA.plan?.title || 'plan';
-        if (inShell && art.startChatSession) {
-          const res = await art.startChatSession({ prompt: brief, title: `${planTitle} orchestrator` });
-          if (res && res.ok) { flash('Orchestrator session started'); return; }
-          if (res && res.declined) { flash('Cancelled — orchestrator not started'); return; }
+        if (inShell && art.openSessionDialog) {
+          const res = await art.openSessionDialog({
+            initialPrompt: brief,
+            title: `${planTitle} orchestrator`,
+            source: 'board',
+          });
+          if (flashResult('orchestrator', res)) return;
         }
         try { navigator.clipboard.writeText(brief); } catch (e) {}
         flash(inShell ? 'Verb unavailable → orchestrator brief copied' : 'Outside Ikenga → orchestrator brief copied');
@@ -1869,8 +2018,8 @@ WHAT TO DO RIGHT NOW
 
       /* dispatchAction (WP-21 core, extended for WP-23). Clipboard fallback is the
          unconditional floor:
-           - write-actions  (mint)   → art.startChatSession; on !ok, clipboard
-           - read-actions   (attach) → art.sendToActiveSession; on !ok, clipboard
+           - write-actions  (mint)   → art.openSessionDialog (Round 7)
+           - read-actions   (attach) → art.sendToActiveSession
          `extraMeta` carries argument-picker values (archetype/topic/ref for
          subplan; target_folder/profile/goal for init) — they're merged over META
          before substituteAction resolves the seeded + standalone forms, so the
@@ -1884,8 +2033,8 @@ WHAT TO DO RIGHT NOW
         const title = `groundwork · ${action.label}`;
         let result = { ok: false, reason: 'no-verb' };
         try {
-          if (action.surface === 'new-session' && art.startChatSession) {
-            result = await art.startChatSession({ prompt: seeded, title });
+          if (action.surface === 'new-session' && art.openSessionDialog) {
+            result = await art.openSessionDialog({ initialPrompt: seeded, title, source: 'palette' });
           } else if (action.surface === 'active-session' && art.sendToActiveSession) {
             result = await art.sendToActiveSession({ prompt: seeded, source: 'palette' });
           }
@@ -1893,31 +2042,45 @@ WHAT TO DO RIGHT NOW
 
         if (result && result.ok) {
           flash(action.surface === 'new-session'
-            ? `Seeded new chat → ${action.label}`
+            ? (result.kind === 'terminal' ? `Started ${action.label} in terminal` : `Seeded new chat → ${action.label}`)
             : `Sent to active session → ${action.label}`);
           return;
         }
+        if (result && result.reason === 'cancelled') {
+          flash(`Cancelled — ${action.label} not started`);
+          return;
+        }
+        // Floor: clipboard the standalone slash form so the user can paste anywhere.
         try { navigator.clipboard.writeText(standalone); } catch (e) {}
         const why = (result && result.reason) || 'fallback';
         flash(`Copied ${standalone}  · ${inShell ? `(${why})` : 'standalone'}`);
       };
 
-      /* onPaletteFire — palette row click / Enter. Parameterized actions
-         (action.needsPicker) open their argument-picker modal instead of
-         dispatching immediately; the picker's onSubmit calls dispatchAction with
-         the collected values. Everything else dispatches straight away. */
+      /* onPaletteFire (WP-23 + Round 7). Branching map:
+           · needsPicker: 'subplan' | 'init' → arg-picker (archetype/topic/ref
+             or target_folder/profile/goal). Submit → dispatchAction with the
+             values merged into META → openSessionDialog opens pre-filled.
+           · surface: 'new-session'          → dispatchAction → openSessionDialog
+             pre-filled (research / design / review / orchestrate).
+           · surface: 'active-session'       → dispatchAction → sendToActiveSession
+             (clarify / status / refresh-board). */
       const onPaletteFire = (action) => {
         if (action.disabled) return;
         setPaletteOpen(false);
-        if (action.needsPicker) { setPicker({ action }); return; }
+        if (action.needsPicker === 'subplan' || action.needsPicker === 'init') {
+          setPicker({ kind: action.needsPicker, action }); return;
+        }
         dispatchAction(action);
       };
 
-      // Picker confirm → close the modal, then dispatch with the form values.
+      // onPickerSubmit (WP-23) — close the picker, then dispatch with the
+      // collected args merged over META. Engine/chat-vs-terminal choice lives
+      // in the New-Session dialog (WP-27), not the picker.
       const onPickerSubmit = (values) => {
-        const action = picker && picker.action;
+        const cur = picker;
         setPicker(null);
-        if (action) dispatchAction(action, values);
+        if (!cur || !cur.action) return;
+        dispatchAction(cur.action, values);
       };
 
       const counts = useMemo(() => DATA.wps.reduce((a, w) => (a[w.status] = (a[w.status]||0)+1, a), {}), []);
@@ -1934,7 +2097,10 @@ WHAT TO DO RIGHT NOW
 
       return (
         <div className="shell">
-          <div className="shell-body">
+          {/* Single scroll area wraps page-head + grid so the hero scrolls
+              away naturally; the sticky thead inside the table pins to the
+              top of this main element. Round 8 layout pass. */}
+          <main className="scroll-area">
             <PageHead
               data={DATA} meta={META}
               filter={filter} setFilter={setFilter} counts={counts}
@@ -1947,7 +2113,7 @@ WHAT TO DO RIGHT NOW
               ? <MissionControl data={DATA} selected={selected} setSelected={setSelected} selectedWp={selectedWp} subplan={subplan} filter={filter} onCopy={onCopy} onStart={onStart} onClear={onClear} inShell={inShell} />
               : <Kanban         data={DATA} selected={selected} setSelected={setSelected} selectedWp={selectedWp} subplan={subplan}                onCopy={onCopy} onStart={onStart} onClear={onClear} inShell={inShell} />
             }
-          </div>
+          </main>
           <footer className="page-foot">
             <span className="chip-carve">▽▽▽</span>
             <span>◆ = freeze gate · click a row/card to select</span>
@@ -1962,13 +2128,16 @@ WHAT TO DO RIGHT NOW
             onFire={onPaletteFire}
             actions={ACTIONS}
           />
-          {/* Argument-picker modals (WP-23) — opened by onPaletteFire when the
-              fired action carries needsPicker. Submit → dispatchAction with the
-              form values; Cancel / ESC / backdrop → setPicker(null) (no dispatch). */}
-          {picker && picker.action.needsPicker === 'subplan' && (
+          {/* Picker modals — routed by picker.kind. Submit → onPickerSubmit
+              (which dispatches with the collected values via openSessionDialog);
+              Cancel / ESC / backdrop → setPicker(null) (no dispatch). WP-23
+              covers subplan + init. Round 7 (WP-25R) removed the target picker:
+              the New-Session dialog (WP-27) is the engine + chat/terminal +
+              cwd consent surface. */}
+          {picker && picker.kind === 'subplan' && (
             <SubplanPicker onClose={() => setPicker(null)} onSubmit={onPickerSubmit} />
           )}
-          {picker && picker.action.needsPicker === 'init' && (
+          {picker && picker.kind === 'init' && (
             <InitPicker onClose={() => setPicker(null)} onSubmit={onPickerSubmit} />
           )}
         </div>

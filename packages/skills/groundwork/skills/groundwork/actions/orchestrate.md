@@ -5,6 +5,8 @@
 
 **Reads first**: `../lib/state.md`, `../agents/orchestrator.md`, the current `05-tracking.md` and `01-plan.md`, `.groundwork.json.ids` and `.designs`.
 
+**Spine-version**: `expected = "1"`. Runs [`../lib/state.md` §"Spine-version preamble gate"](../lib/state.md#spine-version-preamble-gate) as the first step after loading `.groundwork.json` — writing action (regenerates `09-orchestration.md`, bumps `orchestrate.last_run` + `last_05_hash_seen`), so refuses on either direction of mismatch. No-op at v1=current.
+
 **Pre-step**: runs `clarify` first; refuses on any `fail`, proceeds-with-caveats on `warn`.
 
 **The reference instance is `plans/studio/09-orchestration.md`** — every section structure here is derived from it. Re-read it before changing the template.

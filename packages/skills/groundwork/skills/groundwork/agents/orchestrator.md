@@ -46,6 +46,14 @@ EXECUTION PROTOCOL
    - Resolve, escalate to the user, or re-scope the brief.
    - Schema / interface / contract changes go through you — they're frozen gates. A subagent never invents a contract change.
 
+4b. DRIFT LOG (Round 8 · G-13)
+   - If a WP's shipped code diverges from its sub-plan or its 09-orchestration brief (added scope not in the plan, removed scope still in the plan, signature tweak, process deviation — e.g. landed on main vs. via worktree), record it in two places:
+     • Append a row to the WP's sub-plan `## Drift log` table (one row per divergence: round / commit sha / scope-change / justification / sub-plan section affected).
+     • Append a `drift_log[]` entry to `.groundwork.json.ids[WP-NN]` with the same fields (machine-readable for future `review` and `status` passes).
+     • Cross-ref a one-liner in the WP's report block in `05-tracking.md` (so the human reader sees the drift without opening the sub-plan).
+   - If shipped code matched the plan exactly, drift_log[] stays absent / the table empty — that's a positive signal, not noise.
+   - This is the structural mitigation for the "WP-22 added a guard beyond the diff plan" / "WP-25R landed directly on main" class of fault: invisible at write time, expensive at read time without a discoverable trail.
+
 5. MERGE ORDER
    - Per repo / owner, follow the wave plan.
    - For {profile} = software: contract/lib changes merge first; `pnpm install` at workspace root; then consumer changes in dep order.

@@ -5,6 +5,8 @@
 
 **Reads first**: `../lib/state.md`, `../agents/reviewer.md`, the current `01-plan.md` and `04-discussion.md`.
 
+**Spine-version**: `expected = "1"`. Runs [`../lib/state.md` §"Spine-version preamble gate"](../lib/state.md#spine-version-preamble-gate) as the first step after loading `.groundwork.json` — writing action (appends new Round to `04`, allocates `G-NN` IDs, re-syncs touched fences), so refuses on either direction of mismatch. No-op at v1=current.
+
 **Spawns**: one reviewer agent. Subagent type depends on scope — `general-purpose` for broad reviews, `Explore` for read-only structural critiques.
 
 **This is the highest-value recurring action.** The studio plan got materially better from two review passes; the studio second-pass caught `05-tracking.md` drifting from `01-plan.md` — a failure that motivated the entire stable-ID + traceability mechanism in `lib/state.md`.

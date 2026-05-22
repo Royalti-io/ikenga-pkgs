@@ -5,6 +5,8 @@
 
 **Reads first**: `../lib/state.md`, `.groundwork.json` (the current `subplans` registry).
 
+**Spine-version**: `expected = "1"`. Runs [`../lib/state.md` §"Spine-version preamble gate"](../lib/state.md#spine-version-preamble-gate) as the first step after loading `.groundwork.json` — writing action (creates `NN-*.md`, registers in `subplans`, appends to `00-README` spine-index fence), so refuses on either direction of mismatch. No-op at v1=current.
+
 **Profile-agnostic**: every profile uses the same archetypes. (Domain-specific archetypes could be added via overlay in the future; not in P1.)
 
 ---

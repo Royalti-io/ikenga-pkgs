@@ -5,6 +5,8 @@
 
 **Reads first**: `../lib/state.md`, `05-tracking.md`, `09-orchestration.md` (if it exists), `.groundwork.json`.
 
+**Spine-version**: `expected = "1"`. Runs [`../lib/state.md` §"Spine-version preamble gate"](../lib/state.md#spine-version-preamble-gate) as the first step after loading `.groundwork.json` — writing action (rewrites `board-data` + `board-meta` fences in `artifact/board.html`), so refuses on either direction of mismatch. No-op at v1=current.
+
 **Composes**: `ikenga-artifact-builder` when present (the board is itself a proper Ikenga artifact). Falls back to the self-contained template at `profiles/_shared/board/index.html` when absent — that template is fully working: opens in any browser, renders the plan, copy-prompt works.
 
 ---
@@ -36,7 +38,7 @@
    - **If `ikenga-artifact-builder` is installed** → invoke it via the `Skill` tool with archetype `dashboard` and the data model as `provided_data`. Place the output at `artifact/board.html`.
    - **Else** → copy `profiles/_shared/board/index.html` (the canonical template) to `artifact/board.html` and inject the data model into the `board-data` fenced block.
    The artifact's `index.html` (living spec) is NEVER touched by this action — that's a hand-authored doc; `refresh-board` only owns `board.html` + `manifest.json` (initial scaffold) + `data/` + `assets/` (initial scaffold).
-5. **Register** `artifact/board.html` in `.groundwork.json.docs` with two fenced regions: `board-data` (the JSON model) and `board-meta` (plan title, profile, `plan_folder` (e.g. `plans/groundwork`), `plan_slug` (basename of `plan_folder`), goal, last-refresh stamp). `plan_folder` + `plan_slug` are read by the board's Kickoff card (WP-20) for orchestrator-brief placeholder substitution; the canonical template carries `{{plan_folder}}` / `{{plan_slug}}` placeholders that `refresh-board` substitutes at write-time.
+5. **Register** `artifact/board.html` in `.groundwork.json.docs` with two fenced regions: `board-data` (the JSON model) and `board-meta` (plan title, profile, `plan_folder` (e.g. `plans/groundwork`), `plan_slug` (basename of `plan_folder`), goal, `orchestrated_at`, last-refresh stamp). `plan_folder` + `plan_slug` are read by the board's Kickoff card (WP-20) for orchestrator-brief placeholder substitution; the canonical template carries `{{plan_folder}}` / `{{plan_slug}}` placeholders that `refresh-board` substitutes at write-time. **`orchestrated_at`** (Round 8) is the date-portion of `.groundwork.json.orchestrate.last_run` (or omitted/null if orchestrate has never run); the board's PageHead collapses the full Kickoff card to a slim "Re-kickoff" button when it's present, saving header real estate on warm boards.
 6. **Show drift indicator**: compute "files changed since last refresh" by comparing the docs' on-disk hashes against the values from the last `refresh-board.last_run`. Embed in the board's right rail.
 7. **Print** the artifact path + a hint to open it: `open artifact/board.html` or paste into the Ikenga shell.
 
