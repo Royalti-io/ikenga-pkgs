@@ -5,7 +5,10 @@
   "type": "module",
   "description": "com.ikenga.studio app pkg — sidecars/project, mcp, src/studio. (WP-05a scaffolding minimum.)",
   "scripts": {
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "dev": "vite",
+    "build": "tsc -p tsconfig.web.json --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.web.json --noEmit",
     "build:sidecar": "bash sidecars/project/build.sh",
     "dev:sidecar": "bash sidecars/project/build.sh --watch",
     "build:mcp": "bash mcp/build.sh",
@@ -14,17 +17,24 @@
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.1",
     "@ikenga/studio-schema": "workspace:*",
+    "@ikenga/tokens": "workspace:*",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "better-sqlite3": "^11.3.0",
     "chokidar": "^3.6.0",
     "excalidraw-animate": "^0.7.2",
     "puppeteer": "^25.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^20.11.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.0",
     "esbuild": "^0.27.7",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vite": "^5.4.0"
   }
 }

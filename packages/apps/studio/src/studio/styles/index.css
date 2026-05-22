@@ -1,0 +1,50 @@
+/*
+ * com.ikenga.studio · iframe-local styles
+ *
+ * The canonical design tokens come from @ikenga/tokens. Importing the CSS
+ * here is the WP-07 fix for G21 (Round 8): the iframe sandbox must own its
+ * own --bg-*, --fg-*, --border-*, --font-* namespace. Without this import the
+ * canvas (and every other view) renders with browser-default colours because
+ * the shell's chrome stylesheet doesn't leak through the iframe boundary.
+ *
+ * Iframe-local helpers (link-pulse @keyframes, focus-ring overrides, layout
+ * helpers) belong in this file too — they're not generic enough to live in
+ * @ikenga/tokens, but they're not view-scoped either.
+ */
+
+@import '@ikenga/tokens/tokens.css';
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--fg);
+  font-family: var(--font-display);
+}
+
+#root {
+  position: relative;
+  isolation: isolate;
+}
+
+.studio-scaffold {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: 2rem;
+  text-align: center;
+}
+
+.studio-scaffold__title {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  margin: 0 0 0.5rem;
+  color: var(--fg);
+}
+
+.studio-scaffold__hint {
+  margin: 0;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
