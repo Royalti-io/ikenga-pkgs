@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # agent: orchestrator
 
 Brief template the `orchestrate` action uses to seed the orchestrator agent **at kickoff** (i.e. once the user is ready to drive the build, after `09-orchestration.md` exists).

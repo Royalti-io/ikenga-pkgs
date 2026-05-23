@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `clarify` — readiness gate before `orchestrate`
 
 **Loaded when**: the user wants to check whether the plan is ready to be orchestrated; or `orchestrate` was invoked and runs clarify first.
@@ -85,9 +84,9 @@ and any "(lean: <answer>)" / "(deferred)" markers. Items without resolution mark
 
 ## Critical-path freshness (check #5)
 
-The critical-path region in `05-tracking.md` is owned by `orchestrate`. If the whole-file hash of `01` or `05` has changed since `orchestrate` last ran (`.groundwork.json.docs.<file>.hash` differs from on-disk hash → wait, that means drift; if **on-disk hash differs from what `orchestrate` last computed it as**, the path is stale).
+The critical-path region in `05-tracking.md` is owned by `orchestrate`. The check is: **does the on-disk whole-file hash of `01` or `05` differ from the value `orchestrate` recorded when it last ran?** If so, those docs changed after the last orchestration and the critical path may be stale — flag `warn`.
 
-The action records `orchestrate.last_run` in `.groundwork.json` and compares.
+The action records `orchestrate.last_run` (and the `01`/`05` hashes as of that run) in `.groundwork.json` and compares against the current on-disk hashes.
 
 ---
 

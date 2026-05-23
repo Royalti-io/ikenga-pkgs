@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `subplan` — scaffold a focused `NN-*.md` sub-plan
 
 **Loaded when**: the user wants to scaffold a focused sub-plan for a hard piece — a diff plan for a critical-path PR, a decision doc for a between-round deliberation, or a postmortem for a bug.
@@ -14,7 +13,7 @@
 ## What it does
 
 1. **Verify** `.groundwork.json` exists. Refuse otherwise.
-2. **Query mempalace for similar prior sub-plans** *(G6 — composition with project memory)*. Once the archetype is known (after step 3), call:
+2. **Query project memory for similar prior sub-plans** *(G6 — composition with project memory)*. If a project-memory MCP is available (mempalace is the reference implementation), once the archetype is known (after step 3), call — using mempalace's tools as the concrete example:
    - `mempalace_kg_query({ entity: <project-root-path> })` — filter triples for `(_, has_subplan, _)` where the object's `archetype` matches.
    - `mempalace_search({ query: '<archetype> <topic-keywords>' })` — semantic hits for sub-plans of the same archetype in this project (or globally if no project hits).
    Surface up to **three hits** with one-liners ("`plans/studio/06-canvas-extraction.md` — diff-plan, 7-commit PR plan, 3-4d estimate") and ask whether to riff on any. If the user picks one, use it as a structural reference when rendering — e.g. "match the estimate-breakdown table shape from `06-canvas-extraction.md`." If memory has nothing, just render the template fresh. **Skip silently if mempalace MCP isn't available.**
@@ -26,10 +25,14 @@
 5. **Resolve the slug** — kebab-case, derived from `--topic` if passed, asked otherwise.
 6. **Render the template** — `profiles/_shared/templates/subplans/<archetype>.md` with `{{topic}}`, `{{date}}`, `{{vocab.*}}`, and any archetype-specific placeholders.
 7. **Write** to `NN-<slug>.md` at the plan root. Skip if it already exists (use `--force` to overwrite — rare; confirm first).
-8. **Register in `.groundwork.json.subplans`** with `{ archetype, topic, ref, created, hash }`.
-   Also **record the new sub-plan in mempalace** *(closing the loop)*:
-   `mempalace_kg_add({ subject: <project-root>, predicate: 'has_subplan', object: <slug>, attrs: { archetype, topic, ref, created } })`. Skip if MCP unavailable.
-9. **Cross-link from `00-README.md`** — add a row to the "What's here" table inside the appropriate generated-region fence (`spine-index` if present, otherwise warn).
+8. **Register via the script** (don't hand-edit the anchor) — it stamps the new file's hash, sets `status: active`, and normalizes a missing ref to `null`:
+   ```bash
+   python3 <skill>/scripts/groundwork_state.py register-subplan \
+     --plan <plan> --file NN-<slug>.md --archetype <archetype> --topic "<topic>" [--ref WP-NN]
+   ```
+   Also **record the new sub-plan in project memory** *(closing the loop)*, if a project-memory MCP is available. With mempalace:
+   `mempalace_kg_add({ subject: <project-root>, predicate: 'has_subplan', object: <slug>, attrs: { archetype, topic, ref, created } })`. Skip if no project-memory MCP is available.
+9. **Cross-link from `00-README.md`** — add a row to the "What's here" table inside the `spine-index` fence by recomputing that region's full content (existing rows + the new one) and writing it with `write-region --file 00-README.md --id spine-index --action subplan`. If `00-README` has no `spine-index` fence, the script returns an error — fall back to printing the row text for the user to paste (see Edge cases).
 10. **Cross-link from `05-tracking.md` / `01-plan.md`** if `--ref WP-NN` or `--ref §<section>` was passed — adds a "See sub-plan NN-*.md" note in the matching section (inside the appropriate fence).
 11. **Print** the created path + next steps (open it, fill in the template, run `groundwork status` to confirm registration).
 
@@ -120,7 +123,7 @@ Scaffold a new groundwork sub-plan in `{plan_folder}` (plan title: {plan_title})
 
 Archetype: {archetype} (one of: diff-plan, decision-doc, bug-doc). Topic: {topic}. Reference: {ref}.
 
-If the groundwork skill is loaded in this session, follow its `subplan` action verbatim — read `.claude/skills/groundwork/actions/subplan.md`, resolve the next free `NN` number ≥ 06, render the matching template from `profiles/_shared/templates/subplans/{archetype}.md`, write to `{plan_folder}/NN-<slug>.md`, register in `.groundwork.json.subplans`, and cross-link from `00-README.md`. If the skill is not loaded, read the canonical reference instance for the archetype (`{plan_folder}/06-startSeededChat-extraction.md` for diff-plan, `07-spine-version-migration.md` for decision-doc, `08-index-board-fence-confusion.md` for bug-doc) and mirror its section shape with the new topic.
+If the groundwork skill is loaded in this session, follow its `subplan` action verbatim — read `.claude/skills/groundwork/actions/subplan.md`, resolve the next free `NN` number ≥ 06, render the matching template from `profiles/_shared/templates/subplans/{archetype}.md`, write to `{plan_folder}/NN-<slug>.md`, register in `.groundwork.json.subplans`, and cross-link from `00-README.md`. If the skill is not loaded, read the canonical reference instance for the archetype (`plans/studio/06-canvas-extraction.md` for diff-plan, `plans/studio/07-monaco-swap.md` for decision-doc, `plans/studio/08-tsserver-stdin-eof-bug.md` for bug-doc — the same exemplars named in this action's archetype list) and mirror its section shape with the new topic.
 
 Don't reuse a number already in use; don't write to 09 (reserved for orchestrate).
 ```

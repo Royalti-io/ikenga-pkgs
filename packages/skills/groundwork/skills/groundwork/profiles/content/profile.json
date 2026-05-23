@@ -1,0 +1,19 @@
+{
+  "name": "content",
+  "extends": "_shared",
+  "spine_version": "1",
+  "labels": {
+    "work_unit": "piece",
+    "isolation_axis": "channel + editorial slot",
+    "freeze_gate_noun": "key-art lock"
+  },
+  "optional_blocks": [
+    "editorial_standards",
+    "distribution_plan"
+  ],
+  "produces_designs": true,
+  "spine_overrides": {
+    "01-plan.md": "templates/01-plan.md",
+    "05-tracking.md": "templates/05-tracking.md"
+  }
+}

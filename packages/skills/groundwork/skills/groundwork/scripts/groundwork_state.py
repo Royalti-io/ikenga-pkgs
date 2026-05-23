@@ -1,0 +1,778 @@
+#!/usr/bin/env python3
+"""groundwork_state.py — the deterministic state machine behind the groundwork skill.
+
+Python 3, stdlib only. No third-party deps, no build step — runs anywhere `python3` is.
+
+This script is the *authoritative executor* for every mechanic that must be exact:
+fence-region read/write, sha256 hash-diff idempotency, atomic `.groundwork.json`
+writes, the spine-version gate, profile conformance (the 10 rules), ID allocation,
+template scaffolding, and the board / status data models. The action files call
+into it rather than re-deriving these by hand — an LLM cannot reliably reproduce a
+byte-exact region or a real sha256 across invocations, and the skill's whole promise
+is byte-exact idempotency. `lib/state.md` is the *spec* for what this script does;
+this file is the implementation.
+
+Contract summary (see lib/state.md for the prose):
+  * A generated region is `<!-- groundwork:auto:start ID -->` … `<!-- groundwork:auto:end ID -->`.
+  * The region's *content hash* is sha256 over the inner body, EXCLUDING the fence
+    comments themselves AND an optional leading `last_action:` metadata line (whose
+    timestamp must never churn the hash).
+  * A write only happens when the new content hash differs from the recorded one.
+  * If the on-disk body diverges from what we last wrote, the user hand-edited inside
+    the fence; we refuse (SKIPPED_DIRTY) unless --force.
+  * Every `.groundwork.json` write is tmp-then-rename (atomic).
+
+Exit codes: 0 ok · 1 hard error / refusal · 2 missing-or-corrupt anchor · 3 spine-gate refusal.
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as _dt
+import hashlib
+import json
+import os
+import re
+import sys
+import tempfile
+
+# --------------------------------------------------------------------------- #
+# small helpers
+# --------------------------------------------------------------------------- #
+
+ANCHOR = ".groundwork.json"
+CURRENT_SPINE_VERSION = "1"
+
+# Keys we genuinely substitute from real sources. Anything else in {{…}} is a
+# human-fill example mistakenly using the machine sigil; we down-convert it to <…>.
+def _today() -> str:
+    return _dt.datetime.now(_dt.timezone.utc).date().isoformat()
+
+
+def _now() -> str:
+    return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def sha256_text(s: str) -> str:
+    return "sha256:" + hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+def die(msg: str, code: int = 1) -> "NoReturn":  # type: ignore[name-defined]
+    sys.stderr.write(msg.rstrip("\n") + "\n")
+    sys.exit(code)
+
+
+def emit(obj) -> None:
+    """Print a JSON result to stdout (the action parses this)."""
+    json.dump(obj, sys.stdout, indent=2, sort_keys=False)
+    sys.stdout.write("\n")
+
+
+def read_file(path: str) -> str:
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def atomic_write(path: str, data: str) -> None:
+    d = os.path.dirname(os.path.abspath(path)) or "."
+    fd, tmp = tempfile.mkstemp(dir=d, prefix=".gw-tmp-")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(data)
+        os.replace(tmp, path)
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
+# --------------------------------------------------------------------------- #
+# anchor I/O
+# --------------------------------------------------------------------------- #
+
+def anchor_path(plan: str) -> str:
+    return os.path.join(plan, ANCHOR)
+
+
+def load_anchor(plan: str) -> dict:
+    p = anchor_path(plan)
+    if not os.path.exists(p):
+        die(f"not a groundwork plan folder (no {ANCHOR}); run `groundwork init` first.", 2)
+    try:
+        return json.loads(read_file(p))
+    except json.JSONDecodeError as e:
+        die(f"{ANCHOR} is corrupt JSON ({e}); restore from git.", 2)
+
+
+def save_anchor(plan: str, anchor: dict) -> None:
+    anchor["updated"] = _now()
+    atomic_write(anchor_path(plan), json.dumps(anchor, indent=2) + "\n")
+
+
+# --------------------------------------------------------------------------- #
+# fence parsing
+# --------------------------------------------------------------------------- #
+
+# Recognize markdown (<!-- -->), // and # line-comment fence variants.
+def _fence_patterns(fence_id: str):
+    esc = re.escape(fence_id)
+    start = re.compile(
+        rf"^[ \t]*(?:<!--|//|#)[ \t]*groundwork:auto:start[ \t]+{esc}[ \t]*(?:-->)?[ \t]*$",
+        re.M,
+    )
+    end = re.compile(
+        rf"^[ \t]*(?:<!--|//|#)[ \t]*groundwork:auto:end[ \t]+{esc}[ \t]*(?:-->)?[ \t]*$",
+        re.M,
+    )
+    return start, end
+
+
+_META_RE = re.compile(
+    r"^[ \t]*(?:<!--|//|#)[ \t]*last_action:[^\n]*?(?:-->)?[ \t]*$", re.M
+)
+
+
+def _strip_meta(body: str) -> str:
+    """Drop a single leading `last_action:` metadata line, then trim."""
+    lines = body.splitlines()
+    # skip leading blank lines
+    i = 0
+    while i < len(lines) and lines[i].strip() == "":
+        i += 1
+    if i < len(lines) and _META_RE.match(lines[i]):
+        i += 1
+    return "\n".join(lines[i:]).strip("\n").strip()
+
+
+def find_region(text: str, fence_id: str):
+    """Return (start_span, end_span, inner_body) or None. inner_body is the raw text
+    between the fence comment lines (newline-delimited, fences excluded)."""
+    s_re, e_re = _fence_patterns(fence_id)
+    sm = s_re.search(text)
+    if not sm:
+        return None
+    em = e_re.search(text, sm.end())
+    if not em:
+        return None
+    inner = text[sm.end():em.start()]
+    return (sm.start(), sm.end()), (em.start(), em.end()), inner
+
+
+def region_content_hash(text: str, fence_id: str):
+    r = find_region(text, fence_id)
+    if r is None:
+        return None
+    _, _, inner = r
+    return sha256_text(_strip_meta(inner))
+
+
+# --------------------------------------------------------------------------- #
+# profiles
+# --------------------------------------------------------------------------- #
+
+PROFILE_ALLOWED_KEYS = {
+    "name", "extends", "spine_version", "labels",
+    "optional_blocks", "produces_designs", "spine", "spine_overrides",
+}
+LABEL_KEYS = {"work_unit", "isolation_axis", "freeze_gate_noun"}
+
+
+def _profile_json_path(root: str, name: str) -> str:
+    return os.path.join(root, name, "profile.json")
+
+
+def validate_profile(root: str, name: str) -> dict:
+    """Run rules 1-10. Returns {name, status: conformant|rejected|warn, errors:[], warnings:[]}.
+    Canonical error strings are load-bearing — do not paraphrase (lib/state.md §Profile contract)."""
+    errors, warnings = [], []
+    p = _profile_json_path(root, name)
+    if not os.path.exists(p):  # rule 1
+        return {"name": name, "status": "rejected",
+                "errors": [f'profile "{name}": profile.json missing at profiles/{name}/profile.json'],
+                "warnings": []}
+    try:  # rule 2
+        data = json.loads(read_file(p))
+    except json.JSONDecodeError as e:
+        return {"name": name, "status": "rejected",
+                "errors": [f'profile "{name}": profile.json is not valid JSON ({e})'],
+                "warnings": []}
+
+    is_shared = name == "_shared"
+    if data.get("name") != name:  # rule 3
+        errors.append(f'profile "{name}": profile.json declares name="{data.get("name")}" but lives in profiles/{name}/')
+    if not is_shared and data.get("extends") != "_shared":  # rule 4
+        errors.append(f'profile "{name}": extends must be "_shared" (got {data.get("extends")})')
+    sv = str(data.get("spine_version"))  # rule 5
+    if sv > CURRENT_SPINE_VERSION:
+        errors.append(f'profile "{name}": spine_version={data.get("spine_version")} exceeds skill\'s current spine_version={CURRENT_SPINE_VERSION}')
+    labels = data.get("labels")  # rule 6
+    if not isinstance(labels, dict):
+        errors.append(f'profile "{name}": labels.work_unit missing or empty')
+    else:
+        for k in LABEL_KEYS:
+            v = labels.get(k)
+            if not isinstance(v, str) or not v.strip():
+                errors.append(f'profile "{name}": labels.{k} missing or empty')
+    ob = data.get("optional_blocks")  # rule 7
+    if not (isinstance(ob, list) and all(isinstance(x, str) for x in ob)):
+        errors.append(f'profile "{name}": optional_blocks must be an array of strings')
+    if not isinstance(data.get("produces_designs"), bool):  # rule 8
+        errors.append(f'profile "{name}": produces_designs must be true or false')
+    so = data.get("spine_overrides")  # rule 9
+    if not isinstance(so, dict):
+        errors.append(f'profile "{name}": spine_overrides must be an object')
+    else:
+        for fname, rel in so.items():
+            if not os.path.exists(os.path.join(root, name, rel)):
+                errors.append(f'profile "{name}": spine_overrides["{fname}"] points to {rel}, which does not exist')
+    for k in data:  # rule 10 (warn)
+        if k not in PROFILE_ALLOWED_KEYS:
+            warnings.append(f'profile "{name}": unknown top-level key "{k}" (allowed: {", ".join(sorted(PROFILE_ALLOWED_KEYS))})')
+
+    status = "rejected" if errors else ("warn" if warnings else "conformant")
+    return {"name": name, "status": status, "errors": errors, "warnings": warnings}
+
+
+def resolve_profile(root: str, name: str) -> dict:
+    """Merge <name> over _shared. Returns the effective profile + the vocab map + spine list."""
+    base = json.loads(read_file(_profile_json_path(root, "_shared")))
+    if name == "_shared":
+        overlay = base
+    else:
+        overlay = json.loads(read_file(_profile_json_path(root, name)))
+    eff = dict(base)
+    eff["name"] = name
+    eff["labels"] = {**base.get("labels", {}), **overlay.get("labels", {})}
+    eff["optional_blocks"] = list(dict.fromkeys(
+        base.get("optional_blocks", []) + overlay.get("optional_blocks", [])))
+    if "produces_designs" in overlay:
+        eff["produces_designs"] = overlay["produces_designs"]
+    eff["spine"] = overlay.get("spine", base.get("spine", []))
+    eff["spine_overrides"] = {**base.get("spine_overrides", {}), **overlay.get("spine_overrides", {})}
+    return eff
+
+
+# --------------------------------------------------------------------------- #
+# template rendering
+# --------------------------------------------------------------------------- #
+
+_PLACEHOLDER_RE = re.compile(r"\{\{[ \t]*([^}]+?)[ \t]*\}\}")
+
+
+def render_template(text: str, subs: dict) -> str:
+    """Substitute known machine keys. Any leftover {{…}} is a human-fill example
+    using the wrong sigil — down-convert it to <…> so output is clean and the
+    'no stray {{}}' contract holds without inventing content."""
+    def repl(m):
+        key = m.group(1).strip()
+        if key in subs:
+            return str(subs[key])
+        # vocab.* that resolved are in subs; anything else is human-fill
+        return "<" + key + ">"
+    return _PLACEHOLDER_RE.sub(repl, text)
+
+
+def build_subs(profile: dict, goal: str, plan_slug: str, extra: dict | None = None) -> dict:
+    labels = profile.get("labels", {})
+    subs = {
+        "date": _today(),
+        "goal": goal,
+        "profile": profile["name"],
+        "plan_slug": plan_slug,
+        "vocab.work_unit": labels.get("work_unit", "work item"),
+        "vocab.isolation_axis": labels.get("isolation_axis", "owner + scope"),
+        "vocab.freeze_gate_noun": labels.get("freeze_gate_noun", "decision lock"),
+    }
+    if extra:
+        subs.update(extra)
+    return subs
+
+
+# Region IDs we record per spine file at scaffold time (from the templates).
+SCAFFOLD_REGIONS = {
+    "00-README.md": ["spine-index", "status-block"],
+    "01-plan.md": ["goal", "ids"],
+    "02-research-external.md": ["findings", "sources"],
+    "03-research-internal.md": ["findings"],
+    "04-discussion.md": ["rounds-index"],
+    "05-tracking.md": ["round-fold", "wp-matrix", "wave-plan", "critical-path"],
+}
+
+
+def template_path(root: str, profile: dict, fname: str) -> str:
+    """spine_overrides win, else _shared/templates/<fname>."""
+    so = profile.get("spine_overrides", {})
+    if fname in so:
+        cand = os.path.join(root, profile["name"], so[fname])
+        if os.path.exists(cand):
+            return cand
+    return os.path.join(root, "_shared", "templates", fname)
+
+
+# --------------------------------------------------------------------------- #
+# command: spine-gate
+# --------------------------------------------------------------------------- #
+
+def cmd_spine_gate(args):
+    anchor = load_anchor(args.plan)
+    a = str(anchor.get("spine_version"))
+    e = str(args.expected)
+    if a == e:
+        emit({"result": "ok", "anchor": a, "expected": e})
+        return
+    if a < e:
+        die(f"plan is on spine_version={a}, this skill expects {e}. "
+            f"Run `groundwork init --migrate` to bring the folder forward.", 3)
+    # a > e
+    if args.readonly:
+        sys.stderr.write(f"warning: plan is on spine_version={a}, this skill is on {e} — running read-only.\n")
+        emit({"result": "warn-readonly", "anchor": a, "expected": e})
+        return
+    die(f"plan is on spine_version={a}, this skill is on {e}. "
+        f"Upgrade the groundwork skill (`npx skills add royalti-io/groundwork`) before writing.", 3)
+
+
+# --------------------------------------------------------------------------- #
+# command: validate-profile / resolve-profile
+# --------------------------------------------------------------------------- #
+
+def cmd_validate_profile(args):
+    if args.all:
+        results = []
+        for name in sorted(os.listdir(args.profiles_root)):
+            if os.path.isdir(os.path.join(args.profiles_root, name)):
+                results.append(validate_profile(args.profiles_root, name))
+        emit({"profiles": results})
+        if any(r["status"] == "rejected" for r in results):
+            sys.exit(1)
+        return
+    r = validate_profile(args.profiles_root, args.name)
+    emit(r)
+    if r["status"] == "rejected":
+        sys.exit(1)
+
+
+def cmd_resolve_profile(args):
+    emit(resolve_profile(args.profiles_root, args.name))
+
+
+# --------------------------------------------------------------------------- #
+# command: init-anchor / read-anchor
+# --------------------------------------------------------------------------- #
+
+def _new_anchor(profile: str, goal: str) -> dict:
+    now = _now()
+    return {
+        "spine_version": CURRENT_SPINE_VERSION,
+        "profile": profile,
+        "created": now,
+        "updated": now,
+        "goal": goal,
+        "docs": {},
+        "ids": {},
+        "designs": {},
+        "subplans": {},
+        "research": {},
+    }
+
+
+def cmd_read_anchor(args):
+    emit(load_anchor(args.plan))
+
+
+# --------------------------------------------------------------------------- #
+# command: scaffold
+# --------------------------------------------------------------------------- #
+
+def _record_doc(anchor: dict, plan: str, relpath: str, fence_ids, action: str):
+    """Record a doc's whole-file hash + region hashes. Preserves the existing
+    region entry (including its last_written stamp) when the content hash is
+    unchanged, so re-recording an untouched doc produces no diff — the basis of
+    scaffold idempotency."""
+    full = os.path.join(plan, relpath)
+    text = read_file(full)
+    prior = {r["id"]: r for r in anchor.get("docs", {}).get(relpath, {}).get("generated_regions", [])}
+    regions = []
+    for fid in fence_ids:
+        h = region_content_hash(text, fid)
+        if h is None:
+            continue
+        old = prior.get(fid)
+        if old and old.get("hash") == h:
+            regions.append(old)  # unchanged — keep the original stamp
+        else:
+            regions.append({"id": fid, "hash": h, "last_action": action, "last_written": _now()})
+    anchor.setdefault("docs", {})[relpath] = {
+        "hash": sha256_text(text),
+        "generated_regions": regions,
+    }
+
+
+def cmd_scaffold(args):
+    plan = args.plan
+    root = args.profiles_root
+    plan_slug = os.path.basename(os.path.normpath(plan))
+
+    # conformance gate before touching disk (rules 1-9 hard)
+    v = validate_profile(root, args.profile)
+    if v["status"] == "rejected":
+        die("\n".join(v["errors"]), 1)
+
+    profile = resolve_profile(root, args.profile)
+    subs = build_subs(profile, args.goal, plan_slug)
+
+    existing_anchor = os.path.exists(anchor_path(plan))
+    if existing_anchor and not args.force:
+        anchor = load_anchor(plan)
+    else:
+        anchor = _new_anchor(args.profile, args.goal)
+    # snapshot for true-no-op detection (everything except the volatile `updated`)
+    before = json.dumps({k: v for k, v in anchor.items() if k != "updated"}, sort_keys=True)
+
+    os.makedirs(plan, exist_ok=True)
+    written, skipped = [], []
+    for fname in profile["spine"]:
+        dest = os.path.join(plan, fname)
+        if os.path.exists(dest) and not args.force:
+            skipped.append(fname)
+        else:
+            tpl = template_path(root, profile, fname)
+            atomic_write(dest, render_template(read_file(tpl), subs))
+            written.append(fname)
+        _record_doc(anchor, plan, fname, SCAFFOLD_REGIONS.get(fname, []), "init")
+
+    # designs/ + drafts/ (cheap dirs)
+    os.makedirs(os.path.join(plan, "designs"), exist_ok=True)
+    gitkeep = os.path.join(plan, "designs", ".gitkeep")
+    if not os.path.exists(gitkeep):
+        atomic_write(gitkeep, "")
+    drafts_tpl = os.path.join(root, "_shared", "templates", "drafts", "README.md")
+    drafts_dest = os.path.join(plan, "drafts", "README.md")
+    os.makedirs(os.path.join(plan, "drafts"), exist_ok=True)
+    if os.path.exists(drafts_tpl) and not os.path.exists(drafts_dest):
+        atomic_write(drafts_dest, render_template(read_file(drafts_tpl), subs))
+        written.append("drafts/README.md")
+
+    after = json.dumps({k: v for k, v in anchor.items() if k != "updated"}, sort_keys=True)
+    changed = (not existing_anchor) or (before != after) or bool(written)
+    if changed:
+        save_anchor(plan, anchor)  # bumps `updated`
+    # else: true no-op — leave the anchor (and its `updated`) untouched
+    emit({"result": "scaffolded" if not existing_anchor else ("reconciled" if changed else "unchanged"),
+          "plan": plan, "profile": args.profile, "spine_version": CURRENT_SPINE_VERSION,
+          "written": written, "skipped_existing": skipped})
+
+
+# --------------------------------------------------------------------------- #
+# command: read-region / write-region
+# --------------------------------------------------------------------------- #
+
+def cmd_read_region(args):
+    r = find_region(read_file(args.file), args.id)
+    if r is None:
+        die(f"fence '{args.id}' not found in {args.file}", 1)
+    _, _, inner = r
+    sys.stdout.write(_strip_meta(inner) + "\n")
+
+
+def cmd_write_region(args):
+    plan = args.plan
+    relpath = args.file
+    full = os.path.join(plan, relpath)
+    fid = args.id
+    action = args.action
+    new_content = args.content if args.content is not None else read_file(args.content_file)
+    new_content = new_content.strip("\n")
+    new_hash = sha256_text(new_content.strip())
+
+    text = read_file(full)
+    r = find_region(text, fid)
+    if r is None:
+        die(f"fence '{fid}' not found in {relpath}", 1)
+    (s0, s1), (e0, e1), inner = r
+
+    anchor = load_anchor(plan)
+    doc = anchor.get("docs", {}).get(relpath, {})
+    recorded = next((x for x in doc.get("generated_regions", []) if x["id"] == fid), None)
+    on_disk_hash = sha256_text(_strip_meta(inner))
+
+    # no-op?
+    if recorded and recorded["hash"] == new_hash and on_disk_hash == new_hash:
+        emit({"result": "UNCHANGED", "file": relpath, "id": fid})
+        return
+    # dirty? (on-disk differs from what we last wrote, and content actually changed)
+    if recorded and on_disk_hash != recorded["hash"] and not args.force:
+        emit({"result": "SKIPPED_DIRTY", "file": relpath, "id": fid,
+              "hint": f"region '{fid}' edited by hand; pass --force to overwrite"})
+        sys.exit(0)
+
+    # detect comment style from the start fence line
+    start_line = text[s0:s1]
+    if start_line.lstrip().startswith("//"):
+        meta = f"// last_action: {action} · {_now()}"
+    elif start_line.lstrip().startswith("#"):
+        meta = f"# last_action: {action} · {_now()}"
+    else:
+        meta = f"<!-- last_action: {action} · {_now()} -->"
+
+    new_inner = f"\n{meta}\n{new_content}\n"
+    new_text = text[:s1] + new_inner + text[e0:]
+    atomic_write(full, new_text)
+
+    # update anchor
+    doc = anchor.setdefault("docs", {}).setdefault(relpath, {"generated_regions": []})
+    regs = doc.setdefault("generated_regions", [])
+    entry = next((x for x in regs if x["id"] == fid), None)
+    if entry is None:
+        entry = {"id": fid}
+        regs.append(entry)
+    entry.update({"hash": new_hash, "last_action": action, "last_written": _now()})
+    doc["hash"] = sha256_text(new_text)
+    save_anchor(plan, anchor)
+    emit({"result": "WRITTEN", "file": relpath, "id": fid})
+
+
+# --------------------------------------------------------------------------- #
+# command: next-id / register-id
+# --------------------------------------------------------------------------- #
+
+def cmd_next_id(args):
+    anchor = load_anchor(args.plan)
+    ids = anchor.get("ids", {})
+    kind = args.kind
+    if kind in ("gap", "wp", "design"):
+        prefix = {"gap": "G", "wp": "WP", "design": "D"}[kind]
+        nums = []
+        pat = re.compile(rf"^{prefix}-(\d+)")
+        for k in ids:
+            m = pat.match(k)
+            if m:
+                nums.append(int(m.group(1)))
+        nxt = (max(nums) + 1) if nums else 1
+        emit({"kind": kind, "next": f"{prefix}-{nxt:02d}"})
+    elif kind == "gate":
+        if not args.name:
+            die("gate IDs require --name (e.g. --name SCHEMA → G-SCHEMA)", 1)
+        emit({"kind": kind, "next": f"G-{args.name.upper()}"})
+    else:
+        die(f"unknown id kind: {kind}", 1)
+
+
+def cmd_stamp_research(args):
+    anchor = load_anchor(args.plan)
+    anchor.setdefault("research", {}).setdefault(args.file, {})["stamped"] = args.date or _today()
+    save_anchor(args.plan, anchor)
+    emit({"result": "stamped", "file": args.file, "stamped": anchor["research"][args.file]["stamped"]})
+
+
+def cmd_register_subplan(args):
+    anchor = load_anchor(args.plan)
+    full = os.path.join(args.plan, args.file)
+    h = sha256_text(read_file(full)) if os.path.exists(full) else None
+    anchor.setdefault("subplans", {})[args.file] = {
+        "archetype": args.archetype, "topic": args.topic,
+        "ref": args.ref if args.ref not in (None, "", "none") else None,
+        "created": _now(), "hash": h, "status": "active",
+    }
+    save_anchor(args.plan, anchor)
+    emit({"result": "registered-subplan", "file": args.file,
+          "entry": anchor["subplans"][args.file]})
+
+
+def cmd_register_id(args):
+    anchor = load_anchor(args.plan)
+    ids = anchor.setdefault("ids", {})
+    entry = ids.get(args.id, {})
+    entry["doc"] = args.doc
+    for kv in (args.field or []):
+        if "=" not in kv:
+            die(f"--field expects k=v, got {kv}", 1)
+        k, v = kv.split("=", 1)
+        try:
+            v = json.loads(v)
+        except json.JSONDecodeError:
+            pass
+        entry[k] = v
+    ids[args.id] = entry
+    save_anchor(args.plan, anchor)
+    emit({"result": "registered", "id": args.id, "entry": entry})
+
+
+# --------------------------------------------------------------------------- #
+# command: board-data / status-data
+# --------------------------------------------------------------------------- #
+
+def _plan_title(plan: str, anchor: dict) -> str:
+    f = os.path.join(plan, "01-plan.md")
+    if os.path.exists(f):
+        for line in read_file(f).splitlines():
+            if line.startswith("# "):
+                return line[2:].strip()
+    return anchor.get("goal", "")
+
+
+def cmd_board_data(args):
+    plan = args.plan
+    anchor = load_anchor(plan)
+    ids = anchor.get("ids", {})
+    wps, gates = [], []
+    for k, v in ids.items():
+        if k.startswith("WP-"):
+            wps.append({"id": k, "title": v.get("title", ""), "wave": v.get("wave"),
+                        "deps": v.get("depends_on", []), "status": v.get("status", "queued"),
+                        "gate": v.get("gate")})
+        elif k.startswith("G-") and v.get("kind") == "freeze_gate":
+            gates.append({"id": k, "wp": v.get("wp"), "status": v.get("status", "pending")})
+    designs = [{"path": p, "phase": d.get("phase"), "wp": d.get("wp"), "locked": d.get("locked", False)}
+               for p, d in anchor.get("designs", {}).items()]
+    subplans = [{"path": p, "archetype": d.get("archetype"), "ref": d.get("ref"),
+                 "status": d.get("status", "active")} for p, d in anchor.get("subplans", {}).items()]
+    emit({
+        "plan": {"title": _plan_title(plan, anchor), "profile": anchor.get("profile"),
+                 "goal": anchor.get("goal"), "slug": os.path.basename(os.path.normpath(plan))},
+        "gates": gates, "wps": wps, "designs": designs, "subplans": subplans,
+        "research": {k: v.get("stamped") for k, v in anchor.get("research", {}).items()},
+    })
+
+
+def cmd_status_data(args):
+    plan = args.plan
+    anchor = load_anchor(plan)
+    docs = anchor.get("docs", {})
+    doc_report = []
+    for relpath, meta in docs.items():
+        full = os.path.join(plan, relpath)
+        if not os.path.exists(full):
+            doc_report.append({"file": relpath, "state": "missing"})
+            continue
+        text = read_file(full)
+        whole_ok = sha256_text(text) == meta.get("hash")
+        dirty = []
+        for reg in meta.get("generated_regions", []):
+            cur = region_content_hash(text, reg["id"])
+            if cur is not None and cur != reg["hash"]:
+                dirty.append(reg["id"])
+        doc_report.append({"file": relpath,
+                           "state": "in-sync" if (whole_ok and not dirty) else "drift",
+                           "whole_file_match": whole_ok, "dirty_regions": dirty})
+    ids = anchor.get("ids", {})
+    gaps = sum(1 for k, v in ids.items() if k.startswith("G-") and v.get("kind") != "freeze_gate")
+    gates = sum(1 for k, v in ids.items() if k.startswith("G-") and v.get("kind") == "freeze_gate")
+    wps = sum(1 for k in ids if k.startswith("WP-"))
+    designs_n = sum(1 for k in ids if k.startswith("D-"))
+    profiles_report = None
+    if args.profiles_root:
+        profiles_report = [validate_profile(args.profiles_root, n)
+                           for n in sorted(os.listdir(args.profiles_root))
+                           if os.path.isdir(os.path.join(args.profiles_root, n))]
+    emit({
+        "profile": anchor.get("profile"), "spine_version": anchor.get("spine_version"),
+        "goal": anchor.get("goal"), "created": anchor.get("created"), "updated": anchor.get("updated"),
+        "docs": doc_report,
+        "ids": {"gaps": gaps, "gates": gates, "wps": wps, "designs": designs_n, "total": len(ids)},
+        "subplans": [{"path": p, "archetype": d.get("archetype"), "status": d.get("status", "active"),
+                      "ref": d.get("ref")} for p, d in anchor.get("subplans", {}).items()],
+        "designs": anchor.get("designs", {}),
+        "research": anchor.get("research", {}),
+        "profile_conformance": profiles_report,
+    })
+
+
+# --------------------------------------------------------------------------- #
+# argparse wiring
+# --------------------------------------------------------------------------- #
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(prog="groundwork_state.py", description=__doc__,
+                                formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="cmd", required=True)
+
+    g = sub.add_parser("spine-gate", help="run the spine-version preamble gate")
+    g.add_argument("--plan", required=True)
+    g.add_argument("--expected", required=True)
+    g.add_argument("--readonly", action="store_true")
+    g.set_defaults(func=cmd_spine_gate)
+
+    g = sub.add_parser("validate-profile", help="run the 10-rule conformance gate")
+    g.add_argument("--profiles-root", required=True)
+    g.add_argument("--name")
+    g.add_argument("--all", action="store_true")
+    g.set_defaults(func=cmd_validate_profile)
+
+    g = sub.add_parser("resolve-profile", help="merge a profile over _shared")
+    g.add_argument("--profiles-root", required=True)
+    g.add_argument("--name", required=True)
+    g.set_defaults(func=cmd_resolve_profile)
+
+    g = sub.add_parser("read-anchor", help="print .groundwork.json (validates)")
+    g.add_argument("--plan", required=True)
+    g.set_defaults(func=cmd_read_anchor)
+
+    g = sub.add_parser("scaffold", help="resolve+render the spine, write anchor (idempotent)")
+    g.add_argument("--plan", required=True)
+    g.add_argument("--profiles-root", required=True)
+    g.add_argument("--profile", required=True)
+    g.add_argument("--goal", required=True)
+    g.add_argument("--force", action="store_true")
+    g.set_defaults(func=cmd_scaffold)
+
+    g = sub.add_parser("read-region", help="print a fence region's inner content")
+    g.add_argument("--file", required=True)
+    g.add_argument("--id", required=True)
+    g.set_defaults(func=cmd_read_region)
+
+    g = sub.add_parser("write-region", help="hash-diff write into a fence region")
+    g.add_argument("--plan", required=True)
+    g.add_argument("--file", required=True, help="path relative to --plan")
+    g.add_argument("--id", required=True)
+    g.add_argument("--action", required=True)
+    g.add_argument("--content")
+    g.add_argument("--content-file")
+    g.add_argument("--force", action="store_true")
+    g.set_defaults(func=cmd_write_region)
+
+    g = sub.add_parser("next-id", help="compute the next free ID of a kind")
+    g.add_argument("--plan", required=True)
+    g.add_argument("--kind", required=True, choices=["gap", "wp", "gate", "design"])
+    g.add_argument("--name")
+    g.set_defaults(func=cmd_next_id)
+
+    g = sub.add_parser("stamp-research", help="set a research freshness stamp in the anchor")
+    g.add_argument("--plan", required=True)
+    g.add_argument("--file", required=True)
+    g.add_argument("--date")
+    g.set_defaults(func=cmd_stamp_research)
+
+    g = sub.add_parser("register-subplan", help="register a sub-plan in the anchor")
+    g.add_argument("--plan", required=True)
+    g.add_argument("--file", required=True, help="e.g. 06-foo.md")
+    g.add_argument("--archetype", required=True, choices=["diff-plan", "decision-doc", "bug-doc"])
+    g.add_argument("--topic", required=True)
+    g.add_argument("--ref")
+    g.set_defaults(func=cmd_register_subplan)
+
+    g = sub.add_parser("register-id", help="register an ID in the anchor")
+    g.add_argument("--plan", required=True)
+    g.add_argument("--id", required=True)
+    g.add_argument("--doc", required=True)
+    g.add_argument("--field", action="append")
+    g.set_defaults(func=cmd_register_id)
+
+    g = sub.add_parser("board-data", help="emit the board data model")
+    g.add_argument("--plan", required=True)
+    g.set_defaults(func=cmd_board_data)
+
+    g = sub.add_parser("status-data", help="emit the computed status model")
+    g.add_argument("--plan", required=True)
+    g.add_argument("--profiles-root")
+    g.set_defaults(func=cmd_status_data)
+
+    return p
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

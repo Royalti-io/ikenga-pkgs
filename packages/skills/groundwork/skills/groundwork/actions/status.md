@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `status` — read-only health report
 
 **Loaded when**: the user asks "where are we" / runs `groundwork status`.
@@ -8,6 +7,14 @@
 **Spine-version**: `expected = "1"`. Runs [`../lib/state.md` §"Spine-version preamble gate"](../lib/state.md#spine-version-preamble-gate) as the first step after loading `.groundwork.json` — read-only action, so on anchor-too-old it **refuses with the migrate hint** (status of a not-yet-migrated folder isn't meaningful), but on anchor-too-new it **warns and proceeds with read-only semantics** (the report degrades gracefully and explicitly tags fields it can't interpret). No-op at v1=current.
 
 **Read-only.** Never writes to disk. The cheapest possible action — makes the stateless-invocation problem legible to the user.
+
+**Mechanics**: don't recompute hashes or conformance by hand — get the computed model from the script and format it:
+
+```bash
+python3 <skill>/scripts/groundwork_state.py status-data --plan <plan> --profiles-root <skill>/profiles
+```
+
+It returns per-doc sync/drift + dirty-region lists (real sha256 diff), ID counts, sub-plan/design/research state, and the conformance verdict for **every** profile on disk. Render the report below from that JSON; the freshness ("X days old") and the suggested-actions ranking are the action's to compute from the returned stamps.
 
 ---
 
@@ -82,14 +89,40 @@ The exact icon set: `✓` pass · `⚠` warn · `✗` fail · `—` n/a.
 
 ## Profile conformance check
 
-Walks each profile-required field (defined in `_shared/profile.json` + the active overlay) and confirms:
+The full profile contract — file layout, schema, resolution algorithm, validation rules — is specified in [`../lib/state.md` §"Profile contract"](../lib/state.md#profile-contract). `status` is the gate that enforces it.
 
-- All `vocab.*` keys present and non-empty.
-- All required spine files exist.
-- All `optional_blocks` named in the profile resolve to existing fence IDs or are absent (a missing optional block is fine — that's why it's optional).
-- The profile's `spine_version` is `<= current`.
+On every run, `status` validates **every** profile on disk under `.claude/skills/groundwork/profiles/<name>/` — not just the active one — so a hand-dropped invalid profile surfaces before the next `init` tries to use it. Rules 1–9 from the contract are **hard rejections** (the profile is reported ✗ with the canonical error message and is unselectable by `init`); rule 10 (unknown top-level key) is a **warn** with the offending key named.
 
-If a user-dropped profile (Phase 3) is loaded, this is the check that catches drift from the `_shared` base.
+Sample output:
+
+```
+Profile conformance
+  ✓ _shared           — base
+  ✓ software          — extends _shared
+  ✓ general           — extends _shared
+  ✓ content           — extends _shared
+  ✗ ops               — extends must be "_shared" (got undefined)        [rule 4]
+  ⚠ research          — unknown top-level key "owner" (allowed: name,…)   [rule 10]
+```
+
+Each line carries one of:
+
+| Glyph | Meaning | Trigger |
+|---|---|---|
+| `✓` | Conformant | Every rule passes |
+| `✗` | Rejected | Any of rules 1–9 fail; profile is excluded from `init` selection |
+| `⚠` | Warn | Rule 10 only — profile is still usable; preserves forward-compat |
+| `—` | n/a | `_shared` base (no `extends` rule applies) |
+
+When the **active** plan's profile is `✗`, every action other than `status` refuses with `plan uses non-conformant profile "<name>": <error>. Fix profile.json or run init --migrate.` (Migrate path is gated on a v2 spine — until then, fixing the profile.json is the only remediation.)
+
+The user-facing error messages are the canonical strings from `lib/state.md` §"Profile contract" rule table — do not paraphrase. They're load-bearing for users grepping logs or matching against documented failures.
+
+### What it does NOT check
+
+- **Template substitution rendering** — `status` doesn't render the spine templates to validate `{{vocab.*}}` placeholders resolve. That happens at `init` time (and a missing `vocab.*` is already caught by rule 6).
+- **Optional-block fence presence in already-scaffolded plans** — a profile that declares `optional_blocks: ["risks"]` doesn't require every existing plan to carry a `risks` fence. Optional means optional.
+- **Cross-profile uniqueness** — two profiles with the same `labels.work_unit` is fine; `name` is the only unique key (enforced by directory layout).
 
 ---
 

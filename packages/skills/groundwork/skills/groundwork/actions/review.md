@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `review` — gap-analysis pass → new Round → ID-driven re-sync
 
 **Loaded when**: the user wants to critique the plan (or a design), surface gaps, and fold them into the docs.
@@ -21,10 +20,10 @@
    - **Lens**: structural gaps · risks not surfaced · contradictions · readiness for next phase. Default: structural gaps + risks.
 3. **Spawn the reviewer** with the brief from `agents/reviewer.md`, populated with `{target, lens, profile, current_state}`. Pass the relevant docs as context.
 4. **Receive findings** — the agent returns a list of `{ kind, severity, finding, suggestion, touches: [docs] }`. Each finding becomes a `G-NN` ID.
-5. **Allocate IDs** from the next free `G-NN` (look in `.groundwork.json.ids` for the highest in use).
-6. **Append a new Round** to `04-discussion.md` (newest-first, above existing rounds, inside any user-authored "Rounds — newest first" prose). Format below.
-7. **Re-sync affected docs** — for each finding, follow its `touches[]` list and update the named regions. The ID registry tracks every `G-NN`'s `touches[]` so future review passes can recompute the affected set.
-8. **Update `.groundwork.json.ids`** with each new `G-NN` entry.
+5. **Allocate IDs via the script** — one call per finding: `groundwork_state.py next-id --plan <plan> --kind gap` returns the next free `G-NN` (it scans the registry for the highest in use; no hand-counting).
+6. **Append a new Round** to `04-discussion.md`. The rounds body is hand-authored prose *above* the `rounds-index` fence (newest-first); only the index inside the fence is script-written — recompute the index content and `write-region --file 04-discussion.md --id rounds-index --action review`.
+7. **Re-sync affected docs** — for each finding, follow its `touches[]` list; for each touched region, recompute its content and apply it with `write-region` (the script's hash-diff means unchanged regions are skipped automatically).
+8. **Register each ID** via `register-id --plan <plan> --id G-NN --doc 04-discussion.md --field status=folded --field 'touches=["01-plan.md","05-tracking.md"]'` (don't hand-edit the anchor).
 9. **Report** — which docs got which fence updates, which findings need user action (status `open` rather than `folded`).
 
 ---

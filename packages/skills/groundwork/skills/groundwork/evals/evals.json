@@ -1,0 +1,40 @@
+{
+  "skill_name": "groundwork",
+  "evals": [
+    {
+      "id": 0,
+      "name": "idempotency",
+      "prompt": "Scaffold a groundwork plan folder at ./plans/eval-share-card/ with profile software and goal \"Lift the share-card renderer into its own pkg\". Use the fast path (all inputs are given, no interview needed). Then run groundwork init a SECOND time on the exact same folder. Report what the second run did.",
+      "expected_output": "First run scaffolds the standard spine (00-README, 01-plan, 02/03-research, 04-discussion, 05-tracking, .groundwork.json, designs/, drafts/). .groundwork.json is valid JSON with profile=software, spine_version=1, the goal, and a docs map. Second run is a NO-OP: it reports no changes; spine files are byte-identical to after the first run.",
+      "assertions": [
+        "Produces the canonical groundwork spine (.groundwork.json + 00-README + 01-plan + 02/03-research + 04-discussion + 05-tracking)",
+        ".groundwork.json is valid JSON declaring profile=software and spine_version=1",
+        "No unrendered {{...}} placeholders remain in scaffolded files",
+        "Reports the second scaffold run as a no-op / byte-identical (idempotent)"
+      ]
+    },
+    {
+      "id": 1,
+      "name": "discover-triggering",
+      "prompt": "I'm about to start a real piece of work: migrating our marketing site's blog from Webflow over to Payload CMS. It's going to span a few weeks, needs a research pass, a couple of architecture decisions, and several workstreams that can run in parallel. Set me up a proper plan folder for it under ./plans/ so I can actually track this.",
+      "expected_output": "Recognizes this as non-trivial multi-doc planning work and uses groundwork init (discover path). Creates a plan folder under ./plans/ with the full spine + a valid .groundwork.json. Picks a sensible profile (software is defensible since it's a CMS migration; general is also acceptable) and a coherent one-sentence goal. Does NOT just write a single markdown file.",
+      "assertions": [
+        "Creates a multi-document plan folder (not a single markdown file)",
+        "Produces the canonical groundwork spine + a valid .groundwork.json anchor",
+        "Chooses a coherent profile and a one-sentence goal recorded in the anchor"
+      ]
+    },
+    {
+      "id": 2,
+      "name": "subplan-clobber-safety",
+      "prompt": "There's an existing groundwork plan folder at ./existing-plan/. Add a decision-doc sub-plan to it capturing the choice of switching the gateway from REST to GraphQL. Make sure you don't disturb any of my hand-written notes in that folder.",
+      "expected_output": "Creates a new NN-*.md sub-plan (number >= 06) from the decision-doc archetype, registers it in .groundwork.json.subplans, and cross-links it from 00-README's spine-index fence. Critically: every HANDWRITTEN-SENTINEL-* paragraph in 00-README.md, 01-plan.md, and 05-tracking.md survives byte-for-byte. .groundwork.json remains valid JSON.",
+      "assertions": [
+        "Creates a new NN-*.md sub-plan numbered >= 06",
+        "Registers the sub-plan in .groundwork.json.subplans (valid JSON)",
+        "All four HANDWRITTEN-SENTINEL-* markers survive across 00/01/05",
+        "Cross-links the sub-plan from inside the 00-README spine-index fence"
+      ]
+    }
+  ]
+}

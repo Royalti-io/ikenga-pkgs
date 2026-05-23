@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 <!doctype html>
 <html lang="en" data-theme="A" data-mode="dark" data-density="comfortable">
 <head>
@@ -832,6 +831,103 @@
     .picker-btn.is-primary:hover { filter: brightness(1.05); }
     .picker-btn:disabled { opacity: .42; cursor: not-allowed; }
 
+    /* ─── C1 Hierarchical DAG layout (D-03, Round 10–12) ─────────────────────
+       Pannable canvas; gates as nodes in dedicated between-wave columns; edges
+       color-coded by source-node status; focus-fade non-neighbor subgraph when
+       something is selected. All classes prefixed `.dag-c1-*` to keep this
+       layout's styles isolated from Mission Control + Kanban. */
+    .dag-c1-canvas { flex: 1; position: relative; overflow: auto; background: var(--bg-base); min-height: 0; cursor: grab; }
+    .dag-c1-canvas.is-panning { cursor: grabbing; user-select: none; }
+    .dag-c1-canvas.is-panning .dag-c1-node { pointer-events: none; }
+    .dag-c1-inner { position: relative; padding: 56px 80px var(--space-6); }
+
+    .dag-c1-edges { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; z-index: 1; }
+    .dag-c1-edges path { fill: none; stroke: var(--border); stroke-width: 1.5; opacity: .55; transition: stroke var(--motion-fast) var(--ease-calm), stroke-width var(--motion-fast) var(--ease-calm), opacity var(--motion-fast) var(--ease-calm); }
+    .dag-c1-edges path.from-done         { stroke: var(--achievement); opacity: .55; }
+    .dag-c1-edges path.from-in_progress  { stroke: var(--primary);     opacity: .75; }
+    .dag-c1-edges path.from-blocked      { stroke: var(--danger);      opacity: .5; }
+    .dag-c1-edges path.gates             { stroke-dasharray: 4 3; }
+    .dag-c1-edges path.gates.from-passed { stroke: var(--achievement); opacity: .6; }
+    .dag-c1-edges path.is-selected       { opacity: 1; stroke-width: 2.5; }
+    .dag-c1-edges.has-focus path         { opacity: .12; }
+    .dag-c1-edges.has-focus path.is-selected { opacity: 1; }
+
+    .dag-c1-col-label { position: absolute; font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--fg-faint); top: 24px; white-space: nowrap; }
+    .dag-c1-col-label.gates { color: var(--achievement); }
+    .dag-c1-col-rule { position: absolute; top: 48px; bottom: var(--space-5); width: 1px; background: var(--border-soft); opacity: .35; z-index: 0; }
+    .dag-c1-col-rule.gates { background: var(--achievement); opacity: .15; }
+
+    /* WP nodes — color-coded left-edge stripe + status pill badge. */
+    .dag-c1-node { position: absolute; width: 180px; min-height: 68px; background: var(--bg-surface); border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: 9px 11px 10px 16px; cursor: pointer; transition: border-color var(--motion-fast) var(--ease-calm), background var(--motion-fast) var(--ease-calm), transform var(--motion-fast) var(--ease-calm), box-shadow var(--motion-fast) var(--ease-calm), opacity var(--motion-fast) var(--ease-calm); text-align: left; font-family: inherit; z-index: 2; box-shadow: var(--shadow-1); overflow: hidden; }
+    .dag-c1-node::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 4px; background: var(--fg-faint); transition: background var(--motion-fast) var(--ease-calm); }
+    .dag-c1-node.done::before        { background: var(--achievement); }
+    .dag-c1-node.in_progress::before { background: var(--primary); }
+    .dag-c1-node.blocked::before     { background: var(--danger); }
+    .dag-c1-node.queued::before      { background: var(--fg-muted); }
+    .dag-c1-node.stretch::before     { background: var(--chip-carve); }
+    .dag-c1-node.superseded::before  { background: var(--fg-faint); opacity: .5; }
+    .dag-c1-node:hover { border-color: var(--primary); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(0,0,0,0.18), var(--shadow-1); }
+    .dag-c1-node.is-selected { border-color: var(--primary); background: var(--primary-soft); box-shadow: 0 0 0 3px var(--primary-soft), 0 4px 14px rgba(0,0,0,0.22); z-index: 4; }
+    .dag-c1-node.done             { opacity: .72; }
+    .dag-c1-node.done:hover,
+    .dag-c1-node.done.is-selected { opacity: 1; }
+    .dag-c1-node.superseded       { opacity: .45; }
+    .dag-c1-node.stretch          { border-style: dashed; }
+    .dag-c1-canvas.has-focus .dag-c1-node:not(.is-selected):not(.is-neighbor) { opacity: .35; }
+    .dag-c1-canvas.has-focus .dag-c1-node.done:not(.is-selected):not(.is-neighbor) { opacity: .25; }
+
+    .dag-c1-node .nhead { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .dag-c1-node .nid { font-family: var(--font-mono); font-size: var(--text-micro); color: var(--fg-muted); font-weight: 500; letter-spacing: .02em; }
+    .dag-c1-node.superseded .nid { text-decoration: line-through; }
+    .dag-c1-node .nbadge { display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px 2px 6px; border-radius: var(--radius-pill); font-family: var(--font-mono); font-size: 9px; letter-spacing: .04em; text-transform: uppercase; font-weight: 600; line-height: 1.4; background: var(--bg-sunken); color: var(--fg-muted); border: 1px solid var(--border-soft); white-space: nowrap; }
+    .dag-c1-node .nbadge::before { content: ''; display: inline-block; width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+    .dag-c1-node.done .nbadge        { background: var(--achievement-soft); color: var(--achievement); border-color: var(--achievement); }
+    .dag-c1-node.in_progress .nbadge { background: var(--primary-soft);     color: var(--primary);     border-color: var(--primary); }
+    .dag-c1-node.in_progress .nbadge::before { animation: pulse 1.6s var(--ease-calm) infinite; }
+    .dag-c1-node.blocked .nbadge     { background: var(--danger-soft);      color: var(--danger);      border-color: var(--danger); }
+    .dag-c1-node.queued .nbadge      { background: var(--bg-sunken);        color: var(--fg);          border-color: var(--border); }
+    .dag-c1-node.stretch .nbadge     { background: var(--bg-sunken);        color: var(--fg-faint);    border-color: var(--border-soft); border-style: dashed; }
+    .dag-c1-node.superseded .nbadge  { background: var(--bg-sunken);        color: var(--fg-faint);    border-color: var(--border-soft); }
+    .dag-c1-node .ntitle { font-size: var(--text-body-sm); font-weight: 500; color: var(--fg); line-height: 1.3; margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+    .dag-c1-node .nmeta { display: flex; align-items: center; gap: 6px; margin-top: 7px; font-family: var(--font-mono); font-size: 9px; color: var(--fg-faint); letter-spacing: .04em; }
+    .dag-c1-node .nmeta .repo-tag { padding: 1px 5px; border-radius: var(--radius-xs); background: var(--bg-sunken); border: 1px solid var(--border-soft); color: var(--fg-muted); text-transform: lowercase; letter-spacing: 0; }
+    .dag-c1-node .nmeta .gate-mark { color: var(--achievement); font-weight: 600; }
+
+    /* Gate nodes — pill silhouette + prominent lock chip. */
+    .dag-c1-node.gate { width: 168px; min-height: 64px; border-radius: 36px; padding: 10px 14px 10px 42px; background: var(--achievement-soft); border: 1.5px solid var(--achievement); }
+    .dag-c1-node.gate::before { display: none; }
+    .dag-c1-node.gate.pending   { background: var(--bg-sunken); border-color: var(--chip-carve); border-style: dashed; }
+    .dag-c1-node.gate.cancelled { background: var(--bg-sunken); border-color: var(--border-soft); opacity: .55; }
+    .dag-c1-node.gate:hover     { border-color: var(--primary); }
+    .dag-c1-node.gate.is-selected { border-color: var(--primary); background: var(--primary-soft); }
+    .dag-c1-node.gate .glock-chip { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); width: 26px; height: 26px; border-radius: 50%; background: var(--achievement); color: var(--bg-base); display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; box-shadow: 0 1px 3px rgba(0,0,0,0.18); }
+    .dag-c1-node.gate.pending .glock-chip   { background: var(--bg-base); color: var(--chip-carve); border: 1.5px dashed var(--chip-carve); box-shadow: none; }
+    .dag-c1-node.gate.cancelled .glock-chip { background: var(--bg-sunken); color: var(--fg-faint); border: 1px solid var(--border-soft); box-shadow: none; }
+    .dag-c1-node.gate .nid { color: var(--achievement); font-weight: 700; font-size: 11px; letter-spacing: .08em; }
+    .dag-c1-node.gate.pending .nid   { color: var(--fg-muted); }
+    .dag-c1-node.gate.cancelled .nid { color: var(--fg-faint); text-decoration: line-through; }
+    .dag-c1-node.gate .gate-title { font-size: 11.5px; font-weight: 500; color: var(--fg); margin-top: 2px; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+    .dag-c1-node.gate.pending .gate-title   { color: var(--fg-muted); }
+    .dag-c1-node.gate.cancelled .gate-title { color: var(--fg-faint); }
+    .dag-c1-node.gate .gate-sub { font-size: 9px; color: var(--fg-faint); margin-top: 4px; font-family: var(--font-mono); letter-spacing: .06em; text-transform: uppercase; }
+
+    .dag-c1-legend { position: absolute; right: var(--space-6); top: var(--space-3); display: flex; gap: var(--space-4); font-family: var(--font-mono); font-size: 10px; color: var(--fg-faint); letter-spacing: .06em; z-index: 3; align-items: center; }
+    .dag-c1-legend .swatch { display: inline-block; width: 22px; height: 1.5px; background: var(--border); margin-right: 6px; vertical-align: middle; }
+    .dag-c1-legend .swatch.dashed { background: transparent; border-bottom: 1.5px dashed var(--border); height: 0; }
+    .dag-c1-legend .pan-hint { display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border-radius: var(--radius-xs); background: var(--bg-sunken); border: 1px solid var(--border-soft); color: var(--fg-muted); }
+
+    /* Detail panel: fixed so it stays put while the canvas pans. */
+    .dag-c1-detail { position: fixed; bottom: var(--space-5); right: var(--space-5); width: 320px; background: var(--bg-raised); border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: var(--space-3); z-index: 6; box-shadow: var(--shadow-1); }
+    .dag-c1-detail .dp-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+    .dag-c1-detail .dp-close { background: transparent; border: 0; color: var(--fg-faint); font-size: 18px; line-height: 1; cursor: pointer; padding: 0 4px; border-radius: var(--radius-xs); transition: color var(--motion-fast) var(--ease-calm), background var(--motion-fast) var(--ease-calm); }
+    .dag-c1-detail .dp-close:hover { color: var(--fg); background: var(--bg-sunken); }
+    .dag-c1-detail .dp-id { font-family: var(--font-mono); font-size: var(--text-micro); color: var(--fg-muted); }
+    .dag-c1-detail .dp-title { font-weight: 500; margin-top: 4px; color: var(--fg); }
+    .dag-c1-detail .dp-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+    .dag-c1-detail .dp-deps { font-family: var(--font-mono); font-size: 10px; color: var(--fg-faint); margin-top: 8px; }
+    .dag-c1-detail .dp-actions { display: flex; gap: 6px; margin-top: 10px; }
+    .dag-c1-detail .dp-actions .btn { flex: 1; justify-content: center; }
+
     /* Layout root */
     /* Clamp to the viewport so internal columns scroll instead of the whole
        page — mirrors how the in-shell pane sizes us, so the sticky table
@@ -950,7 +1046,7 @@
 
   <script type="text/babel" data-presets="env,react">
   (function () {
-    const { useState, useEffect, useMemo } = React;
+    const { useState, useEffect, useMemo, useRef } = React;
 
     /* ── Read board-data (live, written by refresh-board) or fall back to mock ── */
     function readJsonTag(id) {
@@ -989,6 +1085,7 @@
         spark:    'm12 3-1.5 4.5L6 9l4.5 1.5L12 15l1.5-4.5L18 9l-4.5-1.5L12 3Z',
         search:   'M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm10 2-4.35-4.35',
         bolt:     'M13 2 3 14h7l-1 8 10-12h-7l1-8Z',
+        'git-fork': 'M12 6v6m0 0a3 3 0 1 0 0 6 3 3 0 0 0 0-6Zm0-6a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM18 6v2a4 4 0 0 1-4 4M6 6v2a4 4 0 0 0 4 4M18 6a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM6 6a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z',
       };
       return (
         <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
@@ -1549,6 +1646,9 @@ WHAT TO DO RIGHT NOW
                 <button className={layout === 'kanban' ? 'is-on' : ''} onClick={() => setLayout('kanban')} title="Kanban — columns by status (Queued · In Progress · Blocked · Done)">
                   <Icon name="columns" size={12} /> Kanban
                 </button>
+                <button className={layout === 'dag-hierarchical' ? 'is-on' : ''} onClick={() => setLayout('dag-hierarchical')} title="DAG — hierarchical dependency graph; gates as choke-point nodes; drag to pan">
+                  <Icon name="git-fork" size={12} /> DAG
+                </button>
               </div>
               <div className="seg seg-sm">
                 <button onClick={() => location.reload()} title="Reload the board from disk (picks up a refresh-board run)" aria-label="Reload board">
@@ -1907,6 +2007,259 @@ WHAT TO DO RIGHT NOW
       );
     }
 
+    /* ─────── DAG Hierarchical (C1, D-03 · Round 10–12) ───────
+       L→R hierarchical DAG. WPs in wave columns; gates in dedicated between-wave
+       columns. Edges color-coded by source-node status. Drag-to-pan; click-empty
+       / Esc / ✕ / click-selected-again to deselect. When a node is selected,
+       the non-neighbor subgraph fades for clarity. */
+    const C1_NODE_W = 180, C1_GATE_W = 168, C1_NODE_H = 68, C1_V_GAP = 28;
+    const C1_ROW_STEP = C1_NODE_H + C1_V_GAP;        // 96
+    const C1_COL_STEP = 280;
+    const C1_BASE_X   = 80;
+    const C1_BASE_Y   = 48;
+    const C1_STATUS_BADGE = { done: 'DONE', in_progress: 'ACTIVE', queued: 'QUEUED', blocked: 'BLOCKED', stretch: 'STRETCH', superseded: 'RETIRED' };
+    const C1_GATE_GLYPH  = { passed: '✓', pending: '◌', cancelled: '✕' };
+
+    /** Auto-layout: place WPs in wave columns; gates in synthetic columns
+     *  inserted after the wave that owns them. Returns positions, column
+     *  labels, and canvas dimensions for any plan shape. */
+    function computeC1Layout(wps, gates) {
+      const waves = [...new Set(wps.map(w => (w.wave ?? 0)))].sort((a, b) => a - b);
+      const gatesByWave = {};
+      for (const g of gates) {
+        const owner = wps.find(w => w.id === g.wp);
+        const ownerWave = owner ? (owner.wave ?? 0) : (waves[0] ?? 0);
+        (gatesByWave[ownerWave] = gatesByWave[ownerWave] || []).push(g);
+      }
+
+      const positions = {};
+      const cols      = [];
+      let x = C1_BASE_X;
+
+      for (const w of waves) {
+        cols.push({ x, label: `wave ${w}`, kind: 'wave' });
+        const wpsInWave = wps.filter(wp => (wp.wave ?? 0) === w);
+        wpsInWave.forEach((wp, i) => { positions[wp.id] = { x, y: C1_BASE_Y + i * C1_ROW_STEP, kind: 'wp' }; });
+        x += C1_COL_STEP;
+        if (gatesByWave[w] && gatesByWave[w].length) {
+          cols.push({ x, label: `gates · ${w}→${w + 1}`, kind: 'gates' });
+          gatesByWave[w].forEach((g, i) => { positions[g.id] = { x, y: C1_BASE_Y + i * C1_ROW_STEP, kind: 'gate' }; });
+          x += C1_COL_STEP;
+        }
+      }
+
+      const tallest = Math.max(
+        0,
+        ...waves.map(w => wps.filter(wp => (wp.wave ?? 0) === w).length),
+        ...Object.values(gatesByWave).map(arr => arr.length)
+      );
+      const canvasWidth  = Math.max(1200, x + 80);
+      const canvasHeight = Math.max(560,  C1_BASE_Y + tallest * C1_ROW_STEP + 80);
+      return { positions, cols, canvasWidth, canvasHeight };
+    }
+
+    function DagHierarchical({ data, selected, setSelected, selectedWp, subplan, onCopy, onStart, onClear, inShell }) {
+      const canvasRef = useRef(null);
+      const wps   = data.wps   || [];
+      const gates = data.gates || [];
+      const layout = useMemo(() => computeC1Layout(wps, gates), [wps, gates]);
+
+      useEffect(() => {
+        const el = canvasRef.current; if (!el) return;
+        let dragging = false, moved = false, startX = 0, startY = 0, scrollX = 0, scrollY = 0;
+        const onDown = (e) => {
+          if (e.button !== 0) return;
+          if (e.target.closest('.dag-c1-node, .btn, .dag-c1-detail')) return;
+          dragging = true; moved = false;
+          startX = e.clientX; startY = e.clientY;
+          scrollX = el.scrollLeft; scrollY = el.scrollTop;
+          e.preventDefault();
+        };
+        const onMove = (e) => {
+          if (!dragging) return;
+          const dx = e.clientX - startX, dy = e.clientY - startY;
+          if (!moved && Math.hypot(dx, dy) > 5) { moved = true; el.classList.add('is-panning'); }
+          if (moved) { el.scrollLeft = scrollX - dx; el.scrollTop = scrollY - dy; }
+        };
+        const onUp = (e) => {
+          if (!dragging) return;
+          const wasPan = moved;
+          dragging = false; moved = false;
+          el.classList.remove('is-panning');
+          if (!wasPan && !e.target.closest('.dag-c1-node, .btn, .dag-c1-detail')) setSelected(null);
+        };
+        const onWheel = (e) => { if (e.shiftKey) { e.preventDefault(); el.scrollLeft += e.deltaY; } };
+        const onKey = (e) => { if (e.key === 'Escape') setSelected(null); };
+        el.addEventListener('mousedown', onDown);
+        window.addEventListener('mousemove', onMove);
+        window.addEventListener('mouseup', onUp);
+        el.addEventListener('wheel', onWheel, { passive: false });
+        window.addEventListener('keydown', onKey);
+        return () => {
+          el.removeEventListener('mousedown', onDown);
+          window.removeEventListener('mousemove', onMove);
+          window.removeEventListener('mouseup', onUp);
+          el.removeEventListener('wheel', onWheel);
+          window.removeEventListener('keydown', onKey);
+        };
+      }, [setSelected]);
+
+      const statusOf = (id) => {
+        const w = wps.find(x => x.id === id); if (w) return w.status;
+        const g = gates.find(x => x.id === id); if (g) return g.status;
+        return 'queued';
+      };
+      const mkPath = (from, to) => {
+        const fromW = from.kind === 'gate' ? C1_GATE_W : C1_NODE_W;
+        const x1 = from.x + fromW, y1 = from.y + C1_NODE_H / 2;
+        const x2 = to.x,           y2 = to.y   + C1_NODE_H / 2;
+        const dx = Math.max(40, (x2 - x1) * 0.45);
+        return `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`;
+      };
+
+      const edges = useMemo(() => {
+        const out = [];
+        for (const wp of wps) {
+          for (const dep of (wp.deps || [])) {
+            const from = layout.positions[dep], to = layout.positions[wp.id];
+            if (!from || !to) continue;
+            out.push({ id: `${dep}->${wp.id}`, d: mkPath(from, to), isGate: from.kind === 'gate', fromStatus: statusOf(dep), selectedHit: selected === wp.id || selected === dep });
+          }
+        }
+        for (const g of gates) {
+          const from = layout.positions[g.wp], to = layout.positions[g.id];
+          if (!from || !to) continue;
+          out.push({ id: `${g.wp}->${g.id}`, d: mkPath(from, to), isGate: true, fromStatus: statusOf(g.wp), selectedHit: selected === g.id || selected === g.wp });
+        }
+        return out;
+      }, [wps, gates, layout, selected]);
+
+      const neighborSet = useMemo(() => {
+        if (!selected) return new Set();
+        const ns = new Set([selected]);
+        const wp = wps.find(w => w.id === selected);
+        if (wp) {
+          (wp.deps || []).forEach(d => ns.add(d));
+          const owned = gates.find(g => g.wp === selected);
+          if (owned) ns.add(owned.id);
+        }
+        const g = gates.find(g => g.id === selected);
+        if (g) ns.add(g.wp);
+        wps.forEach(w => { if ((w.deps || []).includes(selected)) ns.add(w.id); });
+        return ns;
+      }, [selected, wps, gates]);
+      const hasFocus = !!selected;
+
+      const selWp   = wps.find(w => w.id === selected);
+      const selGate = gates.find(g => g.id === selected);
+      const selNode = selWp ? { ...selWp, kind: 'wp' } : selGate ? { ...selGate, kind: 'gate' } : null;
+
+      return (
+        <div className={`dag-c1-canvas ${hasFocus ? 'has-focus' : ''}`} ref={canvasRef}>
+          <div className="dag-c1-inner" style={{ minWidth: layout.canvasWidth, minHeight: layout.canvasHeight }}>
+            <div className="dag-c1-legend">
+              <span><i className="swatch"/>WP &rarr; WP</span>
+              <span><i className="swatch dashed"/>through-gate</span>
+              <span className="pan-hint">drag to pan &middot; shift-wheel &harr; &middot; Esc deselects</span>
+            </div>
+
+            {layout.cols.map((c, i) => {
+              const center = c.x + (c.kind === 'gates' ? C1_GATE_W : C1_NODE_W) / 2;
+              return (
+                <React.Fragment key={`col-${i}`}>
+                  <div className={`dag-c1-col-rule ${c.kind === 'gates' ? 'gates' : ''}`} style={{ left: center }} />
+                  <div className={`dag-c1-col-label ${c.kind === 'gates' ? 'gates' : ''}`} style={{ left: c.x }}>{c.label}</div>
+                </React.Fragment>
+              );
+            })}
+
+            <svg className={`dag-c1-edges ${hasFocus ? 'has-focus' : ''}`}>
+              <defs>
+                <marker id="c1-board-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                  <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+                </marker>
+              </defs>
+              {edges.map(e => (
+                <path key={e.id} d={e.d} className={`${e.isGate ? 'gates' : ''} from-${e.fromStatus} ${e.selectedHit ? 'is-selected' : ''}`} markerEnd="url(#c1-board-arrow)" />
+              ))}
+            </svg>
+
+            {wps.map(wp => {
+              const pos = layout.positions[wp.id]; if (!pos) return null;
+              const isSel = selected === wp.id;
+              const isNb  = !isSel && neighborSet.has(wp.id);
+              const cls = ['dag-c1-node', wp.status, isSel && 'is-selected', isNb && 'is-neighbor'].filter(Boolean).join(' ');
+              const onClk = () => setSelected(s => s === wp.id ? null : wp.id);
+              return (
+                <button key={wp.id} className={cls} style={{ left: pos.x, top: pos.y }} onClick={onClk}>
+                  <div className="nhead">
+                    <span className="nid">{wp.id}</span>
+                    <span className="nbadge">{C1_STATUS_BADGE[wp.status] || (wp.status || '').toUpperCase()}</span>
+                  </div>
+                  <div className="ntitle">{wp.title}</div>
+                  <div className="nmeta">
+                    <span className="repo-tag">{wp.repo || '—'}</span>
+                    {wp.gate && <span className="gate-mark">&#x25c6; {wp.gate}</span>}
+                  </div>
+                </button>
+              );
+            })}
+
+            {gates.map(g => {
+              const pos = layout.positions[g.id]; if (!pos) return null;
+              const isSel = selected === g.id;
+              const isNb  = !isSel && neighborSet.has(g.id);
+              const cls = ['dag-c1-node', 'gate', g.status, isSel && 'is-selected', isNb && 'is-neighbor'].filter(Boolean).join(' ');
+              const onClk = () => setSelected(s => s === g.id ? null : g.id);
+              return (
+                <button key={g.id} className={cls} style={{ left: pos.x, top: pos.y }} onClick={onClk}>
+                  <span className="glock-chip">{C1_GATE_GLYPH[g.status] || '◆'}</span>
+                  <span className="nid">&#x25c6; {g.id}</span>
+                  <div className="gate-title">{g.label}</div>
+                  <div className="gate-sub">{g.status} &middot; {g.wp}</div>
+                </button>
+              );
+            })}
+
+            {selNode && (
+              <div className="dag-c1-detail">
+                <div className="dp-head">
+                  <div className="dp-id">{selNode.kind === 'gate' ? `◆ ${selNode.id}` : selNode.id}</div>
+                  <button type="button" className="dp-close" onClick={() => setSelected(null)} title="Clear selection (Esc)" aria-label="Clear selection">&times;</button>
+                </div>
+                <div className="dp-title">{selNode.kind === 'gate' ? selNode.label : selNode.title}</div>
+                {selNode.kind === 'wp' && (
+                  <>
+                    <div className="dp-row">
+                      <span className="wp-status-cell"><span className={`dot ${selNode.status}`}></span>{selNode.status}</span>
+                      <span className={`tag ${REPO_TAG_CLASS[selNode.repo] || ''}`}>{selNode.repo || '—'}</span>
+                      {selNode.gate && <span className="tag tag-deal">&#x25c6; {selNode.gate}</span>}
+                    </div>
+                    {(selNode.deps || []).length > 0 && <div className="dp-deps">needs: {selNode.deps.join(' · ')}</div>}
+                    {selNode.status !== 'done' && (
+                      <div className="dp-actions">
+                        <button className="btn btn-sm" onClick={() => onCopy(selNode)}><Icon name="copy" size={11} /> Copy</button>
+                        <button className="btn btn-sm is-primary" onClick={() => onStart(selNode)} title={inShell ? "Send this WP's brief to your Chi" : 'Copy-prompt path'}><Icon name="play" size={10} /> Start</button>
+                      </div>
+                    )}
+                  </>
+                )}
+                {selNode.kind === 'gate' && (
+                  <>
+                    <div className="dp-row">
+                      <span className={`gate ${selNode.status === 'passed' ? 'passed' : ''}`}>{selNode.status === 'passed' ? '✓ passed' : '◌ pending'}</span>
+                      <span style={{ fontSize: 11, color: 'var(--fg-muted)' }}>owned by {selNode.wp}</span>
+                    </div>
+                    <div className="dp-deps">Every dependent waits for this gate.</div>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
     /* ─────── App root ─────── */
     function App({ art }) {
       const [layout,   setLayout]   = useState('mission-control');
@@ -2109,9 +2462,9 @@ WHAT TO DO RIGHT NOW
               onKickoff={onKickoff}
               onOpenPalette={() => setPaletteOpen(true)}
             />
-            {layout === 'mission-control'
-              ? <MissionControl data={DATA} selected={selected} setSelected={setSelected} selectedWp={selectedWp} subplan={subplan} filter={filter} onCopy={onCopy} onStart={onStart} onClear={onClear} inShell={inShell} />
-              : <Kanban         data={DATA} selected={selected} setSelected={setSelected} selectedWp={selectedWp} subplan={subplan}                onCopy={onCopy} onStart={onStart} onClear={onClear} inShell={inShell} />
+            {layout === 'mission-control' ? <MissionControl   data={DATA} selected={selected} setSelected={setSelected} selectedWp={selectedWp} subplan={subplan} filter={filter} onCopy={onCopy} onStart={onStart} onClear={onClear} inShell={inShell} /> :
+             layout === 'kanban'          ? <Kanban           data={DATA} selected={selected} setSelected={setSelected} selectedWp={selectedWp} subplan={subplan}                onCopy={onCopy} onStart={onStart} onClear={onClear} inShell={inShell} /> :
+                                            <DagHierarchical  data={DATA} selected={selected} setSelected={setSelected} selectedWp={selectedWp} subplan={subplan}                onCopy={onCopy} onStart={onStart} onClear={onClear} inShell={inShell} />
             }
           </main>
           <footer className="page-foot">

@@ -9,7 +9,8 @@ description: |
   the docs in place without clobbering hand-written prose. Composes
   ikenga-artifact-builder, huashu-design, frontend-design, ikenga-pkg-builder
   when present; degrades gracefully when not. Profile-driven: `software`
-  (rich default) and `general` (lean, non-code) in P1.
+  (rich default, code work), `general` (lean, non-code — campaigns, org
+  changes), and `content` (editorial/marketing with key art).
 
   TRIGGER when the user asks to start a real plan for non-trivial work
   ("plan a feature," "scaffold a plan folder," "set up groundwork for…"),
@@ -23,7 +24,6 @@ description: |
   (dashboard, mockup), route to ikenga-artifact-builder instead.
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, Agent, Skill, TaskCreate, TaskUpdate, TaskList, TaskGet
 ---
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 
 # groundwork — research → plan → orchestrate → act, packaged
 
@@ -92,7 +92,7 @@ A profile swaps **vocabulary** and **optional blocks**, not the spine. Templates
 |---|---|---|---|---|
 | `software` | Ikenga features, any code work | "work package" / PR | `true` | schema, manifest, adapter contracts, critical files |
 | `general` | Non-code work — campaigns, org changes, research | "workstream" / "deliverable" | `false` | stakeholders, deliverables, success metrics |
-| `content` | _(Phase 3 — not in P1)_ | "piece" / "asset" | `true` | editorial standards, distribution plan |
+| `content` | Editorial/marketing — content series, campaigns with key art | "piece" / "asset" | `true` | editorial standards, distribution plan |
 
 **Maintenance model**: a single `profiles/_shared/` base + thin per-profile overlays. `profile.json` declares `extends: "_shared"`; only diffs need to live in the overlay. Format spec in `01-plan.md` §"Domain profiles."
 
@@ -201,7 +201,6 @@ The reference instance — the canonical worked example of every artifact in thi
 ## What this skill does NOT do (in P1)
 
 - **No shell or contract changes.** `host.startChatSession` is Phase 2 — board actions are copy-prompt only.
-- **No `content` profile.** Phase 3.
 - **No live tracking binding.** The board reads markdown; harness-Tasks mirroring is Phase 2.
 - **No board "Start session" button beyond copy-prompt.** Same reason.
 - **No automatic renumbering of IDs.** Once allocated, an ID stays — retire instead of free.

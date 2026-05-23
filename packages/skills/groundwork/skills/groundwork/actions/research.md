@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `research` — external + internal research passes
 
 **Loaded when**: the user wants to fill `02-research-external.md` and/or `03-research-internal.md`, or refresh stale research.
@@ -17,9 +16,18 @@
 2. **Read state**: load `.groundwork.json`. Pull goal + profile + current ids.
 3. **Scope the pass**: ask the user (`AskUserQuestion`) whether to run external-only, internal-only, or both. Default: both, if both files exist and have empty findings; otherwise whichever is empty/stale.
 4. **Spawn the researcher** — use `Agent` with `subagent_type: "general-purpose"` (or `Explore` if read-only). Pass the brief in `agents/researcher.md` populated with `{goal, profile, scope, target_file}`.
-5. **Fold the result** — the agent returns structured findings + sources. Write them inside `findings` and `sources` fences in the target file(s), following `lib/state.md` hash-diff rules.
-6. **Stamp**: update `.groundwork.json.research.<file>.stamped` to today's UTC date.
-7. **Report**: print which fences were updated and which were unchanged.
+5. **Fold the result via the script** — the agent returns structured findings + sources. Write each into its fence with `write-region` (one call per region); the script hash-diffs and reports `WRITTEN` / `UNCHANGED` / `SKIPPED_DIRTY` — never hand-edit the file or its hashes:
+
+   ```bash
+   python3 <skill>/scripts/groundwork_state.py write-region \
+     --plan <plan> --file 02-research-external.md --id findings \
+     --action research --content-file <agent-findings.md>
+   # repeat for --id sources, and 03-research-internal.md --id findings
+   ```
+
+   On `SKIPPED_DIRTY`, surface the hint to the user (they hand-edited inside the fence) and pass `--force` only with their say-so.
+6. **Stamp** via the script (don't hand-edit the anchor): `python3 <skill>/scripts/groundwork_state.py stamp-research --plan <plan> --file 02-research-external.md` (and `03-…` if internal ran).
+7. **Report**: print each fence's `write-region` result (which were `WRITTEN` vs `UNCHANGED`).
 
 ---
 
@@ -67,8 +75,7 @@ The brief substitutes:
 
 - `software` profile: "the codebase," "existing code," "prior PRs."
 - `general` profile: "existing assets, prior work, current constraints" — no code vocabulary.
-
-`content` is Phase 3.
+- `content` profile: "prior pieces, existing brand assets, the editorial standards, channel performance" — no software vocabulary; research the audience, the competitive content landscape, and precedent pieces.
 
 ---
 

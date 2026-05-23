@@ -1,7 +1,45 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # groundwork — plan state, identity & idempotency
 
 The reference every action obeys. If two actions disagree about what is "generated" versus "hand-written," the bug is here, not in the actions. Read this once; the action files are thin and assume these rules.
+
+**Contents** — jump to what you need:
+- [`.groundwork.json` — the identity + state anchor](#groundworkjson--the-identity--state-anchor) — schema, fields, atomic writes, spine-version gate
+- [Profile contract](#profile-contract) — file layout, `profile.json` schema, resolution algorithm, the 10 conformance rules, worked example
+- [Generated-region fences](#generated-region-fences) — syntax, rules, reserved fence IDs by action
+- [Hash-diff re-run semantics](#hash-diff-re-run-semantics) — the per-region algorithm, idempotency definition, the whole-file hash
+- [Stable IDs (Round 2 traceability)](#stable-ids-round-2-traceability-backbone) — formats, threading rules, discovery
+- [Worked example](#worked-example) — init → research → review, end to end
+
+---
+
+## The executor: `scripts/groundwork_state.py`
+
+**The mechanics in this file are implemented by a script, not performed by hand.** `scripts/groundwork_state.py` (Python 3, stdlib only — runs anywhere `python3` is, no install) is the authoritative executor for everything that must be byte-exact: fence read/write, sha256 hash-diff, atomic anchor writes, the spine gate, the 10 profile-conformance rules, ID allocation, template scaffolding, and the board/status data models.
+
+This matters because the skill's central promise is **byte-exact idempotency** (a re-run changes nothing on disk, mtimes preserved). An agent hand-computing sha256 and hand-reproducing fenced content cannot reliably deliver that; the script can. So: **actions call the script for state mechanics; they never hand-compute a hash or hand-edit `.groundwork.json`.** This file is the *spec* for what the script does — read it to understand the contract; call the script to execute it.
+
+Invoke it from any action with Bash. The skill dir is the parent of `lib/`; the script is at `<skill>/scripts/groundwork_state.py` and the built-in profiles at `<skill>/profiles`. Command surface:
+
+```
+python3 <skill>/scripts/groundwork_state.py <subcommand> [args]
+
+  spine-gate       --plan DIR --expected 1 [--readonly]      # 3-clause version gate (exit 3 = refuse)
+  validate-profile --profiles-root DIR (--name N | --all)    # 10 rules, canonical error strings
+  resolve-profile  --profiles-root DIR --name N              # merged labels + spine + overrides
+  scaffold         --plan DIR --profiles-root DIR --profile N --goal STR [--force]
+  read-anchor      --plan DIR
+  read-region      --file PATH --id ID
+  write-region     --plan DIR --file REL --id ID --action NAME (--content STR | --content-file P) [--force]
+                       # prints WRITTEN | UNCHANGED | SKIPPED_DIRTY
+  next-id          --plan DIR --kind gap|wp|gate|design [--name NAME]
+  register-id      --plan DIR --id ID --doc DOC [--field k=v ...]
+  board-data       --plan DIR
+  status-data      --plan DIR [--profiles-root DIR]
+```
+
+Every subcommand prints a JSON result to stdout (parse it to report back). Exit codes: `0` ok · `1` hard error/refusal · `2` missing/corrupt anchor · `3` spine-gate refusal. The contract details below define *why* each behaves as it does; the script is *how*.
+
+The seeded-session forms in each action (the "skill not loaded" fallback) still describe the by-hand method, because a fresh chat without the skill won't have the script either — that's the documented degraded path, not the primary one.
 
 ---
 
@@ -71,7 +109,7 @@ Lives at the root of every groundwork plan folder (alongside `00-README.md`). It
 
 ### Atomic writes
 
-Every write to `.groundwork.json` is `write tmp → rename` so a crash mid-write never leaves a corrupt anchor.
+Every write to `.groundwork.json` is `write tmp → rename` so a crash mid-write never leaves a corrupt anchor. The script does this for every anchor and file write (`atomic_write`); actions never write the anchor directly.
 
 ### Spine-version preamble gate
 
@@ -118,6 +156,108 @@ transforms = {
 Each transform is **structural** (insert / rename / scaffold) and **fence-preserving** — hand-authored prose outside every fence is byte-identical post-migration. No transform may invoke an agent; if a hypothetical future migration needs semantic re-flow of prose, it earns its own verb instead of riding `init --migrate`.
 
 The transform table format is deliberately out of scope for v1 — the gate alone is enough to keep us honest until there is something to transform. See [`plans/groundwork/07-spine-version-migration.md`](../../../../plans/groundwork/07-spine-version-migration.md) for the full decision history.
+
+---
+
+## Profile contract
+
+A **profile** governs the vocabulary and spine a plan resolves against. It is the second identity input (after `.groundwork.json`) — `init` writes the profile name into the anchor, and every action reads `profiles/<name>/profile.json` from the skill source to look up labels, spine list, and overrides.
+
+The three built-ins (`software`, `general`, `content`) are the canonical worked examples. **Users may drop their own profile under `.claude/skills/groundwork/profiles/<name>/`** and `init --profile <name>` will resolve it like a built-in, provided it satisfies the contract below. `status`'s profile-conformance check (`actions/status.md` §"Profile conformance check") is the gate that validates this on every read.
+
+### File layout
+
+```
+profiles/<name>/
+  profile.json          ← required
+  templates/            ← optional — only files that override _shared
+    01-plan.md
+    05-tracking.md
+    …
+```
+
+`profile.json` is the only required file. A profile that overrides no templates carries just `profile.json` and inherits every spine doc from `_shared`.
+
+### `profile.json` schema (v1)
+
+```jsonc
+{
+  "name":            "<name>",                  // required · string · must equal the directory name
+  "extends":         "_shared",                 // required for non-_shared profiles · string · currently must be "_shared"
+  "spine_version":   "1",                       // required · string · must satisfy spine_version <= current
+  "labels": {                                   // required · object · all three keys non-empty strings
+    "work_unit":         "<noun>",              // e.g. "work package" | "deliverable" | "piece"
+    "isolation_axis":    "<phrase>",            // e.g. "git repo + disjoint dirs"
+    "freeze_gate_noun":  "<noun>"               // e.g. "interface freeze" | "decision lock"
+  },
+  "optional_blocks":  ["<key>", …],             // required · array of strings · may be empty
+  "produces_designs": true | false,             // required · boolean
+  "spine_overrides":  { "<file>": "templates/<file>", … }  // required · object · may be empty
+}
+```
+
+`_shared/profile.json` is the **base**: it carries `name: "_shared"` and no `extends` field. Every other profile sets `extends: "_shared"`; nested chains are not supported in v1.
+
+### Resolution algorithm
+
+1. Load `profiles/_shared/profile.json` → base.
+2. Load `profiles/<profile>/profile.json` → overlay.
+3. Merge: overlay's `labels`, `optional_blocks`, `produces_designs`, `spine_overrides` win; missing keys fall through to the base.
+4. For each spine file (the union of `_shared.spine` + any keys in the overlay's `spine_overrides`), look in `profiles/<profile>/templates/<file>` first; fall back to `profiles/_shared/templates/<file>`. Render with the substituted `{{vocab.*}}` map.
+
+### Validation rules (the conformance gate)
+
+`status` rejects an invalid profile with a specific error per violated rule — see `actions/status.md` §"Profile conformance check" for the user-facing error catalog. The rules:
+
+| # | Rule | Failure message (canonical) |
+|---|---|---|
+| 1 | `profile.json` exists | `profile "<name>": profile.json missing at profiles/<name>/profile.json` |
+| 2 | Parses as JSON | `profile "<name>": profile.json is not valid JSON (<parser error>)` |
+| 3 | `name` equals directory name | `profile "<name>": profile.json declares name="<other>" but lives in profiles/<name>/` |
+| 4 | `extends` is `"_shared"` (for non-_shared profiles) | `profile "<name>": extends must be "_shared" (got <value>)` |
+| 5 | `spine_version` ≤ current | `profile "<name>": spine_version=<v> exceeds skill's current spine_version=<current>` |
+| 6 | All three `labels.*` keys present + non-empty strings | `profile "<name>": labels.<key> missing or empty` |
+| 7 | `optional_blocks` is an array of strings | `profile "<name>": optional_blocks must be an array of strings` |
+| 8 | `produces_designs` is a boolean | `profile "<name>": produces_designs must be true or false` |
+| 9 | `spine_overrides` is an object; every value resolves to an existing template file | `profile "<name>": spine_overrides["<file>"] points to <path>, which does not exist` |
+| 10 | No unknown top-level keys outside the schema | `profile "<name>": unknown top-level key "<key>" (allowed: name, extends, spine_version, labels, optional_blocks, produces_designs, spine_overrides)` |
+
+Rules 1–9 are hard rejections — `init --profile <name>` refuses to scaffold and every other action refuses to read. Rule 10 is a **warn** (forward-compat — mirrors studio's Zod `.passthrough()` lesson; the spine schema may grow and we don't want a stale skill to break a newer profile). Unknown keys are preserved on disk and surfaced in the warning.
+
+The gate runs in two places: at `init` time (refuse the scaffold if the user passed `--profile <name>` and `<name>` fails any hard rule), and on every `status` run (report every loaded profile's conformance, not just the active one — so dropping an invalid profile is noticed before the next `init`).
+
+### Worked example
+
+A user drops `profiles/ops/`:
+
+```
+profiles/ops/
+├── profile.json
+└── templates/
+    └── 05-tracking.md
+```
+
+with `profile.json`:
+
+```jsonc
+{
+  "name": "ops",
+  "extends": "_shared",
+  "spine_version": "1",
+  "labels": {
+    "work_unit": "runbook step",
+    "isolation_axis": "owner + environment",
+    "freeze_gate_noun": "rollout lock"
+  },
+  "optional_blocks": ["runbook", "rollback_plan"],
+  "produces_designs": false,
+  "spine_overrides": { "05-tracking.md": "templates/05-tracking.md" }
+}
+```
+
+`groundwork init plans/incident-2026-05-22/ --profile ops --goal "Stand up the GCS-failover runbook"` resolves the profile, materializes 01–05 (only 05 from the ops overlay; the other four from `_shared`), and writes a `.groundwork.json` with `profile: "ops"`. The next `groundwork status` reports `ops` alongside the three built-ins as ✓ conformant.
+
+If the user typos `extneds: "_shared"`, rule 4 fires: `profile "ops": extends must be "_shared" (got undefined)` and `init` refuses.
 
 ---
 
@@ -178,31 +318,26 @@ Inside HTML, JSON, or any non-markdown file, use the same `<!-- … -->` form wh
 
 ## Hash-diff re-run semantics
 
-The contract: **an action that touches a region recomputes that region's content, hashes it, and writes only if the new hash differs from the recorded hash.** Equal content is a no-op (no `updated` bump, no file write).
+The contract: **an action that touches a region recomputes that region's content, hands it to the script, and the script writes only if the new hash differs from the recorded hash.** Equal content is a no-op (no `updated` bump, no file write). This is exactly what `write-region` does — the action computes *what the region should say*; the script decides *whether and how to write it*.
 
-### Algorithm (per region)
+### Algorithm (per region — what `write-region` implements)
 
 ```
 old_hash = .groundwork.json.docs[file].generated_regions[id].hash
-new_content = action.compute(id, current_state)
-new_hash = sha256(new_content)
+new_hash = sha256(strip_meta(new_content))            # excludes the last_action: line
 
-if new_hash == old_hash:
-    # no-op — leave the file alone, including its mtime
-    return Unchanged
+if new_hash == old_hash and on_disk == old_hash:
+    return UNCHANGED                                  # leave the file alone, mtime intact
 
-if file_on_disk[id] != reconstruct(old_hash):
-    # the user hand-edited inside the fence; never clobber
-    warn("region %s edited by hand — pass --force to overwrite", id)
-    return SkippedDirty
+if on_disk_hash != old_hash and not --force:
+    return SKIPPED_DIRTY                              # user hand-edited inside the fence; never clobber
 
-write_region(file, id, new_content)
-.groundwork.json.docs[file].generated_regions[id] = {hash: new_hash, last_action: NAME, last_written: now()}
-.groundwork.json.docs[file].hash = sha256(whole_file_after_write)
-.groundwork.json.updated = now()
+# else: rewrite the inner block (refresh the last_action stamp), recompute the whole-file
+# hash, update the region entry + doc hash in the anchor, atomic-write both.
+return WRITTEN
 ```
 
-The third clause is the safety: **if the bytes inside a fence don't match what we last wrote, we assume the user edited them.** This is rarer than the spec implies (most users edit outside fences) but it matters when it happens. The user can `groundwork status --force-rewrite <file>#<id>` to accept the overwrite.
+The dirty clause is the safety: **if the bytes inside a fence don't match what we last wrote, the script assumes the user edited them** and refuses unless the action passes `--force`. The content hash deliberately excludes the `last_action:` metadata line, so a refreshed timestamp never counts as a change — that's what keeps re-runs from churning. Most users edit *outside* fences (always safe); the dirty path matters for the rare inside-fence edit.
 
 ### Idempotency, defined
 
