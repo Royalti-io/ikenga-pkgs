@@ -20,8 +20,15 @@ export async function loadLanguage(lang: Language): Promise<Extension> {
       return json();
     }
     case 'markdown': {
-      const { markdown } = await import('@codemirror/lang-markdown');
-      return markdown();
+      // `codeLanguages` lets fenced blocks (```bash, ```ts, …) light up with
+      // real per-language highlighting. `@codemirror/language-data` lazy-loads
+      // each grammar only when a fence of that language is present, so the
+      // base markdown bundle stays small.
+      const [{ markdown }, { languages }] = await Promise.all([
+        import('@codemirror/lang-markdown'),
+        import('@codemirror/language-data'),
+      ]);
+      return markdown({ codeLanguages: languages });
     }
   }
 }
