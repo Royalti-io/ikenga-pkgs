@@ -91,6 +91,36 @@
       "last_edited": "2026-05-22T22:18:00.000Z",
       "renders": [],
       "metadata": {}
+    },
+    {
+      "uid": "hello-portrait",
+      "beat_id": "beat-hello",
+      "rung": "2_hifi",
+      "index": 1,
+      "label": "Hello (portrait 9:16)",
+      "time": { "start": 0, "end": 3 },
+      "frames": { "start": 0, "end": 90 },
+      "narration_excerpt": "Hello from the Studio smoke fixture.",
+      "intent": "Portrait-authored title card; proves the per-call 9:16 aspect override.",
+      "shot_type": "unset",
+      "camera_move": "unset",
+      "duration_ms": 3000,
+      "prompt": "",
+      "anchors": [],
+      "renderer": "hyperframes",
+      "content_path": "cells/hifi/hello-portrait/index.html",
+      "notes": "Portrait HF cell — index.html declares data-width=1080 data-height=1920. Rendered with aspect_ratio:'9:16' override (project default stays 16:9).",
+      "reference_layer": [],
+      "rungs": {
+        "0_beat_sheet": { "status": "pending" },
+        "1_lofi": { "status": "pending" },
+        "2_hifi": { "status": "pending" }
+      },
+      "comments": [],
+      "approved": false,
+      "last_edited": "2026-05-22T22:18:00.000Z",
+      "renders": [],
+      "metadata": {}
     }
   ],
   "narration": null,

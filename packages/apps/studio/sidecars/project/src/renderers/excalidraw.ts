@@ -23,6 +23,17 @@
  * `<rendersDir>/excalidraw/<rungDir(cell.rung)>/<uid>.mp4` via the
  * `rungDir()` schema helper.
  *
+ * G-44 — aspect-ratio honoring. The output canvas dims are resolved by
+ * `resolveResolution()` (see its doc): an explicit per-call
+ * `RenderOptions.resolution` wins; otherwise dims follow the RESOLVED aspect
+ * (`opts.aspect_ratio ?? ctx.aspectRatio`) via `DEFAULT_RESOLUTION`, NOT the
+ * stale project-default `ctx.resolution`. The exported PNG (native scene
+ * size) is then scaled-to-fit + centered + white-padded into that target
+ * canvas via `scalePadFilter` — Excalidraw content is vector, so fitting it
+ * into 1080×1080 / 1080×1920 / 1920×1080 letterboxes cleanly with no crop.
+ * This mirrors HF's effective framing (HF always lands at
+ * `DEFAULT_RESOLUTION[aspect]` via its `--resolution` preset).
+ *
  * ─── Deviations from the WP-05b brief ─────────────────────────────────────
  *
  * 1. BUNDLE-FIRST, not CDN/importmap injection. The brief says "inject
@@ -159,12 +170,43 @@ function resolveAspect(opts: RenderOptions, ctx: RenderContext): AspectRatio {
   return opts.aspect_ratio ?? ctx.aspectRatio;
 }
 
+/**
+ * Resolve the output W×H for an Excalidraw render (G-44).
+ *
+ * Mirrors HyperFrames' *effective* framing rather than HF's literal code: HF
+ * maps the resolved aspect to a `--resolution` preset, so its output ALWAYS
+ * lands at `DEFAULT_RESOLUTION[aspect]` regardless of `ctx.resolution` (HF
+ * records `resolution_actual: DEFAULT_RESOLUTION[aspect]`). We must do the
+ * same, because `ctx.resolution` carries the PROJECT-DEFAULT framing — when a
+ * per-call `aspect_ratio` override flips the aspect (e.g. a 16:9 project asks
+ * for a 9:16 cell), `ctx.resolution` is still 1920×1080 and would otherwise
+ * win, producing a landscape canvas for a portrait request (the original
+ * G-44 defect). So:
+ *   • an explicit per-call `opts.resolution` wins (caller knows best);
+ *   • otherwise the dims follow the RESOLVED aspect via DEFAULT_RESOLUTION —
+ *     NOT the stale project-default `ctx.resolution`.
+ * This keeps the happy path intact (16:9 project, no override → 1920×1080)
+ * while making 1:1 → 1080×1080 and 9:16 → 1080×1920 correct.
+ */
 function resolveResolution(
   opts: RenderOptions,
   ctx: RenderContext,
   aspect: AspectRatio,
 ): { w: number; h: number } {
-  return opts.resolution ?? ctx.resolution ?? DEFAULT_RESOLUTION[aspect];
+  if (opts.resolution) return opts.resolution;
+  // Honor ctx.resolution only when it agrees with the resolved aspect (i.e. no
+  // per-call override flipped us off the project default); otherwise the
+  // aspect override is authoritative and we derive dims from it.
+  const def = DEFAULT_RESOLUTION[aspect];
+  if (ctx.resolution && aspectOf(ctx.resolution) === aspect) return ctx.resolution;
+  return def;
+}
+
+/** Classify a {w,h} into one of the supported aspect buckets (or null). */
+function aspectOf(res: { w: number; h: number }): AspectRatio | null {
+  if (res.w === res.h) return '1:1';
+  if (res.w > res.h) return '16:9';
+  return '9:16';
 }
 
 /** Resolve a unique output path under `rendersDir/excalidraw/<rungDir>/`. */

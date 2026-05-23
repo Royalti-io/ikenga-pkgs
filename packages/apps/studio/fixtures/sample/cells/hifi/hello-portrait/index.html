@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1920" />
+    <!-- GSAP vendored locally so the composition renders network-free (the
+         studio HF adapter declares requires_network:false). -->
+    <script src="gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body {
+        width: 1080px; height: 1920px; overflow: hidden;
+        background: #0b0b0f;
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      }
+      #root { position: relative; width: 1080px; height: 1920px; }
+      .scene-content {
+        position: absolute; inset: 0;
+        display: flex; flex-direction: column;
+        align-items: center; justify-content: center;
+        gap: 48px; color: #f5f5f7; text-align: center; padding: 120px;
+      }
+      .ring {
+        width: 260px; height: 260px; border-radius: 50%;
+        border: 12px solid #ec4899;
+      }
+      h1 { font-size: 120px; color: #ec4899; line-height: 1.05; }
+      .sub { font-size: 40px; opacity: .85; }
+    </style>
+  </head>
+  <body>
+    <!-- Root composition: PORTRAIT 1080×1920, 3s. Duration is in SECONDS for HF.
+         This cell proves the G-44 per-call aspect_ratio:'9:16' override path
+         against a 16:9 project default. -->
+    <div
+      id="root"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="3"
+      data-width="1080"
+      data-height="1920"
+    >
+      <div id="card" class="clip" data-start="0" data-duration="3" data-track-index="0">
+        <div class="scene-content">
+          <div id="ring" class="ring"></div>
+          <h1 id="title">Hello,<br />Vertical</h1>
+          <div id="sub" class="sub">com.ikenga.studio &mdash; 9:16 portrait fixture (hi-fi rung)</div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // The capture engine reads window.__timelines["main"] synchronously
+      // after load — build the timeline inline, paused, no infinite repeats.
+      window.__timelines = window.__timelines || {};
+      const tl = gsap.timeline({ paused: true });
+      // Entrances: animate FROM offscreen/invisible to the CSS hero position.
+      tl.from("#title", { opacity: 0, y: 80, duration: 1, ease: "power2.out" }, 0);
+      tl.from("#sub", { opacity: 0, y: 40, duration: 1, ease: "power2.out" }, 0.4);
+      // Ring pulse — finite repeat count derived from the 3s duration.
+      tl.fromTo(
+        "#ring",
+        { scale: 0.85, opacity: 0.5 },
+        { scale: 1.1, opacity: 1, duration: 0.75, yoyo: true, repeat: 3, ease: "sine.inOut" },
+        0
+      );
+      window.__timelines["main"] = tl;
+    </script>
+  </body>
+</html>

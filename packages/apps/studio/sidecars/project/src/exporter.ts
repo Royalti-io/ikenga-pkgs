@@ -45,6 +45,27 @@
  * frames with `kind:'export'`. Terminal state emits `render/done`
  * (`kind:'export'`).
  *
+ * Audio robustness (G-45)
+ * ────────────────────────
+ * Cells can render VIDEO-ONLY (e.g. an HF/Excalidraw cell with no narration
+ * track baked in). The per-cell audio graph must never reference a `:a`
+ * stream that doesn't exist, or ffmpeg aborts with
+ * `Stream specifier ':a' matches no streams` (exit 234) and the whole
+ * `export.compose` fails. We handle this with **silence synthesis**:
+ *   • We ffprobe every input for an audio stream up-front (`inputHasAudio[]`).
+ *   • For each input that HAS audio we resample its real audio; for each
+ *     input that LACKS audio we synthesize `anullsrc` trimmed to that input's
+ *     exact duration. Both feed the `[acells]` concat, so the cell audio
+ *     timeline stays sample-aligned with the video timeline regardless of
+ *     which cells carry audio (chosen over "mix only inputs with audio"
+ *     precisely because alignment matters for J/L-cut narration overlap).
+ *   • If NO input has audio AND there is no narration/music track, we emit a
+ *     genuinely VIDEO-ONLY file: no `[acells]` graph, no `-map` of audio, no
+ *     amix. The export still succeeds; the deliverable simply has no audio.
+ *   • When some/all inputs have audio (or narration/music exists), the
+ *     silence-padded `[acells]` is amix'd with narration/music as before, so
+ *     the happy path (every cell + narration) is unchanged.
+ *
  * Auto-reveal
  * ───────────
  * The sidecar canNOT open a file manager (no DE access, and shelling
@@ -242,6 +263,28 @@ function ffprobeDurationMs(path: string): Promise<number> {
   });
 }
 
+/**
+ * Probe an input for the presence of an audio stream (G-45). Returns `true`
+ * iff ffprobe reports at least one audio stream. Any probe error → `false`
+ * (treat as video-only, which is the safe assumption — we synthesize silence
+ * rather than reference a maybe-missing stream).
+ */
+function ffprobeHasAudio(path: string): Promise<boolean> {
+  return new Promise((resolveHas) => {
+    const child = spawn('ffprobe', [
+      '-v', 'error',
+      '-select_streams', 'a',
+      '-show_entries', 'stream=index',
+      '-of', 'csv=p=0',
+      path,
+    ]);
+    let out = '';
+    child.stdout.on('data', (b: Buffer) => (out += b.toString('utf8')));
+    child.on('error', () => resolveHas(false));
+    child.on('close', () => resolveHas(out.trim().length > 0));
+  });
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // FFmpeg arg construction
 // ─────────────────────────────────────────────────────────────────────────
@@ -263,6 +306,13 @@ export interface BuildArgsResult {
 export function buildFfmpegArgs(opts: {
   inputs: ResolvedInput[];
   inputDurationsMs: number[];
+  /**
+   * Per-input audio presence (G-45). `inputHasAudio[i] === true` iff input i's
+   * MP4 carries an audio stream. Inputs without audio get synthesized silence
+   * (anullsrc) trimmed to their duration so the cell-audio timeline stays
+   * aligned with video. Defaults to "all have audio" when omitted (legacy).
+   */
+  inputHasAudio?: boolean[];
   outputPath: string;
   narrationPath?: string;
   musicPath?: string;
@@ -272,6 +322,7 @@ export function buildFfmpegArgs(opts: {
 }): BuildArgsResult {
   const { inputs, inputDurationsMs, outputPath, narrationPath, musicPath, w, h, fps } = opts;
   const n = inputs.length;
+  const inputHasAudio = opts.inputHasAudio ?? inputs.map(() => true);
 
   const args: string[] = ['-y', '-hide_banner'];
   for (const inp of inputs) args.push('-i', inp.mp4);
@@ -343,47 +394,71 @@ export function buildFfmpegArgs(opts: {
     totalMs = acc;
   }
 
-  // 3) Audio. Concatenate the cells' own audio (acrossfade where the video
-  //    boundary crossfaded, plain concat otherwise) → [acells], then amix
-  //    with narration + music as available.
-  //    For simplicity + robustness in P1 we build [acells] as a straight
-  //    concat of the per-cell audio (resampled to a common rate); the
-  //    crossfade overlap on video is short (0.5s) and the audible artifact of
-  //    a hard audio butt-join under a video crossfade is negligible for P1.
-  for (let i = 0; i < n; i++) {
-    fc.push(`[${i}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`);
-  }
-  const aRefs = Array.from({ length: n }, (_, i) => `[a${i}]`).join('');
-  fc.push(`${aRefs}concat=n=${n}:v=0:a=1[acells]`);
+  // 3) Audio (G-45 — robust to video-only inputs).
+  //    Build [acells] from each cell's audio. For inputs WITH audio we
+  //    resample the real stream; for VIDEO-ONLY inputs we synthesize
+  //    `anullsrc` silence trimmed to that input's exact duration so the
+  //    cell-audio timeline stays sample-aligned with video. We then amix
+  //    [acells] with narration + music as available.
+  //    For simplicity + robustness in P1 [acells] is a straight concat of the
+  //    per-cell audio; the xfade overlap on video is short (0.5s) and the
+  //    audible artifact of a hard audio butt-join under a video crossfade is
+  //    negligible for P1.
+  //
+  //    SPECIAL CASE — if NO input has audio AND there is no narration/music
+  //    track, we emit a genuinely video-only file: no audio graph, no audio
+  //    map. (Mapping a synthesized-silence-only track would bloat the file
+  //    with inaudible audio for no benefit; a true video-only deliverable is
+  //    the correct output and ffprobe sees zero audio streams.)
+  const anyInputAudio = inputHasAudio.some(Boolean);
+  const haveExternalAudio = narrationInput >= 0 || musicInput >= 0;
+  const videoOnly = !anyInputAudio && !haveExternalAudio;
 
-  const mixInputs: string[] = ['[acells]'];
-  if (narrationInput >= 0) {
-    fc.push(`[${narrationInput}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[anarr]`);
-    mixInputs.push('[anarr]');
-  }
-  if (musicInput >= 0) {
-    fc.push(`[${musicInput}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=0.3[amus]`);
-    mixInputs.push('[amus]');
-  }
+  let aOut: string | null = null;
+  if (!videoOnly) {
+    for (let i = 0; i < n; i++) {
+      if (inputHasAudio[i]) {
+        fc.push(`[${i}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`);
+      } else {
+        // Synthesize silence matching this cell's duration so concat stays aligned.
+        const durS = ((inputDurationsMs[i] ?? 0) / 1000).toFixed(3);
+        fc.push(
+          `anullsrc=channel_layout=stereo:sample_rate=48000,atrim=duration=${durS},` +
+            `aformat=sample_fmts=fltp:channel_layouts=stereo[a${i}]`,
+        );
+      }
+    }
+    const aRefs = Array.from({ length: n }, (_, i) => `[a${i}]`).join('');
+    fc.push(`${aRefs}concat=n=${n}:v=0:a=1[acells]`);
 
-  let aOut: string;
-  if (mixInputs.length === 1) {
-    aOut = '[acells]';
-  } else {
-    fc.push(`${mixInputs.join('')}amix=inputs=${mixInputs.length}:duration=longest:dropout_transition=2[aout]`);
-    aOut = '[aout]';
+    const mixInputs: string[] = ['[acells]'];
+    if (narrationInput >= 0) {
+      fc.push(`[${narrationInput}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo[anarr]`);
+      mixInputs.push('[anarr]');
+    }
+    if (musicInput >= 0) {
+      fc.push(`[${musicInput}:a]aresample=48000,aformat=sample_fmts=fltp:channel_layouts=stereo,volume=0.3[amus]`);
+      mixInputs.push('[amus]');
+    }
+
+    if (mixInputs.length === 1) {
+      aOut = '[acells]';
+    } else {
+      fc.push(`${mixInputs.join('')}amix=inputs=${mixInputs.length}:duration=longest:dropout_transition=2[aout]`);
+      aOut = '[aout]';
+    }
   }
 
   const filter = fc.join(';');
+  args.push('-filter_complex', filter, '-map', vOut);
+  if (aOut) args.push('-map', aOut);
   args.push(
-    '-filter_complex', filter,
-    '-map', vOut,
-    '-map', aOut,
     '-c:v', 'libx264',
     '-preset', 'veryfast',
     '-pix_fmt', 'yuv420p',
-    '-c:a', 'aac',
-    '-b:a', '192k',
+  );
+  if (aOut) args.push('-c:a', 'aac', '-b:a', '192k');
+  args.push(
     '-movflags', '+faststart',
     '-progress', 'pipe:1',
     '-nostats',
@@ -560,11 +635,16 @@ export class ExportRunner {
       const musicPath = resolveMusicBed(root, req.music_preset);
 
       const durations: number[] = [];
-      for (const inp of resolved.inputs) durations.push(await ffprobeDurationMs(inp.mp4));
+      const inputHasAudio: boolean[] = [];
+      for (const inp of resolved.inputs) {
+        durations.push(await ffprobeDurationMs(inp.mp4));
+        inputHasAudio.push(await ffprobeHasAudio(inp.mp4));
+      }
 
       const built = buildFfmpegArgs({
         inputs: resolved.inputs,
         inputDurationsMs: durations,
+        inputHasAudio,
         outputPath,
         narrationPath,
         musicPath,
