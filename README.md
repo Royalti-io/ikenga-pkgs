@@ -1,8 +1,17 @@
 # ikenga-pkgs
 
-Open-source packages for the [Ikenga](https://github.com/Royalti-io/ikenga) workspace.
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Discussions](https://img.shields.io/badge/community-discussions-5865F2.svg)](https://github.com/Royalti-io/ikenga-pkgs/discussions)
 
-Per [ADR-009](https://github.com/Royalti-io/ikenga/blob/main/docs/adr/009-monorepo-pkgs-all-open.md) all packages here ship under **Apache-2.0**.
+> The canonical home for first-party Ikenga packages — engines, MCP servers, mini-apps, and
+> helpers — in one Apache-2.0 monorepo.
+
+## What it is
+
+Every first-party Ikenga package lives here
+([ADR-009](https://github.com/Royalti-io/ikenga/blob/main/docs/adr/009-monorepo-pkgs-all-open.md)),
+versioned and published with Changesets. It's a good place to read working examples of
+each pkg archetype before authoring your own.
 
 ## Layout
 
@@ -39,6 +48,11 @@ within seconds of `pnpm changeset publish` completing, via the
 `scripts/update-registry-index.mjs` step in the release workflow. The shell and
 `ikenga` CLI both consume that registry for discovery and install.
 
+## Links
+
+- [`ikenga`](https://github.com/Royalti-io/ikenga) — the desktop shell that loads these
+- [`ikenga-contract`](https://github.com/Royalti-io/ikenga-contract) — the manifest schema each pkg validates against
+
 ## License
 
-[Apache-2.0](LICENSE).
+Apache-2.0 — see [`LICENSE`](LICENSE).

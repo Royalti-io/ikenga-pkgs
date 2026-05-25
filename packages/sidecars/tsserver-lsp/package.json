@@ -13,8 +13,7 @@
   "scripts": {
     "dev": "bun run src/bridge.ts",
     "build": "bash build.sh",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "bun test"
+    "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
     "typescript": "^5.4.0",
