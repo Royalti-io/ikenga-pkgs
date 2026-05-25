@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "lib": ["es2022", "dom", "dom.iterable"]
   },
-  "include": ["dist/**/*.js"]
+  "include": ["dist/**/*.js", "dist/**/*.d.ts"]
 }

@@ -59,6 +59,30 @@ const ICONS = {
   'git-branch': 'M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9',
 };
 
+// Class-name joiner — replaces clsx + tailwind-merge. With Tailwind gone there
+// are no utility conflicts to dedupe, so a truthy-join is sufficient.
+export function cn(...inputs) {
+  /** @type {string[]} */ const out = [];
+  for (const i of inputs) {
+    if (!i) continue;
+    if (typeof i === 'string') out.push(i);
+    else if (Array.isArray(i)) out.push(cn(...i));
+    else if (typeof i === 'object') {
+      for (const k of Object.keys(i)) if (i[k]) out.push(k);
+    }
+  }
+  return out.join(' ');
+}
+
+// Button — ported from src/components/Button.tsx. Tailwind utility classes
+// became .tk-btn / sz-* / v-* rules in tasks.css.
+export function Button({ variant = 'default', size = 'md', class: cls = '', children, ...props }) {
+  const className = ['tk-btn', `sz-${size}`, `v-${variant}`, cls]
+    .filter(Boolean)
+    .join(' ');
+  return html`<button class=${className} ...${props}>${children}</button>`;
+}
+
 export function Icon({ name, size = 16, className, strokeWidth = 2 }) {
   const path = ICONS[name];
   if (!path) return null;
