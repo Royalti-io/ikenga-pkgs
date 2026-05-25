@@ -1,0 +1,51 @@
+{
+  "id": "com.ikenga.tasks",
+  "name": "Tasks",
+  "version": "0.2.0",
+  "ikenga_api": "1",
+  "kind": "embedded",
+  "author": { "name": "Royalti", "key": "royalti" },
+
+  "ui": {
+    "nav": [
+      {
+        "id": "tasks.index",
+        "label": "Tasks",
+        "icon": "check-square",
+        "section": "ops",
+        "route": "/pkg/com.ikenga.tasks/"
+      }
+    ],
+    "routes": [
+      {
+        "path": "/",
+        "kind": "iframe",
+        "source": "dist/index.html"
+      }
+    ],
+    "csp": {
+      "script-src": ["'self'", "'unsafe-inline'", "https://esm.sh"],
+      "style-src": ["'self'", "'unsafe-inline'", "https://esm.sh"],
+      "font-src": ["'self'", "https://esm.sh", "data:"],
+      "connect-src": [
+        "'self'",
+        "https://esm.sh",
+        "https://*.supabase.co",
+        "wss://*.supabase.co"
+      ]
+    }
+  },
+
+  "capabilities": {
+    "supabase": { "required": true }
+  },
+
+  "permissions": {
+    "shell.execute": [],
+    "fs.read": [],
+    "fs.write": [],
+    "net": ["https://esm.sh", "https://*.supabase.co"],
+    "supabase.tables": ["tasks", "task_comments"],
+    "vault.keys": []
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@ikenga/pkg-tasks",
+  "version": "0.2.0",
+  "description": "Tasks — List, Agenda, Triage over the production tasks schema. Multi-file iframe pkg, no build step.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/apps/tasks"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "files": [
+    "manifest.json",
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "echo 'no build — multi-file ESM pkg'",
+    "typecheck": "tsc -p tsconfig.dev.json"
+  }
+}
