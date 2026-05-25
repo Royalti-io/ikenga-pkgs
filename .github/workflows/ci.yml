@@ -21,6 +21,11 @@ jobs:
           node-version: 22
           cache: pnpm
 
+      # @ikenga/studio-mcp bundles via `bun build` (see packages/apps/studio/mcp/build.sh).
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm -r build
