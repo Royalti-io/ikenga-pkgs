@@ -4,6 +4,7 @@
 
 import { html, cn, Icon, Button, useState, useMemo, useQuery } from '../../lib/ui.js';
 import { getSupabase } from '../../lib/supabase.js';
+import { hostSendToActiveSession, isStandalone } from '../../lib/bridge.js';
 import { queryKeys } from '../../lib/query-keys.js';
 import { TASKS_LIST_COLUMNS, triageCountsQuery } from '../../lib/queries.js';
 import { groupTasks } from '../../lib/shared.js';
@@ -122,6 +123,27 @@ export function TasksView() {
 
   const filterActive = !!statusFilter || !!ownerFilter || !!categoryFilter || !!search.trim();
 
+  const [creating, setCreating] = useState(false);
+
+  // Create = dispatch, NOT anon insert. Anon RLS on `tasks` only grants UPDATE
+  // of status/completed_at — never INSERT — so a new task cannot be written
+  // client-side. Instead we seed a user turn into the shell's active Claude
+  // session (host.sendToActiveSession); the agent creates the task via its
+  // privileged path. Disabled in standalone (no host to dispatch to).
+  async function createTask() {
+    if (creating || isStandalone()) return;
+    setCreating(true);
+    try {
+      await hostSendToActiveSession(
+        'Create a new task. Ask me for the title, owner, priority, and due date, then add it to the tasks table.',
+      );
+    } catch (e) {
+      console.warn('[tasks] create dispatch failed', e);
+    } finally {
+      setCreating(false);
+    }
+  }
+
   /** @param {GroupKey} key */
   function toggleGroup(key) {
     setCollapsed((prev) => {
@@ -149,9 +171,15 @@ export function TasksView() {
             </div>
           </div>
           <div style=${{ display: 'flex', gap: 6, alignItems: 'center' }}>
-            <${Button} size="sm" type="button" disabled title="Not yet wired">
-              <${Icon} name="plus" size=${12} />
-              New task
+            <${Button}
+              size="sm"
+              type="button"
+              disabled=${creating || isStandalone()}
+              title=${isStandalone() ? 'Dispatch unavailable in standalone preview' : 'Dispatch a task to your Chi'}
+              onClick=${createTask}
+            >
+              <${Icon} name=${creating ? 'loader' : 'plus'} size=${12} className=${creating ? 'tk-spin' : undefined} />
+              ${creating ? 'Dispatching…' : 'New task'}
             </${Button}>
           </div>
         </div>
