@@ -1,7 +1,11 @@
 # Suite
 
-Ikenga pkg — business suite (Tasks, Sales, Outbound, Email) over Supabase.
+Ikenga pkg — business suite (Sales, Outbound, Email) over Supabase.
 Multi-file iframe pkg, **no build step**. React 19 + htm via esm.sh.
+
+> Tasks moved out to its own pkg — `com.ikenga.tasks` (the rich List/Agenda/
+> Triage app over the production tasks schema). See
+> [`packages/apps/tasks`](../tasks).
 
 | | |
 |---|---|
@@ -29,7 +33,6 @@ suite/
         │   └── settings.js   # in-pkg feature toggles (localStorage)
         └── features/
             ├── _registry.js  # imports + exports each feature
-            ├── tasks/        # kanban — fully wired
             ├── sales/        # placeholder
             ├── outbound/     # placeholder
             └── email/        # placeholder
@@ -78,21 +81,9 @@ Supabase config. Useful for quick UI iteration without the shell.
 
 ## Required schema (starter)
 
-```sql
-create table tasks (
-  id uuid primary key default gen_random_uuid(),
-  title text not null,
-  status text not null check (status in ('open','in_progress','blocked','done','cancelled')),
-  created_at timestamptz not null default now()
-);
-create table task_comments (
-  id uuid primary key default gen_random_uuid(),
-  task_id uuid references tasks(id) on delete cascade,
-  body text not null,
-  created_at timestamptz not null default now()
-);
--- deals, outbound_messages, email_drafts — design as you wire each feature
-```
+Suite's three features read from `deals`, `outbound_messages`, and
+`email_drafts` — design these as you wire each feature. (Tasks and its
+schema now live in the standalone `com.ikenga.tasks` pkg.)
 
 RLS is the real enforcer; `permissions.supabase.tables` in the manifest is
 advisory.
