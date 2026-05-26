@@ -5,7 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="light dark" />
     <title>Tasks</title>
-    <link rel="stylesheet" href="tasks.css" />
+    <!-- No <link rel="stylesheet">: WebKitGTK can't load subresources (link/
+         fetch/img) from the about:srcdoc document the shell mounts — only
+         inlined scripts work (see the bootstrap comment below). So tasks.css
+         ships as a JS string (lib/tasks-css.js) and app.js injects it as an
+         inline <style>. The block below is just the boot/token shim. -->
     <style>
       :root {
         --tasks-bg: var(--bg-base, #fff);
