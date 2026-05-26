@@ -2,7 +2,7 @@
 // grouped rows + master/detail split + in-body view switcher (Tasks/Agenda/
 // Triage) with localStorage persistence.
 
-import { html, cn, Icon, Button, useState, useMemo, useQuery } from '../../lib/ui.js';
+import { html, cn, Icon, Button, useState, useMemo, useEffect, useQuery } from '../../lib/ui.js';
 import { getSupabase } from '../../lib/supabase.js';
 import { hostSendToActiveSession, isStandalone } from '../../lib/bridge.js';
 import { queryKeys } from '../../lib/query-keys.js';
@@ -41,7 +41,8 @@ const STATUS_OPTIONS = [
   { value: 'completed', label: 'Completed' },
 ];
 
-export function TasksView() {
+/** @param {{ activeFeature?: string | null }} props */
+export function TasksView({ activeFeature } = {}) {
   /** @type {[string | null, (v: string | null) => void]} */
   const [selectedId, setSelectedId] = useState(/** @type {string | null} */ (null));
   /** @type {['' | TaskStatus, (v: '' | TaskStatus) => void]} */
@@ -63,6 +64,32 @@ export function TasksView() {
       /* ignore */
     }
   }
+
+  // Shell side-menu selection (host.pkg.setMenu → royaltiSuite.activeFeature).
+  // View ids switch the mounted view; `f:<group>` filter ids jump the Tasks
+  // list to that group (expanding it, surfacing auto-closed when relevant).
+  useEffect(() => {
+    if (!activeFeature) return;
+    if (activeFeature === 'tasks' || activeFeature === 'agenda' || activeFeature === 'triage') {
+      setView(activeFeature);
+      return;
+    }
+    if (activeFeature.startsWith('f:')) {
+      const key = /** @type {GroupKey} */ (activeFeature.slice(2)); // today|overdue|autoclosed
+      setView('tasks');
+      if (key === 'autoclosed') setShowAutoClosed(true);
+      setCollapsed((prev) => {
+        const next = new Set(prev);
+        next.delete(key);
+        return next;
+      });
+      // Defer so the Tasks view + group are mounted before we scroll to it.
+      requestAnimationFrame(() => {
+        const el = document.querySelector(`.tk-list [data-group="${key}"]`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
+  }, [activeFeature]);
 
   // Server-side health counts — drive the Triage tab badge (and the Triage
   // view's stat cards), correct independent of the list filter + 200-row cap.
@@ -184,7 +211,8 @@ export function TasksView() {
           </div>
         </div>
 
-        <${ViewTabs} view=${view} onChange=${changeView} triageCount=${triageBadge} />
+        ${isStandalone() &&
+        html`<${ViewTabs} view=${view} onChange=${changeView} triageCount=${triageBadge} />`}
 
         ${view === 'agenda' && html`<${AgendaView} tasks=${data ?? []} filterActive=${filterActive} />`}
         ${view === 'triage' && html`<${TriageView} listTasks=${data ?? []} />`}
@@ -269,6 +297,7 @@ export function TasksView() {
                       role="button"
                       tabIndex=${0}
                       aria-expanded=${!isCollapsed}
+                      data-group=${g.key}
                       class=${cn(
                         'tk-group-head',
                         g.key === 'overdue' && 'is-overdue',

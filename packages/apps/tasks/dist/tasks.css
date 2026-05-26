@@ -134,12 +134,19 @@
   --list-w: 360px;
   display: grid;
   grid-template-columns: minmax(280px, var(--list-w)) 4px minmax(420px, 1fr);
+  /* Bind the single row to the split's own height. Without this the implicit
+   * row is `auto` (content-sized), so a tall list/detail grows the row past the
+   * split and gets clipped by overflow:hidden — neither pane scrolls. */
+  grid-template-rows: minmax(0, 1fr);
   flex: 1;
   min-height: 0;
   overflow: hidden;
 }
 .tk-list {
   overflow-y: auto;
+  /* Grid items default to min-height:auto (won't shrink below content), which
+   * defeats overflow:auto. Allow shrink so the list scrolls within its track. */
+  min-height: 0;
   background: var(--bg-surface);
 }
 .tk-divider {
@@ -150,6 +157,7 @@
 .tk-detail {
   background: var(--bg-base);
   overflow-y: auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
@@ -826,7 +834,12 @@
 }
 
 /* === Agenda / Today (D-2) =================================== */
-.ag-wrap { padding: var(--space-5); max-width: 920px; }
+/* AgendaView root — rendered directly inside .tk-frame (which is overflow:hidden),
+ * so it must be the scroll region itself: grow to fill the leftover height, allow
+ * shrink (min-height:0), scroll its own overflow. Mirrors the Browse page's
+ * `1fr` + overflow-y:auto leaf (shell .ccfg-list/.ccfg-detail). Without this the
+ * agenda is clipped by the frame and can't scroll. */
+.ag-wrap { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-5); max-width: 920px; }
 .ag-head {
   display: flex;
   align-items: baseline;
@@ -874,7 +887,9 @@
 .ag-now::before { content: ''; position: absolute; left: -5px; top: -3px; width: 6px; height: 6px; border-radius: 50%; background: var(--live); }
 
 /* === Triage / Health (D-3) ================================== */
-.tr-wrap { padding: var(--space-5); max-width: 980px; }
+/* TriageView root — same as .ag-wrap: own scroll region inside the overflow-hidden
+ * frame (grow to fill, min-height:0, scroll). */
+.tr-wrap { flex: 1; min-height: 0; overflow-y: auto; padding: var(--space-5); max-width: 980px; }
 .tr-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-3); margin-bottom: var(--space-5); }
 .tr-stat { padding: var(--space-3) var(--space-4); border: 1px solid var(--border-soft); border-radius: var(--radius-md); background: var(--bg-surface); }
 /* Numbers stay --fg (12:1+ in every theme/mode) — the colored border carries

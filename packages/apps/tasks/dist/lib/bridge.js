@@ -15,12 +15,12 @@
 // `zod/v4` as a peer-via-esm.sh and dependency resolution sometimes
 // produces a Zod build missing `.custom()`. The bundled variant
 // inlines its deps so it works regardless of esm.sh's resolver state.
-import {
-  App,
-  applyDocumentTheme,
-  applyHostStyleVariables,
-  applyHostFonts,
-} from 'https://esm.sh/@modelcontextprotocol/ext-apps@1.7.1/app-with-deps';
+// NOTE: we deliberately do NOT import the SDK's applyDocumentTheme /
+// applyHostStyleVariables / applyHostFonts helpers. Theme is owned by app.js's
+// parent-<html> mirror (the artifact pattern). applyDocumentTheme in particular
+// clobbers our workspace `data-theme` (A/B/C) with 'light'|'dark', breaking the
+// bundled @ikenga/tokens palette — so the bridge stays out of theming entirely.
+import { App } from 'https://esm.sh/@modelcontextprotocol/ext-apps@1.7.1/app-with-deps';
 
 let app = null;
 
@@ -32,22 +32,15 @@ export async function connectBridge({ name, version, onContextChange }) {
   });
 
   app.onerror = (err) => console.error('[tasks] bridge error', err);
+  // Theme is NOT applied here — app.js mirrors it from the parent <html>.
+  // We still forward context so live Supabase/auth updates reach the app.
   app.onhostcontextchanged = (ctx) => {
-    applyContext(ctx);
     onContextChange?.(ctx);
   };
   app.onteardown = async () => ({});
 
   await app.connect();
-  const ctx = app.getHostContext();
-  if (ctx) applyContext(ctx);
-  return ctx;
-}
-
-function applyContext(ctx) {
-  if (ctx?.theme) applyDocumentTheme(ctx.theme);
-  if (ctx?.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
-  if (ctx?.styles?.css?.fonts) applyHostFonts(ctx.styles.css.fonts);
+  return app.getHostContext();
 }
 
 /** Navigate the focused shell pane (cross-pkg or in-pkg sub-route). */
@@ -63,6 +56,19 @@ export async function hostNavigate(path) {
 export async function openLink(url) {
   if (!app) throw new Error('bridge not connected');
   return app.openLink({ url });
+}
+
+/** Publish the pkg's sidebar menu to the shell. PkgMode renders these items in
+ *  the left side panel when this pkg's pane is focused (normal AppMode). Item
+ *  clicks come back as hostContext changes via `royaltiSuite.activeFeature` —
+ *  listen via onContextChange in connectBridge.
+ *  items: [{ id, label, icon?, badge? }] */
+export async function setMenu(items) {
+  if (!app) throw new Error('bridge not connected');
+  return app.callServerTool({
+    name: 'host.pkg.setMenu',
+    arguments: { items },
+  });
 }
 
 /**

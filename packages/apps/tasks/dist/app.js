@@ -13,7 +13,7 @@ import {
   QueryClient,
   QueryClientProvider,
 } from './lib/ui.js';
-import { connectBridge, isStandalone } from './lib/bridge.js';
+import { connectBridge, isStandalone, setMenu } from './lib/bridge.js';
 import { setSupabaseConfig, hasSupabase } from './lib/supabase.js';
 import { TasksView } from './features/tasks/tasks-view.js';
 import tokensCss from './lib/tokens-css.js';
@@ -31,47 +31,110 @@ function injectCss(id, css) {
   el.textContent = css;
   document.head.appendChild(el);
 }
-// Host-bridge: tasks.css consumes shorthand token names (--bg-base/--fg/--border/
-// --primary/--font-body), but tokens.css defines those as STATIC per-theme literals
-// and never references the host's live slots. The shell ships the live theme as the
-// curated --color-*/--font-* set (MCP_UI_APPS_TOKEN_KEYS; bridge.js applies them to
-// :root). This layer maps shorthand ← live slot (static literal as fallback) so the
-// pkg tracks the user's actual theme/mode/workspace instead of our bundled guess.
-// Injected AFTER tokens.css so it wins the specificity tie (:root[data-mode], later).
-// Fallbacks are the canonical Dusk-Wood-A dark literals (= what the shell ships
-// for its default theme), so colors match even before the bridge connects or in
-// standalone preview. When the host has pushed live --color-* (inline style, top
-// priority), those win → the pkg tracks the user's actual theme/mode.
-const PJS = "'Plus Jakarta Sans', system-ui, -apple-system, sans-serif";
-const hostBridgeCss = `
-:root[data-mode] {
-  --bg-base:    var(--color-background-primary,   hsl(28,18%,4%));
-  --bg-surface: var(--color-background-secondary, hsl(28,14%,7%));
-  --bg-raised:  var(--color-background-tertiary,  hsl(28,11%,11%));
-  --fg:         var(--color-text-primary,         hsl(36,28%,90%));
-  --fg-muted:   var(--color-text-secondary,       hsl(32,11%,56%));
-  --fg-faint:   var(--color-text-tertiary,        hsl(28,9%,36%));
-  --border:      var(--color-border-primary,   hsl(28,14%,15%));
-  --border-soft: var(--color-border-secondary, hsl(28,14%,11%));
-  --primary:     var(--color-ring-primary,     hsl(20,50%,34%));
-  --danger:      var(--color-text-danger,      hsl(8,68%,46%));
-  --font-body:    var(--font-sans, ${PJS});
-  --font-display: var(--font-sans, ${PJS});
+// Legacy token aliases. tasks.css (ported from the source app) uses a handful
+// of token names @ikenga/tokens doesn't expose — map each to its canonical
+// bundled token. These are theme-AGNOSTIC (no --color-* host slots, no literal
+// fallbacks): they ride whatever [data-theme][data-mode] palette the bundled
+// tokens.css resolves, so they track the shell's theme automatically once the
+// mirror below sets the matching attributes. (--mail-fg, --tab-h, --radius-pill
+// keep their inline fallbacks in tasks.css and aren't aliased here.)
+const aliasCss = `
+:root {
+  --live:             var(--success);
+  --live-soft:        color-mix(in srgb, var(--success) 14%, transparent);
+  --agent-soft:       color-mix(in srgb, var(--agent) 14%, transparent);
+  --achievement-soft: color-mix(in srgb, var(--achievement) 14%, transparent);
+  --fg-faint:         var(--fg-subtle);
+  --text-body-sm:     var(--text-body);
+  --text-h4:          var(--text-h3);
+  --font-body:        var(--font-sans);
+  --motion-fast:      120ms;
+  --ease-calm:        ease;
 }`;
 injectCss('data-tokens-css', tokensCss);
-injectCss('data-host-bridge-css', hostBridgeCss);
+injectCss('data-token-aliases', aliasCss);
 injectCss('data-tasks-css', tasksCss);
 
-// tokens.css scopes its color slots under :root[data-mode] / [data-theme].
-// Without these attributes the vars never resolve (→ unstyled). Default to the
-// shell's canonical Theme A (Dusk Wood) dark; the bridge updates data-mode from
-// the live host theme below.
+// Theme — own it directly by mirroring the shell's <html> attributes, NOT via
+// the AppBridge host-context push (which was unreliable: it clobbered our
+// data-theme to light/dark and only fired on `mode` changes, never workspace
+// theme / tint / system-OS flips). The pkg iframe is same-origin with the shell
+// (srcdoc + sandbox allow-same-origin), so we read data-theme/data-mode/
+// data-density/data-workspace off the parent <html> (the shell writes them — see
+// shell/src/lib/ikenga/theme-store.ts) and copy them onto ours. @ikenga/tokens
+// is keyed on exactly these attributes, so the bundled palette then matches the
+// shell exactly across A/B/C × light/dark. A MutationObserver on the parent
+// re-mirrors on every switch. Standalone (parent not same-origin-readable) we
+// follow prefers-color-scheme with palette A. This is the proven artifact
+// pattern — see shell/src/lib/artifact/bridge.ts setupTheme().
+const APPEARANCE_ATTRS = ['data-theme', 'data-mode', 'data-density', 'data-workspace'];
 const root = document.documentElement;
-if (!root.dataset.theme) root.dataset.theme = 'A';
-if (!root.dataset.mode) root.dataset.mode = 'dark';
-function applyMode(theme) {
-  root.dataset.mode = theme === 'light' ? 'light' : 'dark';
+
+function readShellAppearance() {
+  try {
+    if (window.parent === window) return null;
+    const pr = window.parent.document.documentElement;
+    const mode = pr.getAttribute('data-mode');
+    if (mode !== 'light' && mode !== 'dark') return null;
+    return {
+      'data-theme': pr.getAttribute('data-theme') || 'A',
+      'data-mode': mode,
+      'data-density': pr.getAttribute('data-density') || 'comfortable',
+      'data-workspace': pr.getAttribute('data-workspace') || 'app',
+    };
+  } catch {
+    return null; // cross-origin standalone embed — caller falls back to OS
+  }
 }
+
+function applyAppearance(attrs) {
+  for (const k of APPEARANCE_ATTRS) {
+    if (attrs[k] != null) root.setAttribute(k, attrs[k]);
+  }
+}
+
+function setupTheme() {
+  const fromShell = readShellAppearance();
+  if (fromShell) {
+    applyAppearance(fromShell);
+    try {
+      const target = window.parent.document.documentElement;
+      const obs = new MutationObserver(() => {
+        const next = readShellAppearance();
+        if (next) applyAppearance(next);
+      });
+      obs.observe(target, { attributes: true, attributeFilter: APPEARANCE_ATTRS });
+    } catch {
+      /* best-effort; the static apply above already themed the document */
+    }
+  } else {
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    const applyOs = () =>
+      applyAppearance({
+        'data-theme': 'A',
+        'data-mode': mql.matches ? 'dark' : 'light',
+        'data-density': 'comfortable',
+        'data-workspace': 'app',
+      });
+    applyOs();
+    if (typeof mql.addEventListener === 'function') mql.addEventListener('change', applyOs);
+    else if (typeof mql.addListener === 'function') mql.addListener(applyOs);
+  }
+}
+// Run synchronously at module eval (before React mounts) → themed first paint.
+setupTheme();
+
+// Shell side-menu (PkgMode renders it when this pkg's pane is focused). Views
+// switch the mounted view; `f:*` filter items jump the list to a group. Clicks
+// return via hostContext.royaltiSuite.activeFeature → handled in TasksView.
+const MENU_ITEMS = [
+  { id: 'tasks', label: 'Tasks', icon: 'list-checks' },
+  { id: 'agenda', label: 'Agenda', icon: 'calendar-days' },
+  { id: 'triage', label: 'Triage', icon: 'activity' },
+  { id: 'f:today', label: 'Today', icon: 'sun' },
+  { id: 'f:overdue', label: 'Overdue', icon: 'alert-triangle' },
+  { id: 'f:autoclosed', label: 'Auto-closed', icon: 'check-check' },
+];
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -85,6 +148,8 @@ const queryClient = new QueryClient({
 function App() {
   const [bridgeReady, setBridgeReady] = useState(false);
   const [bridgeError, setBridgeError] = useState(null);
+  // Active side-menu item (shell PkgMode → hostContext.royaltiSuite.activeFeature).
+  const [activeFeature, setActiveFeature] = useState(null);
   // Bump to force a re-render once Supabase config lands (so hasSupabase()
   // flips from false → true and the view mounts).
   const [, setSbTick] = useState(0);
@@ -104,23 +169,30 @@ function App() {
       setBridgeReady(true);
       return;
     }
+    // Bridge is for Supabase config + dispatch only — theme is handled by the
+    // parent-<html> mirror above, independent of the AppBridge context.
     connectBridge({
       name: 'Tasks',
       version: '0.2.0',
       onContextChange: (ctx) => {
-        if (ctx?.theme) applyMode(ctx.theme);
         if (ctx?.supabase) {
           setSupabaseConfig(ctx.supabase);
           bumpSb();
         }
+        const af = ctx?.royaltiSuite?.activeFeature;
+        if (typeof af === 'string') setActiveFeature(af);
       },
     })
       .then((ctx) => {
-        if (ctx?.theme) applyMode(ctx.theme);
         if (ctx?.supabase) {
           setSupabaseConfig(ctx.supabase);
           bumpSb();
         }
+        const af = ctx?.royaltiSuite?.activeFeature;
+        if (typeof af === 'string') setActiveFeature(af);
+        // Publish the side menu; the shell renders it in the left panel and
+        // echoes clicks back via royaltiSuite.activeFeature (handled above).
+        setMenu(MENU_ITEMS).catch((e) => console.warn('[tasks] setMenu failed', e));
         setBridgeReady(true);
       })
       .catch((e) => setBridgeError(e.message ?? String(e)));
@@ -141,7 +213,7 @@ function App() {
     `;
   }
 
-  return html`<${QueryClientProvider} client=${queryClient}><${TasksView} /></${QueryClientProvider}>`;
+  return html`<${QueryClientProvider} client=${queryClient}><${TasksView} activeFeature=${activeFeature} /></${QueryClientProvider}>`;
 }
 
 createRoot(document.getElementById('root')).render(html`<${App} />`);
