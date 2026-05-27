@@ -39,6 +39,31 @@ function buildUpsert(table: string, row: FixtureRow): string {
   return `INSERT OR REPLACE INTO "${table}" (${cols}) VALUES (${placeholders})`;
 }
 
+function stableJson(row: Record<string, unknown>): string {
+  const sorted: Record<string, unknown> = {};
+  for (const k of Object.keys(row).sort()) {
+    sorted[k] = row[k] ?? null;
+  }
+  return JSON.stringify(sorted);
+}
+
+function isRowIdentical(
+  db: Database,
+  table: string,
+  row: FixtureRow,
+): boolean {
+  const id = String(row['id']);
+  const sel = db.prepare(`SELECT * FROM "${table}" WHERE id = ?`);
+  const existing = sel.get(id) as Record<string, unknown> | null;
+  sel.finalize();
+  if (existing === null) return false;
+  const relevant: Record<string, unknown> = {};
+  for (const k of Object.keys(row)) {
+    relevant[k] = existing[k] ?? null;
+  }
+  return stableJson(relevant) === stableJson(row);
+}
+
 function rowValues(row: FixtureRow): (string | number | boolean | null)[] {
   return Object.values(row).map((v) => v ?? null);
 }
@@ -54,7 +79,7 @@ export interface WriteOptions {
 
 export function writeDataset(opts: WriteOptions): TableResult[] {
   const { db_path, dataset, tables: filter, dry_run = false } = opts;
-  const db = new Database(db_path, { create: false });
+  const db = new Database(db_path);
 
   db.run('PRAGMA journal_mode=WAL');
   db.run('PRAGMA foreign_keys=OFF');
@@ -79,15 +104,15 @@ export function writeDataset(opts: WriteOptions): TableResult[] {
     if (!dry_run) {
       const tx = db.transaction(() => {
         for (const row of rows) {
-          const sql = buildUpsert(table, row);
-          const stmt = db.prepare(sql);
-          const info = stmt.run(...rowValues(row));
-          if (info.changes > 0) {
-            inserted++;
-          } else {
+          if (isRowIdentical(db, table, row)) {
             skipped++;
+          } else {
+            const sql = buildUpsert(table, row);
+            const stmt = db.prepare(sql);
+            stmt.run(...rowValues(row));
+            stmt.finalize();
+            inserted++;
           }
-          stmt.finalize();
         }
       });
       try {

@@ -1,21 +1,20 @@
 /**
  * fixture.ts — synthetic test dataset for the local-store-etl sidecar.
  *
- * Covers the seven Atelier/PA domain tables introduced in migrations
- * 0025–0031. Rows are deterministic (fixed UUIDs / timestamps) so that
- * re-runs are byte-identical and round-trip NDJSON export (WP-06) produces
- * a stable git diff.
+ * Covers all 36 domain tables from migrations 0025–0031 with one
+ * representative row each. Every column name matches the STRICT SQLite schema.
+ * Used by the `run` (fixture) RPC command to verify the ETL pipeline.
  *
- * Wave 4 will add a `live()` function here that extracts from Supabase using
- * the SUPABASE_SERVICE_ROLE_KEY vault key. For now only `fixture()` is
- * exported.
+ * Wave 4 will add a `live()` function that extracts from Supabase using the
+ * SUPABASE_SERVICE_ROLE_KEY vault key. For now only `fixture()` is exported.
  */
 
 import type { FixtureDataset } from './types.js';
 
-const NOW = '2025-01-01T00:00:00.000Z';
-const USER_ID = 'usr_fixture_001';
-const PROJECT_ID = 'prj_fixture_001';
+const NOW = '2025-01-15T10:00:00.000Z';
+const DATE = '2025-01-15';
+const USER = 'usr_fixture_001';
+const AGENT = 'agent_fixture_001';
 
 export function fixture(): FixtureDataset {
   return {
@@ -24,21 +23,10 @@ export function fixture(): FixtureDataset {
       {
         id: 'tsk_fixture_001',
         title: 'Fixture task alpha',
-        description: 'Synthetic test task for local-store round-trip test.',
+        description: 'Synthetic test task for the ETL round-trip.',
         status: 'pending',
         priority: 'medium',
-        assigned_to: USER_ID,
-        assignee_type: 'human',
-        created_at: NOW,
-        updated_at: NOW,
-      },
-      {
-        id: 'tsk_fixture_002',
-        title: 'Fixture task beta',
-        description: null,
-        status: 'done',
-        priority: 'high',
-        assigned_to: USER_ID,
+        assigned_to: USER,
         assignee_type: 'human',
         created_at: NOW,
         updated_at: NOW,
@@ -49,10 +37,10 @@ export function fixture(): FixtureDataset {
       {
         id: 'dlg_fixture_001',
         task_id: 'tsk_fixture_001',
-        delegated_to: 'agent_fixture_001',
-        delegated_by: USER_ID,
-        status: 'active',
-        created_at: NOW,
+        delegated_to: AGENT,
+        delegate_type: 'agent',
+        status: 'assigned',
+        assigned_at: NOW,
         updated_at: NOW,
       },
     ],
@@ -60,13 +48,12 @@ export function fixture(): FixtureDataset {
     agent_runs: [
       {
         id: 'run_fixture_001',
-        agent_id: 'agent_fixture_001',
-        task_id: 'tsk_fixture_001',
+        agent_name: AGENT,
+        command: 'run_fixture_etl',
         status: 'completed',
+        output_summary: 'All fixture rows written.',
         started_at: NOW,
-        finished_at: NOW,
-        output: null,
-        error: null,
+        completed_at: NOW,
         created_at: NOW,
       },
     ],
@@ -74,22 +61,24 @@ export function fixture(): FixtureDataset {
     notifications: [
       {
         id: 'ntf_fixture_001',
-        user_id: USER_ID,
-        title: 'Test notification',
-        body: 'This is a fixture notification.',
-        read: 0,
-        created_at: NOW,
+        channel: 'slack',
+        message: 'Fixture notification.',
+        task_id: 'tsk_fixture_001',
+        sent_at: NOW,
+        status: 'sent',
       },
     ],
 
     calendar_events: [
       {
         id: 'cal_fixture_001',
-        title: 'Fixture event',
+        google_event_id: 'google_evt_fixture_001',
+        title: 'Fixture calendar event',
         description: null,
-        start_at: NOW,
-        end_at: NOW,
-        owner_id: USER_ID,
+        start_time: '2025-01-15T09:00:00.000Z',
+        end_time: '2025-01-15T10:00:00.000Z',
+        source: 'google',
+        reminder_sent: 0,
         created_at: NOW,
         updated_at: NOW,
       },
@@ -97,135 +86,411 @@ export function fixture(): FixtureDataset {
 
     agent_handoffs: [
       {
-        id: 'hnd_fixture_001',
-        from_agent: 'agent_fixture_001',
+        id: 'hof_fixture_001',
+        timestamp: NOW,
+        from_agent: AGENT,
         to_agent: 'agent_fixture_002',
-        task_id: 'tsk_fixture_001',
-        context: null,
+        request_type: 'review',
+        domain: 'tasks',
+        request_summary: 'Review fixture task alpha.',
+        urgency: 'normal',
+        status: 'pending',
         created_at: NOW,
+        updated_at: NOW,
       },
     ],
 
     agent_reports: [
       {
         id: 'rpt_fixture_001',
-        agent_id: 'agent_fixture_001',
-        run_id: 'run_fixture_001',
-        summary: 'Fixture report.',
-        detail: null,
+        job_id: 'run_fixture_001',
+        title: 'Fixture ETL Report',
+        report_type: 'etl_run',
+        domain: 'all',
+        authored_by: AGENT,
+        summary: 'All 36 domain tables seeded with fixture data.',
+        status: 'final',
         created_at: NOW,
+        updated_at: NOW,
       },
     ],
 
     // ── 0026 mail domain ──────────────────────────────────────────────────
-    mail_threads: [
+    email_messages: [
       {
-        id: 'mth_fixture_001',
-        subject: 'Fixture subject',
-        participant_ids: JSON.stringify([USER_ID]),
+        id: 'msg_fixture_001',
+        inbox_source: 'gmail',
+        message_id: 'msg_id_fixture_001@gmail.com',
+        subject: 'Fixture inbound message',
+        from_address: 'sender@example.com',
+        to_address: USER,
+        body_text: 'Hello from the fixture.',
+        received_at: NOW,
         created_at: NOW,
         updated_at: NOW,
       },
     ],
 
-    mail_messages: [
+    email_sequences: [
       {
-        id: 'msg_fixture_001',
-        thread_id: 'mth_fixture_001',
-        sender_id: USER_ID,
-        body: 'Fixture email body.',
-        sent_at: NOW,
+        id: 'seq_fixture_001',
+        name: 'Fixture outreach sequence',
+        slug: 'fixture-outreach-001',
+        total_steps: 3,
+        status: 'draft',
+        created_by: USER,
         created_at: NOW,
+        updated_at: NOW,
+      },
+    ],
+
+    email_drafts: [
+      {
+        id: 'drf_fixture_001',
+        sequence_id: 'seq_fixture_001',
+        sequence_step: 1,
+        subject: 'Fixture draft step 1',
+        body: '<p>Fixture email body</p>',
+        body_format: 'html',
+        type: 'sequence_step',
+        status: 'draft',
+        created_by: USER,
+        created_at: NOW,
+        updated_at: NOW,
+      },
+    ],
+
+    email_replies: [
+      {
+        id: 'rpl_fixture_001',
+        classification: 'positive_interest',
+        subject: 'Re: Fixture outreach',
+        body: '<p>Thank you for reaching out.</p>',
+        body_format: 'html',
+        from_name: 'Fixture Sender',
+        from_email: 'sender@example.com',
+        delivery_system: 'gmail',
+        recipients: '["user@royalti.io"]',
+        status: 'pending_review',
+        created_by: USER,
+        metadata: '{}',
+        created_at: NOW,
+        updated_at: NOW,
       },
     ],
 
     // ── 0027 outbound domain ──────────────────────────────────────────────
-    outbound_sequences: [
+    social_queue: [
       {
-        id: 'seq_fixture_001',
-        name: 'Fixture sequence',
-        status: 'active',
-        owner_id: USER_ID,
+        id: 'soc_fixture_001',
+        platform: 'twitter',
+        account: '@royalti',
+        content: 'Fixture tweet content for testing #etl',
+        status: 'draft',
+        source: 'manual',
         created_at: NOW,
-        updated_at: NOW,
       },
     ],
 
-    outbound_steps: [
+    newsletter_sends: [
       {
-        id: 'stp_fixture_001',
-        sequence_id: 'seq_fixture_001',
-        step_number: 1,
-        action_type: 'email',
-        delay_days: 0,
-        template: null,
+        id: 'nws_fixture_001',
+        draft_slug: 'fixture-newsletter-001',
+        subject: 'Fixture newsletter',
+        delivery_system: 'mailchimp',
         created_at: NOW,
       },
     ],
 
     // ── 0028 sales / GTM domain ───────────────────────────────────────────
-    leads: [
+    sales_deals: [
       {
-        id: 'led_fixture_001',
-        name: 'Fixture Lead',
-        email: 'fixture@example.com',
-        status: 'new',
-        owner_id: USER_ID,
+        id: 'sdl_fixture_001',
+        company: 'Fixture Corp',
+        stage: 'discovery',
+        source: 'outbound',
         created_at: NOW,
         updated_at: NOW,
       },
     ],
 
-    opportunities: [
+    sales_stage_transitions: [
       {
-        id: 'opp_fixture_001',
-        lead_id: 'led_fixture_001',
-        title: 'Fixture opportunity',
+        id: 'sst_fixture_001',
+        notion_deal_id: 'sdl_fixture_001',
+        company_name: 'Fixture Corp',
+        to_stage: 'proposal',
+        transition_date: DATE,
+        created_at: NOW,
+      },
+    ],
+
+    sales_lead_scores: [
+      {
+        id: 'sls_fixture_001',
+        notion_deal_id: 'sdl_fixture_001',
+        company_name: 'Fixture Corp',
+        score_date: DATE,
+        total_score: 72,
+        priority: 'high',
+        company_fit_score: 80,
+        need_indicators_score: 65,
+        engagement_score: 70,
+        created_at: NOW,
+      },
+    ],
+
+    sales_forecasts: [
+      {
+        id: 'sfr_fixture_001',
+        forecast_date: DATE,
+        quarter: 'Q1-2025',
+        likely_forecast: '250000',
+        created_at: NOW,
+      },
+    ],
+
+    partnership_deals: [
+      {
+        id: 'pdl_fixture_001',
+        name: 'Fixture Partnership',
+        category: 'technology',
+        stage: 'discovery',
+        priority: 'medium',
+        created_at: NOW,
+        updated_at: NOW,
+      },
+    ],
+
+    fundraising_deals: [
+      {
+        id: 'frd_fixture_001',
+        investor_name: 'Fixture Capital',
+        investor_type: 'vc',
         stage: 'prospecting',
-        value: 0,
-        owner_id: USER_ID,
+        priority: 'medium',
+        created_at: NOW,
+        updated_at: NOW,
+      },
+    ],
+
+    fundraising_activities: [
+      {
+        id: 'fra_fixture_001',
+        deal_id: 'frd_fixture_001',
+        activity_type: 'email',
+        summary: 'Initial outreach to Fixture Capital.',
+        occurred_at: NOW,
+        created_at: NOW,
+      },
+    ],
+
+    fundraising_outreach: [
+      {
+        id: 'fro_fixture_001',
+        deal_id: 'frd_fixture_001',
+        channel: 'email',
+        body: 'Hello, we are building Royalti...',
+        status: 'draft',
+        sequence_number: 1,
+        drafted_by: AGENT,
         created_at: NOW,
         updated_at: NOW,
       },
     ],
 
     // ── 0029 finance domain ───────────────────────────────────────────────
-    invoices: [
+    bank_accounts: [
       {
-        id: 'inv_fixture_001',
-        number: 'INV-0001-FIXTURE',
-        amount: 0,
+        id: 'bka_fixture_001',
+        account_name: 'Fixture USD Account',
+        entity: 'royalti_inc',
         currency: 'USD',
-        status: 'draft',
-        owner_id: USER_ID,
+        bank: 'Fixture Bank',
+        sheet_name: 'Operating',
+        is_active: 1,
+        created_at: NOW,
+      },
+    ],
+
+    transaction_ledger: [
+      {
+        id: 'txn_fixture_001',
+        txn_date: DATE,
+        account_id: 'bka_fixture_001',
+        entity: 'royalti_inc',
+        type: 'revenue',
+        description: 'Fixture revenue entry',
+        amount: '1000.00',
+        currency: 'USD',
+        created_at: NOW,
+      },
+    ],
+
+    classification_rules: [
+      {
+        id: 'clr_fixture_001',
+        name: 'Fixture stripe revenue',
+        category: 'revenue',
+        pattern: 'STRIPE',
+        priority: 100,
+        created_at: NOW,
+      },
+    ],
+
+    exchange_rates: [
+      {
+        id: 'exr_fixture_001',
+        rate_month: '2025-01',
+        ngn_usd: '0.00063',
+        eur_usd: '1.09',
+        gbp_usd: '1.27',
+        created_at: NOW,
+      },
+    ],
+
+    inter_company_entries: [
+      {
+        id: 'ice_fixture_001',
+        ledger_account: 'interco_payable',
+        entry_date: DATE,
+        source_entity: 'royalti_inc',
+        destination_entity: 'dixtrit',
+        amount: '500.00',
+        currency: 'USD',
+        transfer_type: 'revenue_share',
+        created_at: NOW,
+      },
+    ],
+
+    paystack_splits: [
+      {
+        id: 'pss_fixture_001',
+        original_txn_id: 'txn_fixture_001',
+        split_date: DATE,
+        total_ngn: '1590000',
+        total_usd: '1000.00',
+        royalti_fee_ngn: '238500',
+        royalti_fee_usd: '150.00',
+        dixtrit_portion_ngn: '1351500',
+        dixtrit_portion_usd: '850.00',
+        created_at: NOW,
+      },
+    ],
+
+    receivables: [
+      {
+        id: 'rcv_fixture_001',
+        document_no: 'INV-2025-001',
+        invoice_date: DATE,
+        due_date: '2025-02-15',
+        customer: 'Fixture Client',
+        total_amount: '5000.00',
+        balance_left: '5000.00',
+        currency: 'USD',
+        invoice_status: 'outstanding',
+        created_at: NOW,
+      },
+    ],
+
+    cfo_processing_runs: [
+      {
+        id: 'cpr_fixture_001',
+        run_type: 'monthly_close',
+        status: 'completed',
+        output_summary: 'Monthly close for 2025-01 completed.',
+        created_at: NOW,
+      },
+    ],
+
+    // ── 0030 content / product domain ─────────────────────────────────────
+    strategic_initiatives: [
+      {
+        id: 'ini_fixture_001',
+        quarter: 'Q1-2025',
+        name: 'Fixture initiative alpha',
+        status: 'active',
+        owner_agent: AGENT,
         created_at: NOW,
         updated_at: NOW,
       },
     ],
 
-    // ── 0030 content / product domain ─────────────────────────────────────
-    content_items: [
+    risk_register: [
       {
-        id: 'cnt_fixture_001',
-        title: 'Fixture content',
-        body: null,
-        status: 'draft',
-        owner_id: USER_ID,
+        id: 'rsk_fixture_001',
+        category: 'technical',
+        title: 'Fixture risk: schema drift',
+        severity: 'medium',
+        probability: 'low',
+        owner: AGENT,
+        status: 'Active',
+        created_at: NOW,
+        updated_at: NOW,
+      },
+    ],
+
+    product_features: [
+      {
+        id: 'pft_fixture_001',
+        name: 'Fixture feature: local-store',
+        status: 'in_progress',
+        created_at: NOW,
+        updated_at: NOW,
+      },
+    ],
+
+    content_calendar: [
+      {
+        id: 'ccl_fixture_001',
+        type: 'blog_post',
+        channel: 'website',
+        title: 'Fixture blog post',
+        status: 'planned',
+        assigned_to: USER,
+        publish_date: '2025-02-01',
+        created_at: NOW,
+        updated_at: NOW,
+      },
+    ],
+
+    tech_debt_items: [
+      {
+        id: 'tdi_fixture_001',
+        title: 'Fixture tech debt: supabase-js in renderer',
+        area: 'frontend',
+        status: 'identified',
+        impact_score: 7,
+        effort_score: 5,
+        created_at: NOW,
+        updated_at: NOW,
+      },
+    ],
+
+    metrics_snapshots: [
+      {
+        id: 'mss_fixture_001',
+        snapshot_date: DATE,
+        period_type: 'monthly',
+        period_label: '2025-01',
+        domain: 'all',
+        metrics: '{"mrr_usd":50000}',
         created_at: NOW,
         updated_at: NOW,
       },
     ],
 
     // ── 0031 work domain ──────────────────────────────────────────────────
-    projects: [
+    cron_job_runs: [
       {
-        id: PROJECT_ID,
-        name: 'Fixture project',
-        description: null,
-        status: 'active',
-        owner_id: USER_ID,
+        id: 'crn_fixture_001',
+        job_id: 'etl_daily_sync',
+        agent: AGENT,
+        status: 'success',
+        summary: 'All 36 tables synced.',
+        duration_ms: 1234,
+        num_turns: 3,
         created_at: NOW,
-        updated_at: NOW,
       },
     ],
   };
