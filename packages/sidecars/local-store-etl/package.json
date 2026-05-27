@@ -1,0 +1,23 @@
+{
+  "name": "@ikenga/local-store-etl-sidecar",
+  "version": "0.1.0",
+  "description": "Fixture-only ETL sidecar that loads synthetic test data into pa.db. Wave 4 will add live Supabase extraction.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/sidecars/local-store-etl"
+  },
+  "scripts": {
+    "dev": "bun run src/main.ts",
+    "build": "bash build.sh",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.5.0"
+  }
+}
