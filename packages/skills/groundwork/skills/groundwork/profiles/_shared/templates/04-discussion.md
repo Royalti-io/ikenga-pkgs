@@ -1,3 +1,4 @@
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # {{goal}} — discussion threads
 
 Decisions resolved + review-pass findings. **Newest first.**

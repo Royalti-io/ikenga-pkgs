@@ -1,3 +1,4 @@
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # `artifact/assets/`
 
 Non-code artifacts the living spec or the tracking board embeds: logos, screenshots, brand marks, exported diagrams, icon SVGs.

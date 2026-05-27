@@ -1,3 +1,4 @@
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # agent: reviewer
 
 Brief template the `review` action passes to a spawned agent.

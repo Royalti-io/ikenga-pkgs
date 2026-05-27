@@ -1,3 +1,4 @@
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `status` — read-only health report
 
 **Loaded when**: the user asks "where are we" / runs `groundwork status`.
@@ -35,7 +36,7 @@ Documents
   05-tracking.md            ✗ hand edit inside `wp-matrix` fence — re-run orchestrate to overwrite
   09-orchestration.md       — not generated yet (run orchestrate)
   artifact/board.html       ⚠ stale: 3 input docs changed since refresh (run refresh-board)
-  artifact/index.html       — hand-authored living spec (not tracked by actions)
+  artifact/index.html       ⚠ spec-state fence empty (run refresh-living-spec)
 
 IDs (13 total)
   G-NN gaps:       2 open · 6 folded · 0 retired
@@ -146,6 +147,7 @@ The "Next suggested actions" section is rule-based, not heuristic:
 | Any sub-plan with `status: active` whose ref WP is `queued` | "kick off <WP-NN> — its sub-plan is ready" |
 | Whole-file drift of `01`/`05` since last `orchestrate` | `groundwork orchestrate` |
 | Whole-file drift of inputs since last `refresh-board` | `groundwork refresh-board` |
+| `spec-state` fence in `artifact/index.html` is empty (`generated_at: null`) or its inputs drifted since `refresh_living_spec.last_run` | `groundwork refresh-living-spec` |
 | `clarify` would `fail` | "fix `<N>` blockers before orchestrating" |
 | Plan has never been orchestrated and clarify passes | `groundwork orchestrate` |
 

@@ -1,3 +1,4 @@
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `design` — produce ≥2 comparable mockups, lock one
 
 **Loaded when**: the user wants to mock up UI/UX options for a phase, compare them, and lock a direction.
@@ -10,8 +11,16 @@
 
 **Composes** (in invocation order):
 1. **`design-language`** *(first — G9)* — discovers the project's existing tokens / palette / typography / spacing / radii surface, produces a portable design contract. The downstream artifact skill applies this so mockups *match the rest of the app* instead of inventing fresh styling.
-2. **`ikenga-artifact-builder`** — for interactive / data-bearing mockups. Ships notes-back loop + `publishState` + Ikenga-aware fallback baked in.
-3. **`huashu-design`** or **`example-skills:frontend-design`** — hi-fi visual prototypes. Fall back to plain self-contained HTML when no design skill is installed.
+2. **`huashu-design`** *(always — the design-quality spine, step 2 regardless of surface kind)* — engaged on **every** design run. It carries the design-direction reasoning, anti-AI-slop discipline, hi-fi craft, expert review, and animation/video export. It is **composed *with*** the skills below, never replaced by them. The goal is impeccable output — huashu is the floor for that on every variant.
+3. **In conjunction with `huashu-design`, Claude freely layers in whatever else the surface warrants — no fixed list, no limits.** Claude decides the blend *while doing the work*, based on surface, brief, and what's installed:
+   - **`ikenga-artifact-builder`** — interactive / data-bearing mockups. Ships notes-back loop + `publishState` + Ikenga-aware fallback baked in.
+   - **`scrollytelling`** — scroll-driven narrative, pinned sections, progressive reveals, parallax, story-driven landing.
+   - **`example-skills:frontend-design`** — production-grade, distinctive frontend craft.
+   - **`impeccable`** — design-vocabulary pass (polish / audit / critique / distill / bolder / quieter / animate / colorize) with deterministic anti-pattern rules; layer it to push any variant past generic AI aesthetics.
+   - **`example-skills:web-artifacts-builder`** — multi-component React/Tailwind/shadcn artifacts needing state or routing.
+   - **any other installed skill** that raises the mockup's quality, in any combination.
+
+   Fall back to plain self-contained HTML (still under huashu's quality direction) only when no artifact/visual skill is installed.
 
 ---
 
@@ -42,8 +51,8 @@
 6. **Scope the mockup**: ask the user (`AskUserQuestion`):
    - **Which phase / WP** is being designed? (P1 / P2 / P3 / cross-cutting)
    - **What's the surface**? (a screen, a flow, a board, a single component)
-   - **Interactive / data-bearing** (→ `ikenga-artifact-builder`) **or purely visual** (→ `huashu-design` / `frontend-design` / plain HTML)?
-7. **Pick the composed skill** based on the answers (table below). Pass it the design contract resolved in step 4.
+   - **What does the surface need** — interactive / data-bearing? scroll-driven narrative? pure visual craft? (this informs which skills get layered *with* huashu-design, not a single pick)
+7. **Compose the skill blend.** `huashu-design` is always engaged (step 2). On top of it, Claude layers whichever skills the surface warrants — `ikenga-artifact-builder`, `scrollytelling`, `frontend-design`, `web-artifacts-builder`, or any combination — using the *Composed-skill selection* guide below as a starting map, not a single-pick table. Pass every engaged skill the design contract resolved in step 4. Claude decides the final blend while building; no limits.
 8. **Produce ≥2 comparable variants** as `designs/<surface>-<variant>.html`. Each variant should be a real working file, not a sketch — the studio's Pattern C lock came from comparing complete mockups, not lo-fi wireframes.
 9. **Register** the variants in `.groundwork.json.designs` with `phase`, `wp` (if known), `locked: false`, plus `pane_ids: null` (filled at mount time if mounted in-shell).
 10. **Open them — host-aware** *(G3)*. The action checks for an in-shell signal (presence of `iyke` CLI on PATH + `IYKE_BRIDGE_URL` env var) before falling back to system open:
@@ -68,14 +77,19 @@
 
 ## Composed-skill selection
 
-| Surface kind | Composed skill | Why |
+**`huashu-design` is always engaged** (step 2) — it is the quality spine on every run, regardless of surface kind. The table below is a guide to which skills to **layer *with* huashu**, not a single-pick decision. Claude composes freely — multiple skills at once is expected and encouraged — and decides the final blend while building. No limits.
+
+| Surface kind | Layer *with huashu-design* | Why |
 |---|---|---|
 | Plan-board, dashboard, status view, anything that needs to render real data | `ikenga-artifact-builder` | Self-contained HTML + auto-wired notes-back + `art.publishState` + Ikenga-aware fallback baked in |
-| Hi-fi marketing page, brand-driven visual prototype | `huashu-design` | Multi-variant exploration + Playwright validation + design philosophy library |
+| Scroll-driven narrative, story landing, pinned/parallax reveals | `scrollytelling` | Scroll-linked animation, pinned sections, progressive reveals |
+| Hi-fi marketing page, brand-driven visual prototype | huashu-design alone is enough | Multi-variant exploration + Playwright validation + design philosophy library |
 | Production-grade frontend (component, dashboard, landing) | `example-skills:frontend-design` | Distinctive UI, avoids generic AI aesthetics |
-| Pure layout exploration, no data | plain self-contained HTML (no skill) | Studio's `pattern-c-split.html` / `pattern-d-daw.html` did this with no skill |
+| Any variant that needs an anti-slop polish / critique / audit pass | `impeccable` | Design-vocabulary commands + deterministic anti-pattern rules; layers on top of any other skill |
+| Multi-component React artifact (state / routing / shadcn) | `example-skills:web-artifacts-builder` | Elaborate claude.ai artifacts with real component architecture |
+| Pure layout exploration, no data | huashu-design + plain self-contained HTML | huashu directs the craft; no extra artifact skill needed |
 
-The action **invokes the composed skill via the `Skill` tool**, passing the discovered context (phase, surface, profile) **+ the design contract from `design-language`**. The composed skill returns paths; the action moves/copies them into `designs/` and registers them.
+The action **invokes each engaged skill via the `Skill` tool**, passing the discovered context (phase, surface, profile) **+ the design contract from `design-language`**. The skills return paths; the action moves/copies them into `designs/` and registers them.
 
 ---
 
@@ -235,7 +249,7 @@ The canonical strings the FE emits (palette / WP-card per WP-21). Substitution v
 ```
 Run a groundwork design pass on `{plan_folder}` (plan title: {plan_title}) for phase {phase}.
 
-If the groundwork skill is loaded in this session, follow its `design` action verbatim — read `.claude/skills/groundwork/actions/design.md`, invoke the `design-language` skill first to discover the project's design contract, then produce ≥2 comparable mockups under `{plan_folder}/designs/`, surface them for comparison, and lock one. If the skill is not loaded, read `{plan_folder}/01-plan.md` §"Phase {phase}" for what's being designed, produce 2-3 self-contained HTML mockups under `{plan_folder}/designs/`, and present them side-by-side with a one-paragraph rationale per option.
+If the groundwork skill is loaded in this session, follow its `design` action verbatim — read `.claude/skills/groundwork/actions/design.md`, invoke the `design-language` skill first to discover the project's design contract, then engage `huashu-design` as the quality spine (always, regardless of surface) composed with whatever else the surface warrants — `ikenga-artifact-builder`, `scrollytelling`, `frontend-design`, `impeccable`, etc., your call, no limits — to produce ≥2 comparable mockups under `{plan_folder}/designs/`, surface them for comparison, and lock one. If the skill is not loaded, read `{plan_folder}/01-plan.md` §"Phase {phase}" for what's being designed, produce 2-3 self-contained HTML mockups under `{plan_folder}/designs/`, and present them side-by-side with a one-paragraph rationale per option.
 
 Refuse if the plan profile's `produces_designs` is false unless the user explicitly opted in.
 ```

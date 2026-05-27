@@ -1,3 +1,4 @@
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # {{goal}} — tracking
 
 Pieces, dependencies, critical path. Source of truth for production status (survives sessions).

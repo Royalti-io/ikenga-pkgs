@@ -1,3 +1,4 @@
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # `drafts/` — ready-to-drop artifacts
 
 Files in this directory are **artifacts the plan produced that are meant to land into the actual codebase / asset tree at a specific work-package boundary.** They are *not* themselves part of the spine — they're outputs the plan curated that downstream work consumes.

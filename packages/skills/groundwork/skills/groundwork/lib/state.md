@@ -1,3 +1,4 @@
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # groundwork — plan state, identity & idempotency
 
 The reference every action obeys. If two actions disagree about what is "generated" versus "hand-written," the bug is here, not in the actions. Read this once; the action files are thin and assume these rules.
@@ -309,8 +310,9 @@ Inside HTML, JSON, or any non-markdown file, use the same `<!-- … -->` form wh
 | `09-orchestration.md` | `*` (whole-file) | `orchestrate` |
 | `artifact/board.html` | `board-data` | `refresh-board` |
 | `artifact/board.html` | `board-meta` | `refresh-board` |
+| `artifact/index.html` | `spec-state` | `refresh-living-spec` |
 
-`artifact/index.html` is the hand-authored **living spec** — never touched by groundwork actions. `artifact/board.html` is the generated tracking board — `refresh-board` owns it.
+`artifact/index.html` is the **living spec** — scaffolded from `profiles/_shared/templates/artifact/index.html` at `init` and updated only inside the `spec-state` fence by `refresh-living-spec`. Everything outside the fence (universal Spine/Actions/Profiles/State/Board tabs, hand-authored Overview) is preserved across re-runs. `artifact/board.html` is the generated tracking board — `refresh-board` owns it.
 
 `09-orchestration.md` is the one file an action may rewrite whole. It is *generated*; the convention is "delete and re-author from `05` + `.groundwork.json`," not "edit in place." If the user has added hand-written sections, they go above an explicit `<!-- groundwork:auto:start orchestration -->` fence; everything outside survives.
 

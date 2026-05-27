@@ -1,3 +1,4 @@
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `orchestrate` — generate `09-orchestration.md` from `05`
 
 **Loaded when**: the user is ready to kick off the build/execution and wants the multi-agent orchestration doc.

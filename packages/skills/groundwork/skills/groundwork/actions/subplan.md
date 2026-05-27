@@ -1,3 +1,4 @@
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `subplan` — scaffold a focused `NN-*.md` sub-plan
 
 **Loaded when**: the user wants to scaffold a focused sub-plan for a hard piece — a diff plan for a critical-path PR, a decision doc for a between-round deliberation, or a postmortem for a bug.

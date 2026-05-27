@@ -16,7 +16,7 @@ description: |
   ("plan a feature," "scaffold a plan folder," "set up groundwork for…"),
   references an existing plans/ folder by groundwork structure, or runs
   any of these actions: groundwork init / research / design / review /
-  clarify / orchestrate / refresh-board / status.
+  clarify / orchestrate / refresh-board / refresh-living-spec / status.
 
   DO NOT TRIGGER for one-off code changes, single-document writeups, ADRs,
   or content that fits in a single markdown file — those don't need a
@@ -24,6 +24,7 @@ description: |
   (dashboard, mockup), route to ikenga-artifact-builder instead.
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, Agent, Skill, TaskCreate, TaskUpdate, TaskList, TaskGet
 ---
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 
 # groundwork — research → plan → orchestrate → act, packaged
 
@@ -49,6 +50,7 @@ Surface model:
 | Action: `clarify` | Readiness gate before `orchestrate` | Before kickoff |
 | Action: `orchestrate` | Generates `09-orchestration.md` from `05` | When ready to kick off |
 | Action: `refresh-board` | (Re)generates `artifact/board.html` | Whenever board falls behind |
+| Action: `refresh-living-spec` | Regenerates the `spec-state` fence inside `artifact/index.html` (Phasing/Decisions/Risks tabs) from `.groundwork.json` + `04` + `05` + `01 §Risks` | When the living-spec's auto tabs fall behind |
 | Action: `status` | Read-only freshness + ID + design-coverage + sub-plan report | Anytime |
 
 `init` is the one entry point that doesn't require an existing `.groundwork.json`. Every other action refuses to run without one (and tells the user to run `init` first).
@@ -69,6 +71,7 @@ Match the user's request against the table; load the matching action file and fo
 | "groundwork clarify", "ready to orchestrate?" | [`actions/clarify.md`](actions/clarify.md) | Scan for open questions + unspecified IDs + missing locked designs |
 | "groundwork orchestrate", "generate 09", "wave plan" | [`actions/orchestrate.md`](actions/orchestrate.md) | Runs clarify first; emits `09-orchestration.md` |
 | "refresh the board", "update artifact/board.html" | [`actions/refresh-board.md`](actions/refresh-board.md) | Re-derive board data from current docs |
+| "refresh the living spec", "update artifact/index.html", "the Phasing/Decisions/Risks tabs are stale" | [`actions/refresh-living-spec.md`](actions/refresh-living-spec.md) | Regenerate only the `spec-state` fence (Phasing/Decisions/Risks); hand-authored tabs are never touched |
 | "groundwork status", "where are we" | [`actions/status.md`](actions/status.md) | Read-only report |
 
 ### Discover vs. fast path
@@ -120,12 +123,15 @@ groundwork *composes* existing skills rather than reimplementing them. Soft depe
 | Capability | Preferred skill | Fallback |
 |---|---|---|
 | Plan-board artifact | `ikenga-artifact-builder` | Self-contained template at `profiles/_shared/board/index.html` |
-| Interactive / data-bearing design mockup | `ikenga-artifact-builder` | Plain self-contained HTML (studio's mockups needed nothing more) |
-| Hi-fi visual prototype | `huashu-design` or `example-skills:frontend-design` | Plain self-contained HTML |
+| Design-quality spine (every `design` run) | `huashu-design` *(always engaged at step 2, regardless of surface)* | Plain self-contained HTML under Claude's own craft direction |
+| Interactive / data-bearing design mockup | `ikenga-artifact-builder` *(layered with huashu)* | Plain self-contained HTML (studio's mockups needed nothing more) |
+| Scroll-driven narrative mockup | `scrollytelling` *(layered with huashu)* | Plain self-contained HTML |
+| Hi-fi / production frontend | `example-skills:frontend-design` / `web-artifacts-builder` *(layered with huashu)* | huashu-design alone |
+| Anti-slop polish / critique / audit pass | `impeccable` *(layered with huashu)* | huashu's own expert-review pass |
 | Build handoff for Ikenga pkgs | `ikenga-pkg-builder` | `09-orchestration.md` is the terminal deliverable |
 | Requirements interviews | `AskUserQuestion` (global planning rule) | n/a — always present in Claude Code |
 
-If `ikenga-artifact-builder` is absent, `refresh-board` writes the self-contained fallback template. If no design skill is installed, `design` falls back to plain HTML.
+The `design` action does **not** pick one skill from this list — `huashu-design` is the always-on quality spine and Claude layers any combination of the others on top, deciding the blend while building (no limits). If `ikenga-artifact-builder` is absent, `refresh-board` writes the self-contained fallback template. If no design skill at all is installed, `design` falls back to plain HTML.
 
 ---
 

@@ -1,3 +1,4 @@
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # 03 — Internal research
 
 Existing assets, prior work, current constraints relevant to {{goal}}. Cite by `path:line` (or by document title + section for non-file references).

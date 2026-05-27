@@ -1,3 +1,4 @@
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `init` — scaffolder
 
 **Loaded when**: the user wants to scaffold a new groundwork plan folder, or runs an action against a folder that has no `.groundwork.json`.
@@ -60,13 +61,15 @@ If invoked with the fast path (`groundwork init <dir> --profile <p> --goal "…"
 | `03-research-internal.md` | `findings` (empty) | Title + how-to-use intro |
 | `04-discussion.md` | `rounds-index` (empty) | "Rounds — newest first" header |
 | `05-tracking.md` | `wp-matrix` (empty), `wave-plan` (empty), `critical-path` (empty) | Workstream descriptions |
+| `artifact/index.html` | `spec-state` (empty JSON: phases/decisions/risks all `[]`) | Universal Spine/Actions/Profiles/State/Board tabs + a stub Overview the user customizes |
+| `artifact/manifest.json` | whole file (rendered from template) | n/a |
 | `designs/.gitkeep` | — | — |
 | `drafts/README.md` | whole file (rendered from template) | — |
 | `.groundwork.json` | whole file | n/a |
 
-`artifact/board.html` is **not** written at init — `refresh-board` creates it on first run.
+`artifact/index.html` (the living spec) is scaffolded **from the template** at `profiles/_shared/templates/artifact/index.html` — substituting `{{plan_title}}` / `{{plan_slug}}` / `{{profile}}` / `{{goal}}`. The hand-authored Overview tab is a stub the user replaces with plan-specific framing; the universal Spine/Actions/Profiles/State/Board tabs are baked in and identical across every plan. The volatile Phasing/Decisions/Risks tabs render from the `spec-state` fence, populated on first run of `refresh-living-spec`.
 
-`artifact/index.html` (the living spec) is hand-authored. `refresh-board` does scaffold an empty stub if absent so the directory listing is complete, but the file is never re-written by an action once it exists.
+`artifact/board.html` is **not** written at init — `refresh-board` creates it on first run.
 
 `09-orchestration.md` is **not** written at init — `orchestrate` creates it.
 
