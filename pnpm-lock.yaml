@@ -71,6 +71,8 @@ importers:
 
   packages/apps/suite: {}
 
+  packages/apps/tasks: {}
+
   packages/engine/claude-code:
     dependencies:
       '@ikenga/contract':
@@ -255,6 +257,15 @@ importers:
         version: 22.19.19
       typescript:
         specifier: ^5.7.2
+        version: 5.9.3
+
+  packages/sidecars/local-store-etl:
+    devDependencies:
+      '@types/bun':
+        specifier: latest
+        version: 1.3.14
+      typescript:
+        specifier: ^5.5.0
         version: 5.9.3
 
   packages/sidecars/tsserver-lsp:
