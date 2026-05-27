@@ -1,0 +1,54 @@
+name: Update registry (manual)
+
+# Backfill the ikenga-registry for packages published locally (not via the
+# main release workflow). Provide the list of packages as a JSON array; the
+# rest of the job is identical to the registry-update step in release.yml.
+#
+# Usage:
+#   gh workflow run registry-update.yml \
+#     --repo Royalti-io/ikenga-pkgs \
+#     -f published='[{"name":"@ikenga/pkg-tasks","version":"0.2.0"},{"name":"@ikenga/pkg-suite","version":"0.3.0"},{"name":"@ikenga/pkg-engine-cursor-agent","version":"0.1.0"}]'
+
+on:
+  workflow_dispatch:
+    inputs:
+      published:
+        description: >
+          JSON array of {name, version} objects — same shape as
+          changesets/action publishedPackages output.
+          Example: [{"name":"@ikenga/pkg-tasks","version":"0.2.0"}]
+        required: true
+        type: string
+
+permissions:
+  contents: read   # checkout only; registry push goes via REGISTRY_REPO_PAT
+
+jobs:
+  update-registry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.3
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Install deps so findPackageDir can read local manifest.json files
+      - run: pnpm install --frozen-lockfile
+
+      - name: Install minisign
+        run: sudo apt-get update && sudo apt-get install -y minisign
+
+      - name: Update ikenga-registry
+        env:
+          PUBLISHED: ${{ inputs.published }}
+          REGISTRY_REPO_PAT: ${{ secrets.REGISTRY_REPO_PAT }}
+          REGISTRY_SIGNING_PRIVATE_KEY: ${{ secrets.REGISTRY_SIGNING_PRIVATE_KEY }}
+        run: node scripts/update-registry-index.mjs
