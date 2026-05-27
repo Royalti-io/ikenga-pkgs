@@ -1,10 +1,39 @@
 // Query layer — ported from src/lib/queries/tasks.ts. JSDoc carries the TS
-// types. Schema verified (commit 0) against royalti-pa migrations 003/004:
-// every selected column exists on the real `tasks` table — TASKS_LIST_COLUMNS
-// is NOT narrowed.
+// types. Schema verified against the local pa.db `tasks` table (shell
+// migration 0025_tasks_domain.sql): every selected column exists.
+//
+// WP-04 read-swap: reads go through the host's `host.dbQuery` verb (local
+// pa.db) instead of an in-iframe supabase-js client. The status-update WRITE
+// (task-detail-pane.js) still uses supabase-js — moving it needs a host write
+// verb that does not exist yet (follow-up WP).
 
-import { getSupabase } from './supabase.js';
+import { hostDbQuery } from './bridge.js';
 import { queryKeys } from './query-keys.js';
+
+// pa.db stores former Postgres array/json columns as TEXT (the Pg→SQLite
+// down-map, shell migration 0025). `tags` arrives as a string, not a JS array
+// — normalize it back so the Task shape matches the JSDoc + the detail pane's
+// `.map`/`.length` usage. JSON first (the canonical ETL encoding), then a
+// comma split as a tolerant fallback, then [].
+/** @param {any} row */
+function normalizeTaskRow(row) {
+  if (!row || typeof row !== 'object') return row;
+  const t = row.tags;
+  if (typeof t === 'string') {
+    const s = t.trim();
+    if (!s) {
+      row.tags = null;
+    } else {
+      try {
+        const parsed = JSON.parse(s);
+        row.tags = Array.isArray(parsed) ? parsed : [String(parsed)];
+      } catch {
+        row.tags = s.split(',').map((x) => x.trim()).filter(Boolean);
+      }
+    }
+  }
+  return row;
+}
 
 /** @typedef {'pending'|'in_progress'|'completed'|'cancelled'|'blocked'} TaskStatus */
 /** @typedef {'critical'|'high'|'medium'|'low'} TaskPriority */
@@ -66,7 +95,6 @@ export function triageCountsQuery() {
     queryKey: queryKeys.tasks.triageCounts(),
     /** @returns {Promise<TriageCounts>} */
     queryFn: async () => {
-      const sb = getSupabase();
       // "Overdue" = due before the start of today, matching the app's own
       // convention (groupTasks / dueLabel treat a task due *today* as "Today",
       // not overdue, until the day rolls over).
@@ -78,28 +106,42 @@ export function triageCountsQuery() {
       const staleIso = new Date(
         Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000,
       ).toISOString();
-      const head = () => sb.from('tasks').select('*', { count: 'exact', head: true });
+      // `?,?,?` placeholders for the active-status set, reused per count.
+      const activePlaceholders = ACTIVE_STATUSES.map(() => '?').join(',');
+      const countOne = async (where, params) => {
+        const rows = await hostDbQuery(
+          `SELECT count(*) AS n FROM tasks WHERE ${where}`,
+          params,
+        );
+        return Number(rows[0]?.n ?? 0);
+      };
 
       const [overdue, stale, unassigned, blocked, needsAttention] = await Promise.all([
-        head().in('status', ACTIVE_STATUSES).lt('due_date', startOfTodayIso),
-        head().in('status', ACTIVE_STATUSES).lt('updated_at', staleIso),
-        head().in('status', ACTIVE_STATUSES).is('assigned_to', null),
-        head().eq('status', 'blocked'),
+        countOne(`status IN (${activePlaceholders}) AND due_date < ?`, [
+          ...ACTIVE_STATUSES,
+          startOfTodayIso,
+        ]),
+        countOne(`status IN (${activePlaceholders}) AND updated_at < ?`, [
+          ...ACTIVE_STATUSES,
+          staleIso,
+        ]),
+        countOne(`status IN (${activePlaceholders}) AND assigned_to IS NULL`, [
+          ...ACTIVE_STATUSES,
+        ]),
+        countOne(`status = ?`, ['blocked']),
         // overdue OR unassigned, counted once (the deduplicated badge total).
-        head()
-          .in('status', ACTIVE_STATUSES)
-          .or(`due_date.lt.${startOfTodayIso},assigned_to.is.null`),
+        countOne(
+          `status IN (${activePlaceholders}) AND (due_date < ? OR assigned_to IS NULL)`,
+          [...ACTIVE_STATUSES, startOfTodayIso],
+        ),
       ]);
 
-      for (const r of [overdue, stale, unassigned, blocked, needsAttention]) {
-        if (r.error) throw r.error;
-      }
       return {
-        overdue: overdue.count ?? 0,
-        stale: stale.count ?? 0,
-        unassigned: unassigned.count ?? 0,
-        blocked: blocked.count ?? 0,
-        needsAttention: needsAttention.count ?? 0,
+        overdue,
+        stale,
+        unassigned,
+        blocked,
+        needsAttention,
       };
     },
   };
@@ -111,16 +153,9 @@ export function taskDetailQuery(id) {
     queryKey: queryKeys.tasks.detail(id),
     /** @returns {Promise<Task|null>} */
     queryFn: async () => {
-      const { data, error } = await getSupabase()
-        .from('tasks')
-        .select('*')
-        .eq('id', id)
-        .single();
-      if (error) {
-        if (error.code === 'PGRST116') return null; // not found
-        throw error;
-      }
-      return /** @type {Task} */ (data);
+      const rows = await hostDbQuery('SELECT * FROM tasks WHERE id = ? LIMIT 1', [id]);
+      if (rows.length === 0) return null;
+      return /** @type {Task} */ (normalizeTaskRow(rows[0]));
     },
   };
 }
@@ -131,13 +166,11 @@ export function subtasksQuery(parentId) {
     queryKey: queryKeys.tasks.subtasks(parentId),
     /** @returns {Promise<Task[]>} */
     queryFn: async () => {
-      const { data, error } = await getSupabase()
-        .from('tasks')
-        .select('*')
-        .eq('parent_task_id', parentId)
-        .order('created_at', { ascending: true });
-      if (error) throw error;
-      return /** @type {Task[]} */ (data ?? []);
+      const rows = await hostDbQuery(
+        'SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at ASC',
+        [parentId],
+      );
+      return /** @type {Task[]} */ (rows.map(normalizeTaskRow));
     },
   };
 }
@@ -149,16 +182,11 @@ export function blockingTaskQuery(blockingId) {
     /** @returns {Promise<Task|null>} */
     queryFn: async () => {
       if (!blockingId) return null;
-      const { data, error } = await getSupabase()
-        .from('tasks')
-        .select('*')
-        .eq('id', blockingId)
-        .single();
-      if (error) {
-        if (error.code === 'PGRST116') return null;
-        throw error;
-      }
-      return /** @type {Task} */ (data);
+      const rows = await hostDbQuery('SELECT * FROM tasks WHERE id = ? LIMIT 1', [
+        blockingId,
+      ]);
+      if (rows.length === 0) return null;
+      return /** @type {Task} */ (normalizeTaskRow(rows[0]));
     },
     enabled: !!blockingId,
   };

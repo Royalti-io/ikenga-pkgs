@@ -105,6 +105,30 @@ export async function hostPaActionsRun(args) {
   });
 }
 
+/**
+ * Read the local `pa.db` via the host's `host.dbQuery` verb (WP-04 read-swap).
+ * SELECT/WITH only — the shell rejects writes and gates this on the pkg
+ * declaring `capabilities.sqlite`. Returns the row array
+ * (`structuredContent.rows`); throws on a closed/failed bridge so callers can
+ * surface the error in the query layer. Requires a connected bridge — there is
+ * no standalone fallback (reads no longer go through supabase-js).
+ *
+ *   sql:    string         — a single SELECT/WITH statement with `?` params
+ *   params: SqlValue[]      — positional bind values
+ */
+export async function hostDbQuery(sql, params = []) {
+  if (!app) throw new Error('[tasks] bridge not connected — db_query unavailable');
+  const res = await app.callServerTool({
+    name: 'host.dbQuery',
+    arguments: { sql, params },
+  });
+  const sc = res?.structuredContent;
+  if (!sc || sc.ok !== true) {
+    throw new Error(sc?.error ?? res?.content?.[0]?.text ?? 'host.dbQuery failed');
+  }
+  return Array.isArray(sc.rows) ? sc.rows : [];
+}
+
 /** Read the current hostContext snapshot. */
 export function getContext() {
   return app?.getHostContext() ?? null;

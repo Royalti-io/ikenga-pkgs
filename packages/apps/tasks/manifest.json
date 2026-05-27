@@ -37,6 +37,7 @@
   },
 
   "capabilities": {
+    "sqlite": { "db": "ikenga.local" },
     "supabase": { "required": true }
   },
 
@@ -45,6 +46,7 @@
     "fs.read": [],
     "fs.write": [],
     "net": ["https://esm.sh", "https://*.supabase.co"],
+    "sqlite.tables": ["tasks"],
     "supabase.tables": ["tasks", "task_comments"],
     "vault.keys": []
   }

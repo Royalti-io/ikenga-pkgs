@@ -3,8 +3,7 @@
 // Triage) with localStorage persistence.
 
 import { html, cn, Icon, Button, useState, useMemo, useEffect, useQuery } from '../../lib/ui.js';
-import { getSupabase } from '../../lib/supabase.js';
-import { hostSendToActiveSession, isStandalone } from '../../lib/bridge.js';
+import { hostDbQuery, hostSendToActiveSession, isStandalone } from '../../lib/bridge.js';
 import { queryKeys } from '../../lib/query-keys.js';
 import { TASKS_LIST_COLUMNS, triageCountsQuery } from '../../lib/queries.js';
 import { groupTasks } from '../../lib/shared.js';
@@ -102,29 +101,44 @@ export function TasksView({ activeFeature } = {}) {
     ),
     /** @returns {Promise<Task[]>} */
     queryFn: async () => {
-      let q = getSupabase()
-        .from('tasks')
-        .select(TASKS_LIST_COLUMNS)
-        .order('due_date', { ascending: true, nullsFirst: false })
-        .order('created_at', { ascending: false })
-        .limit(200);
+      /** @type {string[]} */
+      const where = [];
+      /** @type {(string|number|null)[]} */
+      const params = [];
 
       if (statusFilter) {
-        q = q.eq('status', statusFilter);
+        where.push('status = ?');
+        params.push(statusFilter);
       } else if (showAutoClosed) {
-        q = q.or(
-          'status.in.(pending,in_progress,blocked),and(status.eq.completed,outcome_notes.ilike.Auto-closed by task-health%)',
+        // active OR (completed AND auto-closed by task-health) — the `%` lives
+        // in the LIKE pattern param, not the SQL text.
+        where.push(
+          "(status IN ('pending','in_progress','blocked') OR (status = 'completed' AND outcome_notes LIKE ?))",
         );
+        params.push('Auto-closed by task-health%');
       } else {
-        q = q.in('status', ['pending', 'in_progress', 'blocked']);
+        where.push("status IN ('pending','in_progress','blocked')");
       }
-      if (ownerFilter) q = q.eq('assigned_to', ownerFilter);
-      if (categoryFilter) q = q.eq('category', categoryFilter);
-      if (search.trim()) q = q.ilike('title', `%${search.trim()}%`);
+      if (ownerFilter) {
+        where.push('assigned_to = ?');
+        params.push(ownerFilter);
+      }
+      if (categoryFilter) {
+        where.push('category = ?');
+        params.push(categoryFilter);
+      }
+      if (search.trim()) {
+        where.push('title LIKE ?'); // SQLite LIKE is case-insensitive (ASCII) ≈ ilike
+        params.push(`%${search.trim()}%`);
+      }
 
-      const { data: rows, error: e } = await q;
-      if (e) throw e;
-      return /** @type {Task[]} */ (rows ?? []);
+      const sql =
+        `SELECT ${TASKS_LIST_COLUMNS} FROM tasks` +
+        (where.length ? ` WHERE ${where.join(' AND ')}` : '') +
+        ' ORDER BY due_date ASC NULLS LAST, created_at DESC LIMIT 200';
+
+      const rows = await hostDbQuery(sql, params);
+      return /** @type {Task[]} */ (rows);
     },
   });
 
