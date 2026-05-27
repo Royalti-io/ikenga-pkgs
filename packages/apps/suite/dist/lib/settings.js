@@ -7,7 +7,6 @@ const KEY = 'suite.settings.v1';
 
 const DEFAULTS = {
   features: {
-    tasks: true,
     sales: true,
     outbound: true,
     email: true,

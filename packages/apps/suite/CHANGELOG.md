@@ -1,5 +1,16 @@
 # @ikenga/pkg-suite
 
+## 0.3.0
+
+### Minor Changes
+
+- Dropped the Tasks feature (toy kanban over a fiction `open/done` schema). The
+  rich Tasks app — List/Agenda/Triage over the production `tasks` schema — now
+  ships as the standalone `com.ikenga.tasks` pkg (`packages/apps/tasks`). Suite
+  now bundles Sales, Outbound, and Email only; `tasks`/`task_comments` removed
+  from `permissions.supabase.tables`, the `tasks` feature removed from the
+  registry + Settings defaults, and the starter schema dropped from the README.
+
 ## 0.2.0
 
 ### Minor Changes

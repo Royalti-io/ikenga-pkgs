@@ -1,0 +1,193 @@
+// Query layer — ported from src/lib/queries/tasks.ts. JSDoc carries the TS
+// types. Schema verified against the local pa.db `tasks` table (shell
+// migration 0025_tasks_domain.sql): every selected column exists.
+//
+// WP-04 read-swap: reads go through the host's `host.dbQuery` verb (local
+// pa.db) instead of an in-iframe supabase-js client. The status-update WRITE
+// (task-detail-pane.js) still uses supabase-js — moving it needs a host write
+// verb that does not exist yet (follow-up WP).
+
+import { hostDbQuery } from './bridge.js';
+import { queryKeys } from './query-keys.js';
+
+// pa.db stores former Postgres array/json columns as TEXT (the Pg→SQLite
+// down-map, shell migration 0025). `tags` arrives as a string, not a JS array
+// — normalize it back so the Task shape matches the JSDoc + the detail pane's
+// `.map`/`.length` usage. JSON first (the canonical ETL encoding), then a
+// comma split as a tolerant fallback, then [].
+/** @param {any} row */
+function normalizeTaskRow(row) {
+  if (!row || typeof row !== 'object') return row;
+  const t = row.tags;
+  if (typeof t === 'string') {
+    const s = t.trim();
+    if (!s) {
+      row.tags = null;
+    } else {
+      try {
+        const parsed = JSON.parse(s);
+        row.tags = Array.isArray(parsed) ? parsed : [String(parsed)];
+      } catch {
+        row.tags = s.split(',').map((x) => x.trim()).filter(Boolean);
+      }
+    }
+  }
+  return row;
+}
+
+/** @typedef {'pending'|'in_progress'|'completed'|'cancelled'|'blocked'} TaskStatus */
+/** @typedef {'critical'|'high'|'medium'|'low'} TaskPriority */
+/** @typedef {'human'|'agent'} AssigneeType */
+
+/**
+ * @typedef {Object} Task
+ * @property {string} id
+ * @property {string} title
+ * @property {string|null} description
+ * @property {TaskStatus} status
+ * @property {TaskPriority} priority
+ * @property {string|null} assigned_to
+ * @property {AssigneeType|null} assignee_type
+ * @property {string|null} category
+ * @property {string[]|null} tags
+ * @property {string|null} due_date
+ * @property {string|null} completed_at
+ * @property {string} created_at
+ * @property {string} updated_at
+ * @property {number|null} progress_pct
+ * @property {string|null} outcome_notes
+ * @property {string|null} parent_task_id
+ * @property {string|null} blocked_by_task_id
+ * @property {string|null} source_email_id
+ * @property {string|null} agent_source
+ * @property {string|null} initiative_id
+ * @property {string|null} risk_id
+ * @property {string|null} effort_estimate
+ * @property {'autonomous'|'report'|'approval_required'|null} execution_mode
+ * @property {string|null} task_result
+ * @property {string|null} claude_session_id
+ * @property {string|null} working_dir
+ */
+
+export const TASKS_LIST_COLUMNS =
+  'id, title, description, status, priority, assigned_to, assignee_type, category, due_date, created_at, updated_at, progress_pct, outcome_notes, execution_mode';
+
+/** @type {readonly TaskStatus[]} */
+const ACTIVE_STATUSES = ['pending', 'in_progress', 'blocked'];
+const STALE_DAYS = 7;
+
+/**
+ * @typedef {Object} TriageCounts
+ * @property {number} overdue
+ * @property {number} stale
+ * @property {number} unassigned
+ * @property {number} blocked
+ * @property {number} needsAttention Deduplicated overdue-OR-unassigned badge total.
+ */
+
+/**
+ * Server-side health counts for the Triage badge (R16-followup: server-side,
+ * so the badge is correct independent of the list's filter + 200-row cap).
+ * Four `head:true` count() selects, run in parallel (+ the deduped total).
+ */
+export function triageCountsQuery() {
+  return {
+    queryKey: queryKeys.tasks.triageCounts(),
+    /** @returns {Promise<TriageCounts>} */
+    queryFn: async () => {
+      // "Overdue" = due before the start of today, matching the app's own
+      // convention (groupTasks / dueLabel treat a task due *today* as "Today",
+      // not overdue, until the day rolls over).
+      const startOfTodayIso = (() => {
+        const d = new Date();
+        d.setHours(0, 0, 0, 0);
+        return d.toISOString();
+      })();
+      const staleIso = new Date(
+        Date.now() - STALE_DAYS * 24 * 60 * 60 * 1000,
+      ).toISOString();
+      // `?,?,?` placeholders for the active-status set, reused per count.
+      const activePlaceholders = ACTIVE_STATUSES.map(() => '?').join(',');
+      const countOne = async (where, params) => {
+        const rows = await hostDbQuery(
+          `SELECT count(*) AS n FROM tasks WHERE ${where}`,
+          params,
+        );
+        return Number(rows[0]?.n ?? 0);
+      };
+
+      const [overdue, stale, unassigned, blocked, needsAttention] = await Promise.all([
+        countOne(`status IN (${activePlaceholders}) AND due_date < ?`, [
+          ...ACTIVE_STATUSES,
+          startOfTodayIso,
+        ]),
+        countOne(`status IN (${activePlaceholders}) AND updated_at < ?`, [
+          ...ACTIVE_STATUSES,
+          staleIso,
+        ]),
+        countOne(`status IN (${activePlaceholders}) AND assigned_to IS NULL`, [
+          ...ACTIVE_STATUSES,
+        ]),
+        countOne(`status = ?`, ['blocked']),
+        // overdue OR unassigned, counted once (the deduplicated badge total).
+        countOne(
+          `status IN (${activePlaceholders}) AND (due_date < ? OR assigned_to IS NULL)`,
+          [...ACTIVE_STATUSES, startOfTodayIso],
+        ),
+      ]);
+
+      return {
+        overdue,
+        stale,
+        unassigned,
+        blocked,
+        needsAttention,
+      };
+    },
+  };
+}
+
+/** @param {string} id */
+export function taskDetailQuery(id) {
+  return {
+    queryKey: queryKeys.tasks.detail(id),
+    /** @returns {Promise<Task|null>} */
+    queryFn: async () => {
+      const rows = await hostDbQuery('SELECT * FROM tasks WHERE id = ? LIMIT 1', [id]);
+      if (rows.length === 0) return null;
+      return /** @type {Task} */ (normalizeTaskRow(rows[0]));
+    },
+  };
+}
+
+/** @param {string} parentId */
+export function subtasksQuery(parentId) {
+  return {
+    queryKey: queryKeys.tasks.subtasks(parentId),
+    /** @returns {Promise<Task[]>} */
+    queryFn: async () => {
+      const rows = await hostDbQuery(
+        'SELECT * FROM tasks WHERE parent_task_id = ? ORDER BY created_at ASC',
+        [parentId],
+      );
+      return /** @type {Task[]} */ (rows.map(normalizeTaskRow));
+    },
+  };
+}
+
+/** @param {string|null} blockingId */
+export function blockingTaskQuery(blockingId) {
+  return {
+    queryKey: queryKeys.tasks.detail(blockingId ?? 'none'),
+    /** @returns {Promise<Task|null>} */
+    queryFn: async () => {
+      if (!blockingId) return null;
+      const rows = await hostDbQuery('SELECT * FROM tasks WHERE id = ? LIMIT 1', [
+        blockingId,
+      ]);
+      if (rows.length === 0) return null;
+      return /** @type {Task} */ (normalizeTaskRow(rows[0]));
+    },
+    enabled: !!blockingId,
+  };
+}

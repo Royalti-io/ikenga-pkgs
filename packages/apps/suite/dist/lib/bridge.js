@@ -15,12 +15,11 @@
 // `zod/v4` as a peer-via-esm.sh and dependency resolution sometimes
 // produces a Zod build missing `.custom()`. The bundled variant
 // inlines its deps so it works regardless of esm.sh's resolver state.
-import {
-  App,
-  applyDocumentTheme,
-  applyHostStyleVariables,
-  applyHostFonts,
-} from 'https://esm.sh/@modelcontextprotocol/ext-apps@1.7.1/app-with-deps';
+// Theme is NOT applied from the AppBridge context — app.js mirrors it from the
+// parent <html> (the artifact pattern). We deliberately drop the SDK's
+// applyDocumentTheme (it clobbers our workspace data-theme A/B/C with
+// 'light'|'dark') / applyHostStyleVariables / applyHostFonts helpers.
+import { App } from 'https://esm.sh/@modelcontextprotocol/ext-apps@1.7.1/app-with-deps';
 
 let app = null;
 
@@ -32,22 +31,15 @@ export async function connectBridge({ name, version, onContextChange }) {
   });
 
   app.onerror = (err) => console.error('[suite] bridge error', err);
+  // Theme is NOT applied here — app.js mirrors it from the parent <html>.
+  // Still forward context so live Supabase/auth + activeFeature updates land.
   app.onhostcontextchanged = (ctx) => {
-    applyContext(ctx);
     onContextChange?.(ctx);
   };
   app.onteardown = async () => ({});
 
   await app.connect();
-  const ctx = app.getHostContext();
-  if (ctx) applyContext(ctx);
-  return ctx;
-}
-
-function applyContext(ctx) {
-  if (ctx?.theme) applyDocumentTheme(ctx.theme);
-  if (ctx?.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
-  if (ctx?.styles?.css?.fonts) applyHostFonts(ctx.styles.css.fonts);
+  return app.getHostContext();
 }
 
 /** Navigate the focused shell pane (cross-pkg or in-pkg sub-route). */

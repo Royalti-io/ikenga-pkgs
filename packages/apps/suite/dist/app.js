@@ -11,6 +11,65 @@ import { setSupabaseConfig, hasSupabase } from './lib/supabase.js';
 import { FEATURES, findFeature } from './features/_registry.js';
 import { isFeatureEnabled, subscribeSettings } from './lib/settings.js';
 
+// Theme — own it by mirroring the shell's <html> attributes (the artifact
+// pattern), NOT the AppBridge host-context push (which clobbered our workspace
+// data-theme with 'light'|'dark' and only re-fired on `mode`). The pkg iframe is
+// same-origin with the shell (srcdoc + sandbox allow-same-origin), so we read
+// data-theme/data-mode/data-density/data-workspace off the parent <html> and
+// copy them onto ours; @ikenga/tokens (injected by the feature components) is
+// keyed on exactly these, so the palette matches the shell across A/B/C ×
+// light/dark. A MutationObserver re-mirrors on every switch (incl. system OS
+// flips). Standalone → prefers-color-scheme + theme A. Mirrors tasks/dist/app.js
+// and shell/src/lib/artifact/bridge.ts setupTheme().
+const APPEARANCE_ATTRS = ['data-theme', 'data-mode', 'data-density', 'data-workspace'];
+function readShellAppearance() {
+  try {
+    if (window.parent === window) return null;
+    const pr = window.parent.document.documentElement;
+    const mode = pr.getAttribute('data-mode');
+    if (mode !== 'light' && mode !== 'dark') return null;
+    return {
+      'data-theme': pr.getAttribute('data-theme') || 'A',
+      'data-mode': mode,
+      'data-density': pr.getAttribute('data-density') || 'comfortable',
+      'data-workspace': pr.getAttribute('data-workspace') || 'app',
+    };
+  } catch {
+    return null; // cross-origin standalone embed — fall back to OS
+  }
+}
+function applyAppearance(attrs) {
+  const root = document.documentElement;
+  for (const k of APPEARANCE_ATTRS) if (attrs[k] != null) root.setAttribute(k, attrs[k]);
+}
+(function setupTheme() {
+  const fromShell = readShellAppearance();
+  if (fromShell) {
+    applyAppearance(fromShell);
+    try {
+      const target = window.parent.document.documentElement;
+      new MutationObserver(() => {
+        const next = readShellAppearance();
+        if (next) applyAppearance(next);
+      }).observe(target, { attributes: true, attributeFilter: APPEARANCE_ATTRS });
+    } catch {
+      /* best-effort; static apply above already themed the document */
+    }
+  } else {
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    const applyOs = () =>
+      applyAppearance({
+        'data-theme': 'A',
+        'data-mode': mql.matches ? 'dark' : 'light',
+        'data-density': 'comfortable',
+        'data-workspace': 'app',
+      });
+    applyOs();
+    if (typeof mql.addEventListener === 'function') mql.addEventListener('change', applyOs);
+    else if (typeof mql.addListener === 'function') mql.addListener(applyOs);
+  }
+})();
+
 function App() {
   const [bridgeReady, setBridgeReady] = useState(false);
   const [bridgeError, setBridgeError] = useState(null);

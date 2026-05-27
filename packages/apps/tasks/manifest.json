@@ -1,7 +1,7 @@
 {
-  "id": "com.ikenga.suite",
-  "name": "Suite",
-  "version": "0.3.0",
+  "id": "com.ikenga.tasks",
+  "name": "Tasks",
+  "version": "0.2.0",
   "ikenga_api": "1",
   "kind": "embedded",
   "author": { "name": "Royalti", "key": "royalti" },
@@ -9,11 +9,11 @@
   "ui": {
     "nav": [
       {
-        "id": "suite.index",
-        "label": "Suite",
-        "icon": "layout-dashboard",
+        "id": "tasks.index",
+        "label": "Tasks",
+        "icon": "check-square",
         "section": "ops",
-        "route": "/pkg/com.ikenga.suite/"
+        "route": "/pkg/com.ikenga.tasks/"
       }
     ],
     "routes": [
@@ -37,6 +37,7 @@
   },
 
   "capabilities": {
+    "sqlite": { "db": "ikenga.local" },
     "supabase": { "required": true }
   },
 
@@ -45,11 +46,8 @@
     "fs.read": [],
     "fs.write": [],
     "net": ["https://esm.sh", "https://*.supabase.co"],
-    "supabase.tables": [
-      "deals",
-      "outbound_messages",
-      "email_drafts"
-    ],
+    "sqlite.tables": ["tasks"],
+    "supabase.tables": ["tasks", "task_comments"],
     "vault.keys": []
   }
 }
