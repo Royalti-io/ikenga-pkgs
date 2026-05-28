@@ -33,7 +33,7 @@ jobs:
       # Several build.sh scripts (studio/mcp, sidecars/*) bundle via `bun`.
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.6
 
       - run: pnpm install --frozen-lockfile
 
