@@ -9,12 +9,12 @@ import {
   useMutation,
   useQueryClient,
 } from '../../lib/ui.js';
-import { getSupabase } from '../../lib/supabase.js';
 import { queryKeys } from '../../lib/query-keys.js';
 import {
   blockingTaskQuery,
   subtasksQuery,
   taskDetailQuery,
+  updateTaskStatus,
 } from '../../lib/queries.js';
 import {
   assigneeIsAgent,
@@ -49,15 +49,7 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
   const updateStatus = useMutation({
     /** @param {TaskStatus} status */
     mutationFn: async (status) => {
-      /** @type {{ status: TaskStatus, completed_at?: string | null }} */
-      const patch = { status };
-      if (status === 'completed') patch.completed_at = new Date().toISOString();
-      else if (task?.completed_at) patch.completed_at = null;
-      const { error: e } = await getSupabase()
-        .from('tasks')
-        .update(patch)
-        .eq('id', taskId);
-      if (e) throw e;
+      await updateTaskStatus(taskId, status);
     },
     onSuccess: () =>
       void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all }),
