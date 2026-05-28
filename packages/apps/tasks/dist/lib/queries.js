@@ -9,6 +9,7 @@
 
 import { hostDbExec, hostDbQuery } from './bridge.js';
 import { queryKeys } from './query-keys.js';
+import { CURRENT_USER } from './assignees.js';
 
 // pa.db stores former Postgres array/json columns as TEXT (the Pg→SQLite
 // down-map, shell migration 0025). `tags` arrives as a string, not a JS array
@@ -209,4 +210,69 @@ export async function updateTaskStatus(taskId, status) {
     completedAt,
     taskId,
   ]);
+}
+
+/**
+ * @typedef {Object} CreateTaskInput
+ * @property {string} title                       required (NOT NULL in 0025)
+ * @property {string|null} [assignedTo]           email (human) or agent id; null = unassigned
+ * @property {'human'|'agent'|null} [assigneeType]
+ * @property {TaskPriority} [priority]            defaults 'medium'
+ * @property {string|null} [dueDate]              ISO timestamp or null
+ * @property {string|null} [description]
+ * @property {string|null} [category]
+ */
+
+/**
+ * Insert a new task into the local pa.db via `host.dbExec` (write-path WP).
+ * Now that `host.dbExec` allows a real INSERT (the table is in the pkg's
+ * declared `sqlite.tables`), creation no longer has to round-trip through the
+ * agent. The id is a client-generated uuid; created_at/updated_at are stamped
+ * now; status defaults to 'pending'. Only `id` + `title` are NOT NULL in
+ * migration 0025 — every other column is nullable or DB-defaulted, so we write
+ * just what the form collected and let SQLite default the rest.
+ *
+ * @param {CreateTaskInput} input
+ * @returns {Promise<string>} the new task id
+ */
+export async function createTask(input) {
+  const id = crypto.randomUUID();
+  const now = new Date().toISOString();
+  await hostDbExec(
+    'INSERT INTO tasks (id, title, description, status, priority, assigned_to, assignee_type, category, due_date, created_at, updated_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    [
+      id,
+      input.title,
+      input.description ?? null,
+      'pending',
+      input.priority ?? 'medium',
+      input.assignedTo ?? null,
+      input.assigneeType ?? null,
+      input.category ?? null,
+      input.dueDate ?? null,
+      now,
+      now,
+      CURRENT_USER,
+    ],
+  );
+  return id;
+}
+
+/**
+ * Reassign a task to a different human/agent via `host.dbExec`. `assigned_to`
+ * was display-only across every view until now; this is the first write of it.
+ * `updated_at` is bumped so the staleness/triage logic (which keys off it)
+ * doesn't treat a just-reassigned task as stale. Pass `assignedTo = null` to
+ * clear the owner (unassign).
+ *
+ * @param {string} taskId
+ * @param {string|null} assignedTo
+ * @param {'human'|'agent'|null} assigneeType
+ * @returns {Promise<void>}
+ */
+export async function reassignTask(taskId, assignedTo, assigneeType) {
+  await hostDbExec(
+    'UPDATE tasks SET assigned_to = ?, assignee_type = ?, updated_at = ? WHERE id = ?',
+    [assignedTo, assigneeType, new Date().toISOString(), taskId],
+  );
 }
