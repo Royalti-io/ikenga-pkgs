@@ -4,7 +4,7 @@ Fixture-only ETL sidecar for the Ikenga local store migration (Wave 2 / WP-03).
 
 ## What it does
 
-Loads synthetic test data into `pa.db` (the local SQLite store) to exercise
+Loads synthetic test data into `ikenga.db` (the local SQLite store) to exercise
 and verify the full insert → idempotent-re-run → NDJSON round-trip pipeline
 (WP-06).
 
@@ -32,7 +32,7 @@ Content-Type: application/json
   "method": "run",
   "params": {
     "mode": "fixture",
-    "db_path": "/path/to/pa.db",
+    "db_path": "/path/to/ikenga.db",
     "dry_run": false
   }
 }

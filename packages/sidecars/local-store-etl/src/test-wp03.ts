@@ -1,6 +1,6 @@
 /**
  * test-wp03.ts — WP-03 smoke-test: runs writeDataset(fixture()) twice
- * against a temp pa.db bootstrapped from the shell migrations, then asserts:
+ * against a temp ikenga.db bootstrapped from the shell migrations, then asserts:
  *   1. First run: rows_inserted > 0 for every non-empty table.
  *   2. Second run: is_no_op === true (idempotency).
  *
@@ -19,10 +19,10 @@ const MIGRATIONS_DIR = join(
   '../../../../../shell/src-tauri/migrations',
 );
 
-// ── 1. Bootstrap schema into a temp pa.db ─────────────────────────────────
+// ── 1. Bootstrap schema into a temp ikenga.db ─────────────────────────────────
 
 const tmp = mkdtempSync(join(tmpdir(), 'wp03-'));
-const dbPath = join(tmp, 'pa.db');
+const dbPath = join(tmp, 'ikenga.db');
 
 const db = new Database(dbPath);
 db.run('PRAGMA journal_mode=WAL');

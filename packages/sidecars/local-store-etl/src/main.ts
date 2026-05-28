@@ -6,7 +6,7 @@
  * response to stdout.
  *
  * Supported methods:
- *   run   — load data into pa.db (mode: "fixture" | "live")
+ *   run   — load data into ikenga.db (mode: "fixture" | "live")
  *   ping  — health-check (returns { pong: true })
  *
  * Wave 4: the `live` mode will call `extractLive(supabaseUrl, serviceRoleKey)`

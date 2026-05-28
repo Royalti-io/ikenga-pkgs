@@ -1,7 +1,7 @@
 {
   "name": "@ikenga/local-store-etl-sidecar",
   "version": "0.1.0",
-  "description": "Fixture-only ETL sidecar that loads synthetic test data into pa.db. Wave 4 will add live Supabase extraction.",
+  "description": "Fixture-only ETL sidecar that loads synthetic test data into ikenga.db. Wave 4 will add live Supabase extraction.",
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
