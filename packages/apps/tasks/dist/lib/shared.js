@@ -67,7 +67,7 @@ export function groupTasks(tasks, showAutoclosed) {
 }
 
 // ─── In-body view switcher (Round 16 · D-2 / D-3) ───────────────────────────
-/** @typedef {'tasks'|'agenda'|'triage'} TaskView */
+/** @typedef {'tasks'|'agenda'|'triage'|'sweeper'|'done'} TaskView */
 
 // ─── Agenda / Today (D-2) ────────────────────────────────────────────────────
 /** @typedef {'me'|'agent'|'silent'|'deadline'} AgendaLane */

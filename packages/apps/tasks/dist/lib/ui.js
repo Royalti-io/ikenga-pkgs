@@ -57,6 +57,11 @@ const ICONS = {
   mail: 'M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM22 6l-10 7L2 6',
   terminal: 'M4 17l6-6-6-6M12 19h8',
   'git-branch': 'M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM18 9a9 9 0 0 1-9 9',
+  // ViewTabs glyphs for Sweeper + Done. `broom` mirrors the design's SWEEP
+  // glyph (a broom strokes + handle); `check-check` is the lucide name for
+  // the "double check" used for completed items.
+  broom: 'M9.8 12.2 5 17l3 3 4.8-4.8M14 8l-3.5 3.5 4 4L18 12l-4-4z M14 8l5-5M19 3l2 2',
+  'check-check': 'M18 6 7 17l-5-5M22 10l-7.5 7.5L13 16',
 };
 
 // Class-name joiner — replaces clsx + tailwind-merge. With Tailwind gone there

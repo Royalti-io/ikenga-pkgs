@@ -13,7 +13,7 @@ import {
   QueryClient,
   QueryClientProvider,
 } from './lib/ui.js';
-import { connectBridge, isStandalone, setMenu } from './lib/bridge.js';
+import { connectBridge, isStandalone } from './lib/bridge.js';
 import { setSupabaseConfig, hasSupabase } from './lib/supabase.js';
 import { TasksView } from './features/tasks/tasks-view.js';
 import tokensCss from './lib/tokens-css.js';
@@ -124,17 +124,10 @@ function setupTheme() {
 // Run synchronously at module eval (before React mounts) → themed first paint.
 setupTheme();
 
-// Shell side-menu (PkgMode renders it when this pkg's pane is focused). Views
-// switch the mounted view; `f:*` filter items jump the list to a group. Clicks
-// return via hostContext.royaltiSuite.activeFeature → handled in TasksView.
-const MENU_ITEMS = [
-  { id: 'tasks', label: 'Tasks', icon: 'list-checks' },
-  { id: 'agenda', label: 'Agenda', icon: 'calendar-days' },
-  { id: 'triage', label: 'Triage', icon: 'activity' },
-  { id: 'f:today', label: 'Today', icon: 'sun' },
-  { id: 'f:overdue', label: 'Overdue', icon: 'alert-triangle' },
-  { id: 'f:autoclosed', label: 'Auto-closed', icon: 'check-check' },
-];
+// The shell side-menu is now published + maintained by TasksView (it folds in
+// the live view + active-filter + triage-badge state and toggles the filter
+// rows' `disabled` flag when a non-list view is active). See
+// `buildTasksMenu` / the publish effect in features/tasks/tasks-view.js.
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -190,9 +183,8 @@ function App() {
         }
         const af = ctx?.royaltiSuite?.activeFeature;
         if (typeof af === 'string') setActiveFeature(af);
-        // Publish the side menu; the shell renders it in the left panel and
-        // echoes clicks back via royaltiSuite.activeFeature (handled above).
-        setMenu(MENU_ITEMS).catch((e) => console.warn('[tasks] setMenu failed', e));
+        // The side menu is published by TasksView once it mounts (it owns the
+        // view + filter state the menu reflects). No initial setMenu here.
         setBridgeReady(true);
       })
       .catch((e) => setBridgeError(e.message ?? String(e)));

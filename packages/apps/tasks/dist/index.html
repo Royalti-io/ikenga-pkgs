@@ -19,7 +19,11 @@
         font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
       }
       * { box-sizing: border-box; }
-      html, body, #root { height: 100%; }
+      /* The page itself never scrolls — only the inner .tk-list (overflow-y:
+         auto) does. Without this, any leak in the flex height chain lets the
+         whole iframe document scroll, which also defeats sticky group headers
+         (they'd stick to the page, not the list). */
+      html, body, #root { height: 100%; overflow: hidden; }
       body { margin: 0; background: var(--tasks-bg); color: var(--tasks-fg); font: 14px/1.4 var(--font-sans, system-ui); -webkit-font-smoothing: antialiased; }
       #root > .boot { padding: 1rem 1.25rem; font-size: 0.85rem; color: var(--tasks-muted); }
     </style>

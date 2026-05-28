@@ -1,17 +1,71 @@
 // Tasks main view — ported from views/TasksView.tsx. List + filter bar +
-// grouped rows + master/detail split + in-body view switcher (Tasks/Agenda/
-// Triage) with localStorage persistence.
+// grouped rows + master/detail split. The view switcher (Tasks/Agenda/Triage/
+// Sweeper/Done) and the list filters BOTH live in the shell side-menu now (see
+// buildTasksMenu + the publish effect); there's no in-pane tab bar. View
+// choice persists to localStorage.
 
 import { html, cn, Icon, Button, useState, useMemo, useEffect, useQuery } from '../../lib/ui.js';
-import { hostDbQuery, hostSendToActiveSession, isStandalone } from '../../lib/bridge.js';
+import { hostDbQuery, hostSendToActiveSession, isStandalone, setMenu } from '../../lib/bridge.js';
 import { queryKeys } from '../../lib/query-keys.js';
 import { TASKS_LIST_COLUMNS, triageCountsQuery } from '../../lib/queries.js';
 import { groupTasks } from '../../lib/shared.js';
 import { TaskRow } from './task-row.js';
 import { TaskDetailPane } from './task-detail-pane.js';
-import { ViewTabs } from './view-tabs.js';
 import { AgendaView } from './agenda-view.js';
 import { TriageView } from './triage-view.js';
+import { SweeperView } from './sweeper-view.js';
+import { DoneView } from './done-view.js';
+
+// Shell side-menu model. Per the user's call (2026-05-28), the five VIEW modes
+// live in the sidebar alongside the list FILTER facets — one nav surface, like
+// Ngwa. The filters are List-only, so they render dimmed (disabled) on any
+// non-list view (mirrors Ngwa's "Kind dims on Analyze"). `buildTasksMenu`
+// computes the flat item list with per-item `active` + `disabled` flags; the
+// publish effect re-sends it whenever view / active-filter / triage-badge
+// changes. See pkg-mode.tsx for how the shell renders sections + dim + active.
+const VIEW_ITEMS = [
+  { id: 'v:tasks', label: 'Tasks', icon: 'check-square' },
+  { id: 'v:agenda', label: 'Agenda', icon: 'calendar-days' },
+  { id: 'v:triage', label: 'Triage', icon: 'stethoscope' },
+  { id: 'v:sweeper', label: 'Sweeper', icon: 'broom' },
+  { id: 'v:done', label: 'Done', icon: 'check-check' },
+];
+const FILTER_ITEMS = [
+  // Filter section (the implicit-first group in the design's TASKS_SIDEBAR).
+  { id: 'f:all', label: 'All tasks', icon: 'list-checks', section: 'Filter' },
+  { id: 'f:today', label: 'Today', icon: 'sun', section: 'Filter' },
+  { id: 'f:overdue', label: 'Overdue', icon: 'alert-triangle', section: 'Filter' },
+  { id: 'f:thisweek', label: 'This week', icon: 'calendar-days', section: 'Filter' },
+  { id: 'f:autoclosed', label: 'Auto-closed', icon: 'check-check', section: 'Filter' },
+  { id: 'd:finance', label: 'Finance', icon: 'trending-up', section: 'By domain' },
+  { id: 'd:mail', label: 'Mail', icon: 'mail', section: 'By domain' },
+  { id: 'd:content', label: 'Content', icon: 'pencil', section: 'By domain' },
+  { id: 'd:outbound', label: 'Outbound', icon: 'send', section: 'By domain' },
+  { id: 'o:me', label: 'Me', icon: 'list-checks', section: 'By owner' },
+  { id: 'o:agents', label: 'Agents', icon: 'activity', section: 'By owner' },
+];
+
+/**
+ * @param {TaskView} view current mounted view
+ * @param {string | null} activeFilter last-applied filter id (e.g. 'f:today')
+ * @param {number | null} triageBadge needs-attention count for the Triage row
+ */
+function buildTasksMenu(view, activeFilter, triageBadge) {
+  const filtersInert = view !== 'tasks';
+  const viewRows = VIEW_ITEMS.map((it) => ({
+    ...it,
+    section: 'View',
+    active: `v:${view}` === it.id,
+    badge: it.id === 'v:triage' && triageBadge ? triageBadge : undefined,
+  }));
+  const filterRows = FILTER_ITEMS.map((it) => ({
+    ...it,
+    disabled: filtersInert,
+    // Highlight the applied filter only while the list is the active view.
+    active: !filtersInert && activeFilter === it.id,
+  }));
+  return [...viewRows, ...filterRows];
+}
 
 /** @typedef {import('../../lib/queries.js').Task} Task */
 /** @typedef {import('../../lib/queries.js').TaskStatus} TaskStatus */
@@ -20,11 +74,25 @@ import { TriageView } from './triage-view.js';
 
 const VIEW_STORAGE_KEY = 'ikenga-tasks-view';
 
+// Display names for the slim header — the bar reflects the active view (the
+// sidebar already says "Tasks", so the in-pane bar holds context + action, not
+// the domain name). See the header block in the render.
+/** @type {Record<TaskView, string>} */
+const VIEW_LABELS = {
+  tasks: 'Tasks',
+  agenda: 'Agenda',
+  triage: 'Triage',
+  sweeper: 'Sweeper',
+  done: 'Done',
+};
+
 /** @returns {TaskView} */
 function loadView() {
   try {
     const v = localStorage.getItem(VIEW_STORAGE_KEY);
-    if (v === 'tasks' || v === 'agenda' || v === 'triage') return v;
+    if (v === 'tasks' || v === 'agenda' || v === 'triage' || v === 'sweeper' || v === 'done') {
+      return v;
+    }
   } catch {
     /* localStorage unavailable (sandboxed iframe) — fall through */
   }
@@ -53,6 +121,15 @@ export function TasksView({ activeFeature } = {}) {
   /** @type {[Set<GroupKey>, (f: (prev: Set<GroupKey>) => Set<GroupKey>) => void]} */
   const [collapsed, setCollapsed] = useState(/** @type {Set<GroupKey>} */ (new Set(['later'])));
   const [view, setView] = useState(loadView);
+  // Last-applied sidebar filter id (e.g. 'f:today', 'd:finance', 'o:me') — kept
+  // so the sidebar can re-highlight it when the List view is active. Defaults
+  // to 'f:all' (the unfiltered list).
+  const [activeFilter, setActiveFilter] = useState('f:all');
+  // Time-bucket narrowing for the Today/Overdue/This week/Auto-closed facets.
+  // null = show every group. When set to a GroupKey, the list renders only
+  // that group — so those sidebar items actually FILTER, not just scroll.
+  /** @type {[GroupKey | null, (v: GroupKey | null) => void]} */
+  const [timeBucket, setTimeBucket] = useState(/** @type {GroupKey | null} */ (null));
 
   /** @param {TaskView} v */
   function changeView(v) {
@@ -65,28 +142,83 @@ export function TasksView({ activeFeature } = {}) {
   }
 
   // Shell side-menu selection (host.pkg.setMenu → royaltiSuite.activeFeature).
-  // View ids switch the mounted view; `f:<group>` filter ids jump the Tasks
-  // list to that group (expanding it, surfacing auto-closed when relevant).
+  // The sidebar carries BOTH the view switcher and the list filters (one nav
+  // surface, Ngwa-style). id taxonomy:
+  //
+  //   v:<view>      — switch the mounted view (tasks|agenda|triage|sweeper|done)
+  //   f:all         — list: clear all filters, show open
+  //   f:today       — list: expand "today" group + scroll to it
+  //   f:overdue     — list: expand "overdue" group + scroll
+  //   f:thisweek    — list: expand "week" group + scroll
+  //   f:autoclosed  — list: toggle Show auto-closed on + expand "autoclosed"
+  //   d:<category>  — list: filter by category column (Finance/Mail/…)
+  //   o:me|o:agents — list: filter by owner (me = hello@royalti.io)
+  //
+  // Filter ids only fire while the list is (or becomes) the active view; the
+  // shell already dims them on other views, but we also force view→tasks here
+  // so a stray dispatch can't apply a filter the user can't see.
   useEffect(() => {
     if (!activeFeature) return;
-    if (activeFeature === 'tasks' || activeFeature === 'agenda' || activeFeature === 'triage') {
-      setView(activeFeature);
+
+    // View switch.
+    if (activeFeature.startsWith('v:')) {
+      const v = activeFeature.slice(2);
+      if (v === 'tasks' || v === 'agenda' || v === 'triage' || v === 'sweeper' || v === 'done') {
+        changeView(/** @type {TaskView} */ (v));
+      }
       return;
     }
+
+    // Time-bucket facets. These NARROW the list to one group (real filter), not
+    // just scroll to it. 'all' resets every filter incl. the bucket.
     if (activeFeature.startsWith('f:')) {
-      const key = /** @type {GroupKey} */ (activeFeature.slice(2)); // today|overdue|autoclosed
+      const sub = activeFeature.slice(2);
       setView('tasks');
+      setActiveFilter(activeFeature);
+      if (sub === 'all') {
+        setTimeBucket(null);
+        setStatusFilter('');
+        setOwnerFilter('');
+        setCategoryFilter('');
+        setSearch('');
+        return;
+      }
+      /** @type {Record<string, GroupKey>} */
+      const groupKey = { today: 'today', overdue: 'overdue', thisweek: 'week', autoclosed: 'autoclosed' };
+      const key = groupKey[sub];
+      if (!key) return;
       if (key === 'autoclosed') setShowAutoClosed(true);
+      // Make sure the bucket isn't also collapsed (so its rows show once it's
+      // the only group on screen).
       setCollapsed((prev) => {
         const next = new Set(prev);
         next.delete(key);
         return next;
       });
-      // Defer so the Tasks view + group are mounted before we scroll to it.
-      requestAnimationFrame(() => {
-        const el = document.querySelector(`.tk-list [data-group="${key}"]`);
-        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      });
+      setTimeBucket(key);
+      return;
+    }
+
+    // Category filter (`By domain` section). Maps the design's four facet
+    // labels to whatever the row's `category` column actually contains.
+    if (activeFeature.startsWith('d:')) {
+      setView('tasks');
+      setActiveFilter(activeFeature);
+      setCategoryFilter(activeFeature.slice(2));
+      return;
+    }
+
+    // Owner filter (`By owner` section). `me` maps to the logged-in email;
+    // `agents` is a sentinel the query layer doesn't yet honour — we fall
+    // back to clearing the human filter so the agent rows show through.
+    if (activeFeature.startsWith('o:')) {
+      setView('tasks');
+      setActiveFilter(activeFeature);
+      const who = activeFeature.slice(2);
+      // TODO(hello@royalti.io): wire `o:agents` to assignee_type='agent' once
+      // the query layer takes a structured filter, not just a string.
+      setOwnerFilter(who === 'me' ? 'hello@royalti.io' : '');
+      return;
     }
   }, [activeFeature]);
 
@@ -94,6 +226,17 @@ export function TasksView({ activeFeature } = {}) {
   // view's stat cards), correct independent of the list filter + 200-row cap.
   const { data: triageCounts } = useQuery(triageCountsQuery());
   const triageBadge = triageCounts ? triageCounts.needsAttention : null;
+
+  // Publish (and keep refreshing) the shell side-menu. Re-sends whenever the
+  // view, the active filter, or the triage badge changes so the sidebar's
+  // active-highlight, filter-dim, and Triage count stay in lockstep with the
+  // pane. Skipped in standalone preview (no host to publish to).
+  useEffect(() => {
+    if (isStandalone()) return;
+    setMenu(buildTasksMenu(view, activeFilter, triageBadge)).catch((e) =>
+      console.warn('[tasks] setMenu failed', e),
+    );
+  }, [view, activeFilter, triageBadge]);
 
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.tasks.list(
@@ -145,6 +288,13 @@ export function TasksView({ activeFeature } = {}) {
   const groups = useMemo(
     () => (data ? groupTasks(data, showAutoClosed) : []),
     [data, showAutoClosed],
+  );
+
+  // When a time facet is active, show only that group (Today/Overdue/This week/
+  // Auto-closed actually filter). null → every group.
+  const visibleGroups = useMemo(
+    () => (timeBucket ? groups.filter((g) => g.key === timeBucket) : groups),
+    [groups, timeBucket],
   );
 
   const openCount = useMemo(
@@ -200,16 +350,12 @@ export function TasksView({ activeFeature } = {}) {
       <div class="tk-frame" style=${{ flex: 1 }}>
         <div class="tk-frame-head">
           <div class="tk-frame-title-wrap">
-            <${Icon} name="check-square" size=${18} className="tk-frame-title-mark" />
-            <div>
-              <h2 class="tk-frame-title">
-                Tasks
-                <span class="tk-frame-count">(${openCount} open · ${autoClosedCount} auto-closed)</span>
-              </h2>
-              <div class="tk-frame-sub">
-                Cross-cutting work — humans + agents. Click a row to inspect.
-              </div>
-            </div>
+            <${Icon} name="check-square" size=${15} className="tk-frame-title-mark" />
+            <h2 class="tk-frame-title">
+              ${VIEW_LABELS[view] ?? 'Tasks'}
+              ${autoClosedCount > 0 &&
+              html`<span class="tk-frame-count">· ${autoClosedCount} auto-closed</span>`}
+            </h2>
           </div>
           <div style=${{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <${Button}
@@ -225,11 +371,10 @@ export function TasksView({ activeFeature } = {}) {
           </div>
         </div>
 
-        ${isStandalone() &&
-        html`<${ViewTabs} view=${view} onChange=${changeView} triageCount=${triageBadge} />`}
-
         ${view === 'agenda' && html`<${AgendaView} tasks=${data ?? []} filterActive=${filterActive} />`}
         ${view === 'triage' && html`<${TriageView} listTasks=${data ?? []} />`}
+        ${view === 'sweeper' && html`<${SweeperView} />`}
+        ${view === 'done' && html`<${DoneView} />`}
 
         ${view === 'tasks' && html`
           <div class="tk-filterbar">
@@ -300,49 +445,58 @@ export function TasksView({ activeFeature } = {}) {
                   </div>
                 </div>
               `}
-              ${data && data.length === 0 && !isLoading && html`
+              ${!isLoading && !error && visibleGroups.length === 0 && html`
                 <div class="tk-empty-box">No tasks match.</div>
               `}
-              ${groups.map((g) => {
+              ${visibleGroups.flatMap((g) => {
                 const isCollapsed = collapsed.has(g.key);
-                return html`
-                  <div key=${g.key}>
-                    <div
-                      role="button"
-                      tabIndex=${0}
-                      aria-expanded=${!isCollapsed}
-                      data-group=${g.key}
-                      class=${cn(
-                        'tk-group-head',
-                        g.key === 'overdue' && 'is-overdue',
-                        g.key === 'autoclosed' && 'is-autoclosed',
-                        isCollapsed && 'is-collapsed',
-                      )}
-                      onClick=${() => toggleGroup(g.key)}
-                      onKeyDown=${(e) => {
-                        if (e.key === 'Enter' || e.key === ' ') {
-                          e.preventDefault();
-                          toggleGroup(g.key);
-                        }
-                      }}
-                    >
-                      <span class="tk-group-label">
-                        <${Icon} name="chevron-down" size=${10} className="chev" />
-                        ${g.label}
-                      </span>
-                      <span class="ct">${g.tasks.length}</span>
-                    </div>
-                    ${!isCollapsed &&
-                    g.tasks.map((t) => html`
+                // Group head + rows are emitted FLAT (direct children of
+                // .tk-list), not wrapped in a per-group div — so the head's
+                // `position:sticky; top:0` pins to the scroll container and the
+                // next head pushes it up (matches the design's .ld-list). A
+                // wrapper div would scope each sticky to its own group bounds.
+                const head = html`
+                  <div
+                    key=${`${g.key}:head`}
+                    role="button"
+                    tabIndex=${0}
+                    aria-expanded=${!isCollapsed}
+                    data-group=${g.key}
+                    class=${cn(
+                      'tk-group-head',
+                      g.key === 'overdue' && 'is-overdue',
+                      g.key === 'autoclosed' && 'is-autoclosed',
+                      isCollapsed && 'is-collapsed',
+                    )}
+                    onClick=${() => toggleGroup(g.key)}
+                    onKeyDown=${(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleGroup(g.key);
+                      }
+                    }}
+                  >
+                    <span class="tk-group-label">
+                      <${Icon} name="chevron-down" size=${10} className="chev" />
+                      ${g.label}
+                    </span>
+                    <span class="ct">${g.tasks.length}</span>
+                  </div>
+                `;
+                if (isCollapsed) return [head];
+                return [
+                  head,
+                  ...g.tasks.map(
+                    (t) => html`
                       <${TaskRow}
                         key=${t.id}
                         task=${t}
                         selected=${selectedId === t.id}
                         onSelect=${setSelectedId}
                       />
-                    `)}
-                  </div>
-                `;
+                    `,
+                  ),
+                ];
               })}
             </div>
 
