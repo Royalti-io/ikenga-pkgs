@@ -24,7 +24,7 @@ export interface RunParams {
   mode: 'fixture' | 'live';
   /** Optional list of table names to restrict the run to. Empty = all tables. */
   tables?: string[];
-  /** Absolute path to the pa.db file to write into. */
+  /** Absolute path to the ikenga.db file to write into. */
   db_path: string;
   /** When true, perform a dry-run (validate only, no writes). */
   dry_run?: boolean;

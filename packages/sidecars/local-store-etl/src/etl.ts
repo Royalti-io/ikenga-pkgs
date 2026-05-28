@@ -2,7 +2,7 @@
  * etl.ts — SQLite writer for the local-store-etl sidecar.
  *
  * Uses bun:sqlite (Bun's built-in SQLite driver) to upsert rows from a
- * FixtureDataset into pa.db. All writes use INSERT OR REPLACE for
+ * FixtureDataset into ikenga.db. All writes use INSERT OR REPLACE for
  * idempotency — re-running is a no-op when the row already exists unchanged.
  *
  * Wave 4 will extend this with a `extractLive(supabaseUrl, serviceRoleKey)`
