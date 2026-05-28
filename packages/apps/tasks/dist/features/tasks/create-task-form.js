@@ -18,6 +18,7 @@ import {
 import { queryKeys } from '../../lib/query-keys.js';
 import { createTask } from '../../lib/queries.js';
 import { assigneeOptions } from '../../lib/assignees.js';
+import { getContext } from '../../lib/bridge.js';
 
 /** @type {import('../../lib/queries.js').TaskPriority[]} */
 const PRIORITIES = ['critical', 'high', 'medium', 'low'];
@@ -56,7 +57,7 @@ export function CreateTaskForm({ onClose }) {
   const [due, setDue] = useState(''); // 'YYYY-MM-DD' from <input type=date>
   const [description, setDescription] = useState('');
 
-  const options = assigneeOptions();
+  const options = assigneeOptions(getContext());
 
   const create = useMutation({
     mutationFn: async () => {

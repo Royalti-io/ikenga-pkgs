@@ -19,6 +19,7 @@ import {
   updateTaskStatus,
 } from '../../lib/queries.js';
 import { assigneeOptions } from '../../lib/assignees.js';
+import { getContext } from '../../lib/bridge.js';
 import {
   assigneeIsAgent,
   autoCloseSignal,
@@ -63,7 +64,7 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
   const reassign = useMutation({
     /** @param {string} value picked assigned_to ('' = unassign) */
     mutationFn: async (value) => {
-      const picked = assigneeOptions().find((o) => o.value === value);
+      const picked = assigneeOptions(getContext()).find((o) => o.value === value);
       await reassignTask(taskId, value || null, picked ? picked.type : null);
     },
     onSuccess: () => {
@@ -174,9 +175,9 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
               }}
             >
               <option value="">Unassigned</option>
-              ${task.assigned_to && !assigneeOptions().some((o) => o.value === task.assigned_to) &&
+              ${task.assigned_to && !assigneeOptions(getContext()).some((o) => o.value === task.assigned_to) &&
                 html`<option value=${task.assigned_to}>${task.assigned_to} (current)</option>`}
-              ${assigneeOptions().map(
+              ${assigneeOptions(getContext()).map(
                 (o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`,
               )}
             </select>
