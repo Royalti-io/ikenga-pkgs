@@ -26,10 +26,6 @@ declare module 'https://esm.sh/@tanstack/react-query@5?deps=react@19.0.0' {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   export const useQueryClient: any;
 }
-declare module 'https://esm.sh/@supabase/supabase-js@2' {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  export const createClient: any;
-}
 declare module 'https://esm.sh/@modelcontextprotocol/ext-apps@1.7.1/app-with-deps' {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   export const App: any;

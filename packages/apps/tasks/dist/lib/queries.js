@@ -3,11 +3,11 @@
 // migration 0025_tasks_domain.sql): every selected column exists.
 //
 // WP-04 read-swap: reads go through the host's `host.dbQuery` verb (local
-// pa.db) instead of an in-iframe supabase-js client. The status-update WRITE
-// (task-detail-pane.js) still uses supabase-js — moving it needs a host write
-// verb that does not exist yet (follow-up WP).
+// pa.db) instead of an in-iframe supabase-js client. Write-path WP: the
+// status-update WRITE goes through `host.dbExec` (see `updateTaskStatus`), so
+// this pkg no longer depends on supabase-js at all.
 
-import { hostDbQuery } from './bridge.js';
+import { hostDbExec, hostDbQuery } from './bridge.js';
 import { queryKeys } from './query-keys.js';
 
 // pa.db stores former Postgres array/json columns as TEXT (the Pg→SQLite
@@ -190,4 +190,23 @@ export function blockingTaskQuery(blockingId) {
     },
     enabled: !!blockingId,
   };
+}
+
+/**
+ * Write a task's status to the local pa.db via `host.dbExec` (write-path WP).
+ * `completed_at` is set to now when moving to `completed` and cleared to NULL
+ * otherwise, so a non-completed task never carries a stale completion stamp.
+ * The host scopes this write to the pkg's declared `sqlite.tables` (`tasks`).
+ *
+ * @param {string} taskId
+ * @param {TaskStatus} status
+ * @returns {Promise<void>}
+ */
+export async function updateTaskStatus(taskId, status) {
+  const completedAt = status === 'completed' ? new Date().toISOString() : null;
+  await hostDbExec('UPDATE tasks SET status = ?, completed_at = ? WHERE id = ?', [
+    status,
+    completedAt,
+    taskId,
+  ]);
 }

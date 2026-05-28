@@ -1,9 +1,10 @@
-// Tasks root — bridge → supabase → mount <TasksView/>.
+// Tasks root — bridge → mount <TasksView/>.
 //
 // Single-feature app (unlike Suite, no feature registry / sidebar router). The
 // source main.tsx mounts TasksView directly inside a QueryClientProvider; we
-// mirror that. Standalone mode reads Supabase keys from the query string so the
-// pkg is previewable outside the shell.
+// mirror that. All data flows through the host bridge (host.dbQuery reads /
+// host.dbExec writes) — there is no supabase-js client, so standalone (no
+// parent shell) has no data backend and queries will surface a bridge error.
 
 import {
   html,
@@ -14,7 +15,6 @@ import {
   QueryClientProvider,
 } from './lib/ui.js';
 import { connectBridge, isStandalone } from './lib/bridge.js';
-import { setSupabaseConfig, hasSupabase } from './lib/supabase.js';
 import { TasksView } from './features/tasks/tasks-view.js';
 import tokensCss from './lib/tokens-css.js';
 import tasksCss from './lib/tasks-css.js';
@@ -143,44 +143,26 @@ function App() {
   const [bridgeError, setBridgeError] = useState(null);
   // Active side-menu item (shell PkgMode → hostContext.royaltiSuite.activeFeature).
   const [activeFeature, setActiveFeature] = useState(null);
-  // Bump to force a re-render once Supabase config lands (so hasSupabase()
-  // flips from false → true and the view mounts).
-  const [, setSbTick] = useState(0);
-  const bumpSb = () => setSbTick((n) => n + 1);
 
   useEffect(() => {
     if (isStandalone()) {
-      // Standalone dev — read keys from query string for quick iteration:
-      // ?url=https://xxx.supabase.co&anon_key=eyJ...
-      const params = new URLSearchParams(location.search);
-      const url = params.get('url');
-      const anonKey = params.get('anon_key');
-      if (url && anonKey) {
-        setSupabaseConfig({ url, anonKey });
-        bumpSb();
-      }
+      // Standalone dev — no parent shell, so no host bridge and no data
+      // backend. The view still mounts (themed first paint); data queries will
+      // surface a bridge error. Mount the pkg inside the shell for live data.
       setBridgeReady(true);
       return;
     }
-    // Bridge is for Supabase config + dispatch only — theme is handled by the
-    // parent-<html> mirror above, independent of the AppBridge context.
+    // Bridge carries dispatch + activeFeature only — theme is handled by the
+    // parent-<html> mirror above, and data flows through host.dbQuery/dbExec.
     connectBridge({
       name: 'Tasks',
-      version: '0.2.0',
+      version: '0.3.0',
       onContextChange: (ctx) => {
-        if (ctx?.supabase) {
-          setSupabaseConfig(ctx.supabase);
-          bumpSb();
-        }
         const af = ctx?.royaltiSuite?.activeFeature;
         if (typeof af === 'string') setActiveFeature(af);
       },
     })
       .then((ctx) => {
-        if (ctx?.supabase) {
-          setSupabaseConfig(ctx.supabase);
-          bumpSb();
-        }
         const af = ctx?.royaltiSuite?.activeFeature;
         if (typeof af === 'string') setActiveFeature(af);
         // The side menu is published by TasksView once it mounts (it owns the
@@ -195,14 +177,6 @@ function App() {
   }
   if (!bridgeReady) {
     return html`<div style=${{ padding: '2rem', color: 'var(--fg-muted)' }}>Connecting…</div>`;
-  }
-  if (!hasSupabase()) {
-    return html`
-      <div style=${{ padding: '2rem', color: 'var(--fg-muted)' }}>
-        <p>Supabase not configured.</p>
-        <p>In standalone mode, pass <code>?url=…&amp;anon_key=…</code>. Inside the shell, ensure the vault has Supabase keys.</p>
-      </div>
-    `;
   }
 
   return html`<${QueryClientProvider} client=${queryClient}><${TasksView} activeFeature=${activeFeature} /></${QueryClientProvider}>`;

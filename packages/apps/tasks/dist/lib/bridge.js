@@ -33,7 +33,8 @@ export async function connectBridge({ name, version, onContextChange }) {
 
   app.onerror = (err) => console.error('[tasks] bridge error', err);
   // Theme is NOT applied here — app.js mirrors it from the parent <html>.
-  // We still forward context so live Supabase/auth updates reach the app.
+  // We still forward context so live activeFeature (side-menu) updates reach
+  // the app; data flows through host.dbQuery/dbExec, not the context payload.
   app.onhostcontextchanged = (ctx) => {
     onContextChange?.(ctx);
   };
@@ -127,6 +128,28 @@ export async function hostDbQuery(sql, params = []) {
     throw new Error(sc?.error ?? res?.content?.[0]?.text ?? 'host.dbQuery failed');
   }
   return Array.isArray(sc.rows) ? sc.rows : [];
+}
+
+/**
+ * Write to the local `pa.db` via the host's `host.dbExec` verb (write-path WP).
+ * INSERT/UPDATE/DELETE only — the shell rejects reads/DDL, gates on the pkg
+ * declaring `capabilities.sqlite`, and scopes the target table to the pkg's
+ * declared `permissions['sqlite.tables']`. Resolves on success; throws on a
+ * closed/failed bridge so callers can surface the error in the mutation layer.
+ *
+ *   sql:    string         — a single INSERT/UPDATE/DELETE statement with `?` params
+ *   params: SqlValue[]      — positional bind values
+ */
+export async function hostDbExec(sql, params = []) {
+  if (!app) throw new Error('[tasks] bridge not connected — db_exec unavailable');
+  const res = await app.callServerTool({
+    name: 'host.dbExec',
+    arguments: { sql, params },
+  });
+  const sc = res?.structuredContent;
+  if (!sc || sc.ok !== true) {
+    throw new Error(sc?.error ?? res?.content?.[0]?.text ?? 'host.dbExec failed');
+  }
 }
 
 /** Read the current hostContext snapshot. */
