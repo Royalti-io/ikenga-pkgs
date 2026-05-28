@@ -13,7 +13,7 @@
 
 ## What it does
 
-1. **Locate the target folder.** Accept it as an argument (`groundwork init plans/my-feature/`) or, if absent, ask the user.
+1. **Locate the target folder.** Accept it as an argument (`groundwork init plans/my-feature/`) or, if absent, ask the user. When you **derive** a default folder (the user gave a goal but no path), date-prefix the slug: `plans/<today>-<slug>/` where `<today>` is the current UTC date as `YYYY-MM-DD` (e.g. `plans/2026-05-28-checkout-redesign/`). This keeps sibling plans chronologically sortable, matching the `YYYY-MM-DD-slug` convention used elsewhere in the workspace. An **explicit** path passed by the user is used verbatim — never rewrite or re-date a path the user typed.
 2. **Query project memory for similar prior plans** *(G5 — composition with project memory)*. If a project-memory MCP is available (mempalace is the reference implementation; any equivalent KG/semantic-search server works the same way), derive the project root (parent of the target plan folder, or its grandparent — whichever is a git root). Then, using mempalace's tools as the concrete example:
    - `mempalace_kg_query({ entity: <project-root-path> })` — walk triples for facts like `(<root>, has_plan, <slug>)` or `(<root>, last_profile, software)`.
    - `mempalace_search({ query: '<project-root> plan' })` — semantic hits for prior plan structures + lessons.
@@ -39,7 +39,7 @@ Use `AskUserQuestion`. Skip any question already answered.
 
 | # | Question | Header | Options |
 |---|---|---|---|
-| 1 | Where should this plan live? | Target folder | (free-text, default `plans/<derived-from-goal>/`) |
+| 1 | Where should this plan live? | Target folder | (free-text, default `plans/<today>-<derived-from-goal>/` — date-prefixed `YYYY-MM-DD-slug`, see step 1) |
 | 2 | What's the one-sentence goal? | Goal | (free-text) |
 | 3 | Which profile? | Profile | `software` (Recommended) — code/feature work, produces designs · `general` — non-code, lean, no designs · `content` — editorial/marketing work, produces designs (key art) · _or a custom profile name dropped under `.claude/skills/groundwork/profiles/<name>/` — the conformance gate in `../lib/state.md` §"Profile contract" validates it before scaffolding_ |
 | 4 | Will this produce visual / UX surfaces? | Visual? | Yes (Recommended for `software` if UI is involved) · No (skips the `design` action) |
@@ -143,7 +143,7 @@ Scaffold a new groundwork plan folder at `{target_folder}`.
 
 Profile: {profile} (one of: software, general, content). Goal: {goal}.
 
-If the groundwork skill is loaded in this session, follow its `init` action — read `.claude/skills/groundwork/actions/init.md`, run the discovery interview (skipping questions already answered above), and scaffold the spine. If the skill is not loaded, treat this as a plain instruction: create the folder, write the standard 6-doc spine (00-README through 05-tracking) plus an empty `.groundwork.json` anchored at `spine_version: "1"` with the profile and goal, and report back the file list.
+If the groundwork skill is loaded in this session, follow its `init` action — read `.claude/skills/groundwork/actions/init.md`, run the discovery interview (skipping questions already answered above), and scaffold the spine. If the skill is not loaded, treat this as a plain instruction: create the folder, write the standard 6-doc spine (00-README through 05-tracking), the living-spec artifact (`artifact/index.html` + `artifact/manifest.json`), and an empty `.groundwork.json` anchored at `spine_version: "1"` with the profile and goal, and report back the file list.
 
 Do NOT scaffold outside `{target_folder}`. Preserve any existing files there as hand-authored.
 ```

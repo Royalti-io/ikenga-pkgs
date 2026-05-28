@@ -278,10 +278,13 @@ def render_template(text: str, subs: dict) -> str:
 
 def build_subs(profile: dict, goal: str, plan_slug: str, extra: dict | None = None) -> dict:
     labels = profile.get("labels", {})
-    # Default display title from the slug: "my-feature" → "My-feature".
+    # Default display title from the slug: "my-feature" → "My-feature". A leading
+    # YYYY-MM-DD- date prefix is stripped first, so a date-stamped folder
+    # (plans/2026-05-28-my-feature/) yields "my-feature", not the dated slug.
     # The artifact init renders {{plan_title}} into <h1>; hand-edit afterwards if you
     # want a different display string (e.g. lowercase project codename).
-    plan_title = plan_slug if plan_slug else "plan"
+    title_src = re.sub(r"^\d{4}-\d{2}-\d{2}-", "", plan_slug) if plan_slug else ""
+    plan_title = title_src or "plan"
     subs = {
         "date": _today(),
         "goal": goal,
