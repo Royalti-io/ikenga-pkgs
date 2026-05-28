@@ -8,8 +8,10 @@ import { html, cn, Icon, Button, useState, useMemo, useEffect, useQuery } from '
 import { hostDbQuery, hostSendToActiveSession, isStandalone, setMenu } from '../../lib/bridge.js';
 import { queryKeys } from '../../lib/query-keys.js';
 import { TASKS_LIST_COLUMNS, triageCountsQuery } from '../../lib/queries.js';
+import { CURRENT_USER } from '../../lib/assignees.js';
 import { groupTasks } from '../../lib/shared.js';
 import { TaskRow } from './task-row.js';
+import { CreateTaskForm } from './create-task-form.js';
 import { TaskDetailPane } from './task-detail-pane.js';
 import { AgendaView } from './agenda-view.js';
 import { TriageView } from './triage-view.js';
@@ -77,9 +79,8 @@ const VIEW_STORAGE_KEY = 'ikenga-tasks-view';
 // Owner-filter identities. The sidebar "By owner" facet and the in-pane Owner
 // dropdown MUST agree on these values, or selecting one won't reflect in the
 // other (and "Me" filtered to a different person than the sidebar did).
-// TODO(hello@royalti.io): thread CURRENT_USER from hostContext.royaltiAuth once
-// it carries the user email; hardcoded to the active account for now.
-const CURRENT_USER = 'hello@royalti.io';
+// CURRENT_USER is imported from lib/assignees.js (the one place that literal
+// lives, shared with the create form + reassign picker).
 // Sentinel for "any agent" — the query maps it to assignee_type='agent' rather
 // than a literal assigned_to (agents aren't a single owner id).
 const OWNER_AGENTS = '__agents__';
@@ -361,16 +362,20 @@ export function TasksView({ activeFeature } = {}) {
 
   const filterActive = !!statusFilter || !!ownerFilter || !!categoryFilter || !!search.trim();
 
-  const [creating, setCreating] = useState(false);
+  // Inline create-form visibility. The primary "New task" button toggles this;
+  // the form INSERTs directly via host.dbExec (createTask write helper).
+  const [showCreate, setShowCreate] = useState(false);
 
-  // Create = dispatch, NOT anon insert. Anon RLS on `tasks` only grants UPDATE
-  // of status/completed_at — never INSERT — so a new task cannot be written
-  // client-side. Instead we seed a user turn into the shell's active Claude
-  // session (host.sendToActiveSession); the agent creates the task via its
-  // privileged path. Disabled in standalone (no host to dispatch to).
-  async function createTask() {
-    if (creating || isStandalone()) return;
-    setCreating(true);
+  const [dispatching, setDispatching] = useState(false);
+
+  // Secondary path: "send to your Chi" — seed a user turn into the shell's
+  // active Claude session so the agent creates the task conversationally. This
+  // used to be the ONLY create path (anon RLS blocked client-side INSERT); now
+  // that host.dbExec permits a real INSERT it's kept as the natural-language
+  // alternative alongside the direct form. Disabled in standalone (no host).
+  async function dispatchToChi() {
+    if (dispatching || isStandalone()) return;
+    setDispatching(true);
     try {
       await hostSendToActiveSession(
         'Create a new task. Ask me for the title, owner, priority, and due date, then add it to the tasks table.',
@@ -378,7 +383,7 @@ export function TasksView({ activeFeature } = {}) {
     } catch (e) {
       console.warn('[tasks] create dispatch failed', e);
     } finally {
-      setCreating(false);
+      setDispatching(false);
     }
   }
 
@@ -406,17 +411,28 @@ export function TasksView({ activeFeature } = {}) {
           </div>
           <div style=${{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <${Button}
+              variant="outline"
               size="sm"
               type="button"
-              disabled=${creating || isStandalone()}
-              title=${isStandalone() ? 'Dispatch unavailable in standalone preview' : 'Dispatch a task to your Chi'}
-              onClick=${createTask}
+              disabled=${dispatching || isStandalone()}
+              title=${isStandalone() ? 'Dispatch unavailable in standalone preview' : 'Hand the task off to your Chi to create conversationally'}
+              onClick=${dispatchToChi}
             >
-              <${Icon} name=${creating ? 'loader' : 'plus'} size=${12} className=${creating ? 'tk-spin' : undefined} />
-              ${creating ? 'Dispatching…' : 'New task'}
+              <${Icon} name=${dispatching ? 'loader' : 'terminal'} size=${12} className=${dispatching ? 'tk-spin' : undefined} />
+              ${dispatching ? 'Dispatching…' : 'Send to your Chi'}
+            </${Button}>
+            <${Button}
+              size="sm"
+              type="button"
+              onClick=${() => setShowCreate((v) => !v)}
+            >
+              <${Icon} name=${showCreate ? 'check-square' : 'plus'} size=${12} />
+              New task
             </${Button}>
           </div>
         </div>
+
+        ${showCreate && html`<${CreateTaskForm} onClose=${() => setShowCreate(false)} />`}
 
         ${view === 'agenda' && html`<${AgendaView} tasks=${data ?? []} filterActive=${filterActive} />`}
         ${view === 'triage' && html`<${TriageView} listTasks=${data ?? []} />`}

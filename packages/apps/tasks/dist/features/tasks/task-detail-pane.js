@@ -5,6 +5,7 @@ import {
   cn,
   Icon,
   Button,
+  useState,
   useQuery,
   useMutation,
   useQueryClient,
@@ -12,10 +13,12 @@ import {
 import { queryKeys } from '../../lib/query-keys.js';
 import {
   blockingTaskQuery,
+  reassignTask,
   subtasksQuery,
   taskDetailQuery,
   updateTaskStatus,
 } from '../../lib/queries.js';
+import { assigneeOptions } from '../../lib/assignees.js';
 import {
   assigneeIsAgent,
   autoCloseSignal,
@@ -53,6 +56,23 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
     },
     onSuccess: () =>
       void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all }),
+  });
+
+  // Reassign — toggled open by the head's Reassign button (was dead until now).
+  const [reassignOpen, setReassignOpen] = useState(false);
+  const reassign = useMutation({
+    /** @param {string} value picked assigned_to ('' = unassign) */
+    mutationFn: async (value) => {
+      const picked = assigneeOptions().find((o) => o.value === value);
+      await reassignTask(taskId, value || null, picked ? picked.type : null);
+    },
+    onSuccess: () => {
+      // tasks.all covers every list view (assigned_to is shown across them);
+      // detail covers this pane's own query.
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.detail(taskId) });
+      setReassignOpen(false);
+    },
   });
 
   if (isLoading) {
@@ -98,7 +118,12 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
           ${density === 'full' && html`
             <div class="tk-det-actions">
               <${Button} variant="outline" size="sm" type="button">Reschedule</${Button}>
-              <${Button} variant="outline" size="sm" type="button">Reassign</${Button}>
+              <${Button}
+                variant=${reassignOpen ? 'default' : 'outline'}
+                size="sm"
+                type="button"
+                onClick=${() => setReassignOpen((v) => !v)}
+              >Reassign</${Button}>
               <${Button}
                 size="sm"
                 type="button"
@@ -110,6 +135,59 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
             </div>
           `}
         </div>
+
+        ${density === 'full' && reassignOpen && html`
+          <div
+            style=${{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              marginTop: 8,
+              padding: '8px 10px',
+              background: 'var(--bg-sunken)',
+              border: '1px solid var(--border-soft)',
+              borderRadius: 'var(--radius-sm)',
+            }}
+          >
+            <span
+              style=${{
+                fontFamily: 'var(--font-mono)',
+                fontSize: 10.5,
+                color: 'var(--fg-faint)',
+                letterSpacing: '0.06em',
+                textTransform: 'uppercase',
+              }}
+            >Assign to</span>
+            <select
+              value=${task.assigned_to ?? ''}
+              disabled=${reassign.isPending}
+              onChange=${(e) => reassign.mutate(e.target.value)}
+              style=${{
+                height: 26,
+                fontSize: 11.5,
+                padding: '0 6px',
+                background: 'var(--bg-base)',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius-xs)',
+                color: 'var(--fg)',
+                fontFamily: 'inherit',
+              }}
+            >
+              <option value="">Unassigned</option>
+              ${task.assigned_to && !assigneeOptions().some((o) => o.value === task.assigned_to) &&
+                html`<option value=${task.assigned_to}>${task.assigned_to} (current)</option>`}
+              ${assigneeOptions().map(
+                (o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`,
+              )}
+            </select>
+            ${reassign.isPending && html`<${Icon} name="loader" size=${12} className="tk-spin" />`}
+            ${reassign.isError && html`
+              <span style=${{ color: 'var(--danger)', fontSize: 11 }}>
+                ${(/** @type {Error} */ (reassign.error)).message}
+              </span>
+            `}
+          </div>
+        `}
 
         <h2 class="tk-det-title">${task.title}</h2>
 
