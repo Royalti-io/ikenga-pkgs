@@ -74,6 +74,16 @@ function buildTasksMenu(view, activeFilter, triageBadge) {
 
 const VIEW_STORAGE_KEY = 'ikenga-tasks-view';
 
+// Owner-filter identities. The sidebar "By owner" facet and the in-pane Owner
+// dropdown MUST agree on these values, or selecting one won't reflect in the
+// other (and "Me" filtered to a different person than the sidebar did).
+// TODO(hello@royalti.io): thread CURRENT_USER from hostContext.royaltiAuth once
+// it carries the user email; hardcoded to the active account for now.
+const CURRENT_USER = 'hello@royalti.io';
+// Sentinel for "any agent" — the query maps it to assignee_type='agent' rather
+// than a literal assigned_to (agents aren't a single owner id).
+const OWNER_AGENTS = '__agents__';
+
 // Display names for the slim header — the bar reflects the active view (the
 // sidebar already says "Tasks", so the in-pane bar holds context + action, not
 // the domain name). See the header block in the render.
@@ -215,9 +225,7 @@ export function TasksView({ activeFeature } = {}) {
       setView('tasks');
       setActiveFilter(activeFeature);
       const who = activeFeature.slice(2);
-      // TODO(hello@royalti.io): wire `o:agents` to assignee_type='agent' once
-      // the query layer takes a structured filter, not just a string.
-      setOwnerFilter(who === 'me' ? 'hello@royalti.io' : '');
+      setOwnerFilter(who === 'me' ? CURRENT_USER : who === 'agents' ? OWNER_AGENTS : '');
       return;
     }
   }, [activeFeature]);
@@ -226,6 +234,43 @@ export function TasksView({ activeFeature } = {}) {
   // view's stat cards), correct independent of the list filter + 200-row cap.
   const { data: triageCounts } = useQuery(triageCountsQuery());
   const triageBadge = triageCounts ? triageCounts.needsAttention : null;
+
+  // Distinct categories straight from the table (NOT from the filtered list, or
+  // the option set would collapse to the active filter). Drives the Category
+  // dropdown so it lists real values + always reflects the sidebar's domain pick.
+  const { data: categoryRows } = useQuery({
+    queryKey: queryKeys.tasks.list('distinct-categories'),
+    queryFn: async () => {
+      const rows = await hostDbQuery(
+        "SELECT DISTINCT category FROM tasks WHERE category IS NOT NULL AND category <> '' ORDER BY category",
+        [],
+      );
+      return /** @type {{ category: string }[]} */ (rows);
+    },
+  });
+  const categoryOptions = useMemo(() => {
+    const set = new Set((categoryRows ?? []).map((r) => r.category));
+    if (categoryFilter) set.add(categoryFilter); // ensure the active pick is selectable
+    return Array.from(set).sort();
+  }, [categoryRows, categoryFilter]);
+
+  // Imperatively reflect filter state onto the native <select>s. Preact's
+  // controlled `value` doesn't re-apply on external (sidebar-driven) changes in
+  // this htm build, so we set each select's .value after render. Runs after the
+  // filterbar exists (view==='tasks') and whenever a filter or the option set
+  // changes.
+  useEffect(() => {
+    if (view !== 'tasks') return;
+    const fb = document.querySelector('.tk-filterbar');
+    if (!fb) return;
+    const set = (name, val) => {
+      const el = fb.querySelector(`select[data-filter="${name}"]`);
+      if (el && el.value !== val) el.value = val;
+    };
+    set('status', statusFilter);
+    set('owner', ownerFilter);
+    set('category', categoryFilter);
+  }, [view, statusFilter, ownerFilter, categoryFilter, categoryOptions]);
 
   // Publish (and keep refreshing) the shell side-menu. Re-sends whenever the
   // view, the active filter, or the triage badge changes so the sidebar's
@@ -262,7 +307,9 @@ export function TasksView({ activeFeature } = {}) {
       } else {
         where.push("status IN ('pending','in_progress','blocked')");
       }
-      if (ownerFilter) {
+      if (ownerFilter === OWNER_AGENTS) {
+        where.push("assignee_type = 'agent'");
+      } else if (ownerFilter) {
         where.push('assigned_to = ?');
         params.push(ownerFilter);
       }
@@ -388,33 +435,26 @@ export function TasksView({ activeFeature } = {}) {
               />
             </div>
             <span class="label">Status</span>
+            ${/* Preact's controlled <select value> doesn't re-apply its value on
+                  an externally-driven state change in this htm build (the option
+                  display lags the real filter), so the actual selection is synced
+                  imperatively by data-filter in the effect below. */ ''}
             <select
-              value=${statusFilter}
+              data-filter="status"
               onChange=${(e) => setStatusFilter(/** @type {'' | TaskStatus} */ (e.target.value))}
             >
               ${STATUS_OPTIONS.map((o) => html`<option key=${o.value} value=${o.value}>${o.label}</option>`)}
             </select>
             <span class="label">Owner</span>
-            <select value=${ownerFilter} onChange=${(e) => setOwnerFilter(e.target.value)}>
+            <select data-filter="owner" onChange=${(e) => setOwnerFilter(e.target.value)}>
               <option value="">Anyone</option>
-              <option value="nedjamez">Me</option>
-              <option value="cfo-agent">cfo-agent</option>
-              <option value="cmo-agent">cmo-agent</option>
-              <option value="cto-agent">cto-agent</option>
-              <option value="cpo-agent">cpo-agent</option>
-              <option value="vp-sales-agent">vp-sales-agent</option>
-              <option value="blog-writer">blog-writer</option>
+              <option value=${CURRENT_USER}>Me</option>
+              <option value=${OWNER_AGENTS}>Agents</option>
             </select>
             <span class="label">Category</span>
-            <select value=${categoryFilter} onChange=${(e) => setCategoryFilter(e.target.value)}>
+            <select data-filter="category" onChange=${(e) => setCategoryFilter(e.target.value)}>
               <option value="">All</option>
-              <option value="sales">sales</option>
-              <option value="finance">finance</option>
-              <option value="marketing">marketing</option>
-              <option value="technical">technical</option>
-              <option value="product">product</option>
-              <option value="communication">communication</option>
-              <option value="operations">operations</option>
+              ${categoryOptions.map((c) => html`<option key=${c} value=${c}>${c}</option>`)}
             </select>
             <button
               type="button"
