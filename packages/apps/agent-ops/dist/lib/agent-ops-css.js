@@ -37,6 +37,12 @@ export default `
 .ao-panebar .sub { font-size: 11px; color: var(--fg-muted); }
 .ao-spacer { flex: 1; }
 
+.ao-loading {
+  font-size: 11px; color: var(--fg-muted); font-family: var(--font-mono);
+  margin-right: 10px; opacity: .85; animation: ao-pulse 1.2s ease-in-out infinite;
+}
+@keyframes ao-pulse { 0%,100% { opacity: .4; } 50% { opacity: .9; } }
+
 .ao-pill {
   display: inline-flex;
   align-items: center;

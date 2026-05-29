@@ -720,6 +720,7 @@ export function ScheduleView({ activeFeature, bridgeReady = true } = {}) {
         <h1>Schedule</h1>
         <span class="sub">next 12h · all ${data.jobs.length + data.external.length} jobs</span>
         <span class="ao-spacer"></span>
+        ${dataLoading && html`<span class="ao-loading" title="loading live data from ikenga.db">loading live…</span>`}
         <span class=${cn('ao-pill', daemonUp ? 'up' : 'down')}>
           <span class="ao-dot"></span>
           ${daemonUp
