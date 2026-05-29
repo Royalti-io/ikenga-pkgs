@@ -173,7 +173,7 @@ function App() {
     return html`<div style=${{ padding: '2rem', color: 'var(--fg-muted)' }}>Connecting…</div>`;
   }
 
-  return html`<${QueryClientProvider} client=${queryClient}><${ScheduleView} activeFeature=${activeFeature} /></${QueryClientProvider}>`;
+  return html`<${QueryClientProvider} client=${queryClient}><${ScheduleView} activeFeature=${activeFeature} bridgeReady=${bridgeReady} /></${QueryClientProvider}>`;
 }
 
 createRoot(document.getElementById('root')).render(html`<${App} />`);

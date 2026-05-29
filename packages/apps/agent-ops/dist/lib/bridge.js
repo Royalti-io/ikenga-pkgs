@@ -136,6 +136,31 @@ export function getContext() {
   return app?.getHostContext() ?? null;
 }
 
+/**
+ * List all configured cron jobs + their runtime state via the shell's
+ * host.agentOps.listJobs verb (WP-09 adds this host-side; we call it here).
+ *
+ * Returns the structuredContent payload directly:
+ *   { ok: true,  daemon_up, daemon_pid, jobs: RawJob[] }
+ * | { ok: false, error: string }
+ *
+ * Throws if the bridge is not connected (caller should handle).
+ */
+export async function hostAgentOpsListJobs() {
+  if (!app) throw new Error('[agent-ops] bridge not connected — agentOps.listJobs unavailable');
+  const res = await app.callServerTool({
+    name: 'host.agentOps.listJobs',
+    arguments: {},
+  });
+  const sc = res?.structuredContent;
+  if (!sc) {
+    throw new Error(res?.content?.[0]?.text ?? 'host.agentOps.listJobs returned no structuredContent');
+  }
+  // ok:false is a valid application-level response (daemon down, etc.); return it
+  // so the query layer can handle gracefully rather than throwing.
+  return sc;
+}
+
 /** Detect standalone-dev (no parent shell). */
 export function isStandalone() {
   return typeof window !== 'undefined' && window.parent === window;

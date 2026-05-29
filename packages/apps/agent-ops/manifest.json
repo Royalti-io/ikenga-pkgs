@@ -32,7 +32,8 @@
   },
 
   "capabilities": {
-    "sqlite": { "db": "ikenga.local" }
+    "sqlite": { "db": "ikenga.local" },
+    "agentOps": {}
   },
 
   "permissions": {

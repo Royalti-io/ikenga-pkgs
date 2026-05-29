@@ -14,6 +14,7 @@
 import { html, cn, Icon, Button, useState, useMemo, useEffect } from '../../lib/ui.js';
 import { isStandalone, setMenu } from '../../lib/bridge.js';
 import { FIXTURE, isJobView } from '../../lib/view-model.js';
+import { loadScheduleData } from '../../lib/queries.js';
 
 // ── side-menu model ──────────────────────────────────────────────────────────
 // Views section.
@@ -621,20 +622,46 @@ function LivePlaceholder() {
 
 // ── Root export ──────────────────────────────────────────────────────────────
 
-/** @param {{ activeFeature?: string|null }} props */
-export function ScheduleView({ activeFeature } = {}) {
+/** @param {{ activeFeature?: string|null, bridgeReady?: boolean }} props */
+export function ScheduleView({ activeFeature, bridgeReady = true } = {}) {
   const [view, setView] = useState(loadView);
   const [activeFilter, setActiveFilter] = useState('f:all');
 
-  // WP-08: replace FIXTURE with hostDbQuery(...) to load live ScheduleData from pa.db.
-  // The query would call hostDbQuery on cron_job_runs + agent_runs, build JobView
-  // rows by joining with jobs-state.json (via a host.dbQuery that the shell resolves),
-  // and return the shaped ScheduleData. For WP-07 we render FIXTURE directly.
-  const data = FIXTURE; // WP-08: replace FIXTURE with hostDbQuery(...)
+  // WP-08: live data load. Initial paint uses FIXTURE (immediate, no flash).
+  // Once the bridge is available, loadScheduleData() fetches from pa.db via
+  // host.agentOps.listJobs + host.dbQuery. Standalone dev keeps FIXTURE.
+  /** @type {[import('../../lib/view-model.js').ScheduleData, Function]} */
+  const [data, setData] = useState(FIXTURE);
+  const [dataLoading, setDataLoading] = useState(!isStandalone());
 
-  // Validate fixture shape in dev (the DoD check). Remove in production.
+  useEffect(() => {
+    if (isStandalone()) {
+      // No bridge in standalone dev — keep FIXTURE so the view renders.
+      return;
+    }
+    let cancelled = false;
+    setDataLoading(true);
+    loadScheduleData()
+      .then((sd) => {
+        if (!cancelled) {
+          setData(sd);
+          setDataLoading(false);
+        }
+      })
+      .catch((err) => {
+        // loadScheduleData never throws, but guard defensively.
+        console.warn('[agent-ops] ScheduleView: unexpected loadScheduleData error', err);
+        if (!cancelled) setDataLoading(false);
+      });
+    return () => { cancelled = true; };
+  // Reload when bridgeReady flips true (app.js tells us bridge is up).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bridgeReady]);
+
+  // Dev-time shape validation (dropped in prod builds — there are none since
+  // this is a no-build pkg, but the cost is negligible).
   if (data.jobs.length > 0 && !isJobView(data.jobs[0])) {
-    console.warn('[agent-ops] FIXTURE jobs[0] failed isJobView validation');
+    console.warn('[agent-ops] data.jobs[0] failed isJobView validation');
   }
 
   const [runNowJob, setRunNowJob] = useState(/** @type {import('../../lib/view-model.js').JobView|null} */ (null));
