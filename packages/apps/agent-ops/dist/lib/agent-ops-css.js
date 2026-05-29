@@ -573,4 +573,32 @@ tr:focus-within .ao-ctrls { opacity: 1; }
 .ao-btn:focus-visible,
 .ao-tl-row:focus-visible,
 .ao-tog:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
+
+/* ============ TOAST (WP-12) ============ */
+.ao-toast {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 50;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-radius: var(--r, 7px);
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: var(--shadow-3, 0 4px 16px rgba(0,0,0,.18));
+  white-space: nowrap;
+  pointer-events: none;
+  animation: ao-toast-in .18s ease-out forwards;
+}
+.ao-toast.ok { border-color: var(--systemic); color: var(--systemic); }
+.ao-toast.err { border-color: var(--danger); color: var(--danger); background: var(--danger-soft, var(--bg-raised)); }
+@keyframes ao-toast-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(6px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
 `;

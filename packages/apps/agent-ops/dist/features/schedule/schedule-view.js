@@ -11,8 +11,8 @@
 // identical: VIEW_ITEMS / FILTER_ITEMS / buildMenu / publish useEffect /
 // activeFeature dispatch useEffect.
 
-import { html, cn, Icon, Button, useState, useMemo, useEffect } from '../../lib/ui.js';
-import { isStandalone, setMenu } from '../../lib/bridge.js';
+import { html, cn, Icon, Button, useState, useMemo, useEffect, useRef } from '../../lib/ui.js';
+import { isStandalone, setMenu, hostAgentOpsRunNow, hostAgentOpsSetEnabled } from '../../lib/bridge.js';
 import { FIXTURE, isJobView } from '../../lib/view-model.js';
 import { loadScheduleData } from '../../lib/queries.js';
 import { RunsView } from '../runs/runs-view.js';
@@ -359,9 +359,10 @@ function RunNowModal({ job, onCancel, onConfirm }) {
  *   job: import('../../lib/view-model.js').JobView,
  *   daemonUp: boolean,
  *   onRunNow: (job: import('../../lib/view-model.js').JobView) => void,
+ *   onToggleEnabled: (job: import('../../lib/view-model.js').JobView) => void,
  * }} props
  */
-function JobRow({ job, daemonUp, onRunNow }) {
+function JobRow({ job, daemonUp, onRunNow, onToggleEnabled }) {
   const badge = healthBadge(job);
   const bars = buildBars(job.last_runs, null);
   const nextLabel = job.next_run_at_ms != null
@@ -375,9 +376,9 @@ function JobRow({ job, daemonUp, onRunNow }) {
           class=${cn('ao-tog', !job.enabled && 'off')}
           role="switch"
           aria-checked=${String(job.enabled)}
-          aria-label=${`${job.id} ${job.enabled ? 'enabled' : 'disabled'}`}
-          disabled=${!daemonUp || true}
-          title="Toggle requires WP-09"
+          aria-label=${`${job.id} ${job.enabled ? 'enabled — click to disable' : 'disabled — click to enable'}`}
+          title=${job.enabled ? 'Disable job' : 'Enable job'}
+          onClick=${() => onToggleEnabled(job)}
         ></button>
       </td>
       <td>
@@ -431,13 +432,6 @@ function JobRow({ job, daemonUp, onRunNow }) {
               onClick=${() => daemonUp && onRunNow(job)}
             >▶ run</button>
           `}
-          ${!job.enabled && html`
-            <button
-              class="ao-btn sz-sm"
-              disabled=${!daemonUp || true}
-              title="Enable requires WP-09"
-            >enable</button>
-          `}
           <button class="ao-btn sz-sm" title="View logs — WP-11">log</button>
         </div>
       </td>
@@ -485,9 +479,9 @@ function ExtRow({ ext }) {
  * Schedule view — KPI strip + 12h timeline + job table.
  * Renders FIXTURE for WP-07. WP-08 replaces FIXTURE with live pa.db reads.
  *
- * @param {{ daemonUp: boolean, daemonPid: number|null, data: import('../../lib/view-model.js').ScheduleData, activeFilter: string, onRunNow: (job: any) => void }} props
+ * @param {{ daemonUp: boolean, daemonPid: number|null, data: import('../../lib/view-model.js').ScheduleData, activeFilter: string, onRunNow: (job: any) => void, onToggleEnabled: (job: any) => void }} props
  */
-function ScheduleContent({ daemonUp, daemonPid, data, activeFilter, onRunNow }) {
+function ScheduleContent({ daemonUp, daemonPid, data, activeFilter, onRunNow, onToggleEnabled }) {
   const { jobs, external, summary } = data;
 
   // Apply filter from activeFilter.
@@ -565,6 +559,7 @@ function ScheduleContent({ daemonUp, daemonPid, data, activeFilter, onRunNow }) 
               job=${job}
               daemonUp=${daemonUp}
               onRunNow=${onRunNow}
+              onToggleEnabled=${onToggleEnabled}
             />
           `)}
           ${showExt && external.length > 0 && html`
@@ -651,6 +646,22 @@ export function ScheduleView({ activeFeature, bridgeReady = true } = {}) {
 
   const [runNowJob, setRunNowJob] = useState(/** @type {import('../../lib/view-model.js').JobView|null} */ (null));
 
+  /** @type {[{kind:'ok'|'err', msg:string}|null, Function]} */
+  const [toast, setToast] = useState(null);
+  /** @type {{ current: ReturnType<typeof setTimeout>|null }} */
+  const toastTimerRef = useRef(null);
+
+  /**
+   * Show a transient toast message. Auto-clears after 3.5s.
+   * @param {'ok'|'err'} kind
+   * @param {string} msg
+   */
+  function showToast(kind, msg) {
+    setToast({ kind, msg });
+    if (toastTimerRef.current != null) clearTimeout(toastTimerRef.current);
+    toastTimerRef.current = setTimeout(() => setToast(null), 3500);
+  }
+
   /** @param {AgentOpsView} v */
   function changeView(v) {
     setView(v);
@@ -693,10 +704,80 @@ export function ScheduleView({ activeFeature, bridgeReady = true } = {}) {
   function handleRunNow(job) {
     setRunNowJob(job);
   }
-  function handleRunConfirm(job) {
+
+  /**
+   * Map a host agentOps error code to a friendly user-facing message.
+   * @param {string|undefined} code
+   * @param {string|undefined} error
+   */
+  function runNowErrorMsg(code, error) {
+    switch (code) {
+      case 'daemon_down': return 'daemon busy — try again shortly';
+      case 'disabled':    return 'job is disabled';
+      case 'unauthorized':
+      case 'forbidden':   return 'not authorized';
+      case 'not_found':   return `job not found: ${error ?? code}`;
+      default:            return error ?? code ?? 'unknown error';
+    }
+  }
+
+  /** @param {import('../../lib/view-model.js').JobView} job */
+  async function handleRunConfirm(job) {
     setRunNowJob(null);
-    // WP-09: dispatch run-now via host tool (host.agentOpsRunNow or hostSendToActiveSession)
-    console.info('[agent-ops] run-now confirmed for', job.id, '(WP-09: not yet wired)');
+    try {
+      const res = await hostAgentOpsRunNow(job.id);
+      if (res && res.ok === true) {
+        showToast('ok', `triggered ${job.id}`);
+        loadScheduleData().then((sd) => setData(sd)).catch(() => {});
+      } else {
+        const msg = runNowErrorMsg(res?.code, res?.error);
+        showToast('err', msg);
+        console.warn('[agent-ops] run-now failed', res);
+      }
+    } catch (err) {
+      showToast('err', String(err));
+      console.error('[agent-ops] run-now error', err);
+    }
+  }
+
+  /** @param {import('../../lib/view-model.js').JobView} job */
+  async function onToggleEnabled(job) {
+    const nextEnabled = !job.enabled;
+    // Optimistic flip — update the matching job in data.jobs immediately.
+    setData((prev) => ({
+      ...prev,
+      jobs: prev.jobs.map((j) =>
+        j.id === job.id ? { ...j, enabled: nextEnabled } : j
+      ),
+    }));
+    try {
+      const res = await hostAgentOpsSetEnabled(job.id, nextEnabled);
+      if (res && res.ok === true) {
+        // Keep the optimistic flip; optionally refresh to sync daemon state.
+        loadScheduleData().then((sd) => setData(sd)).catch(() => {});
+      } else {
+        // Revert the optimistic flip.
+        setData((prev) => ({
+          ...prev,
+          jobs: prev.jobs.map((j) =>
+            j.id === job.id ? { ...j, enabled: job.enabled } : j
+          ),
+        }));
+        const msg = runNowErrorMsg(res?.code, res?.error);
+        showToast('err', msg);
+        console.warn('[agent-ops] setEnabled failed', res);
+      }
+    } catch (err) {
+      // Revert the optimistic flip.
+      setData((prev) => ({
+        ...prev,
+        jobs: prev.jobs.map((j) =>
+          j.id === job.id ? { ...j, enabled: job.enabled } : j
+        ),
+      }));
+      showToast('err', String(err));
+      console.error('[agent-ops] setEnabled error', err);
+    }
   }
 
   return html`
@@ -717,7 +798,7 @@ export function ScheduleView({ activeFeature, bridgeReady = true } = {}) {
       ${!daemonUp && html`
         <div class="ao-downbanner">
           ⚠ The always-on daemon isn't responding. Schedule + history are last-known;
-          run-now and enable/disable are disabled until the watchdog respawns it (≤5 min).
+          run-now is disabled until the watchdog respawns it (≤5 min). Enable/disable still works.
         </div>
       `}
 
@@ -728,6 +809,7 @@ export function ScheduleView({ activeFeature, bridgeReady = true } = {}) {
           data=${data}
           activeFilter=${activeFilter}
           onRunNow=${handleRunNow}
+          onToggleEnabled=${onToggleEnabled}
         />
       `}
       ${view === 'runs'     && html`<${RunsView} bridgeReady=${bridgeReady} />`}
@@ -739,6 +821,14 @@ export function ScheduleView({ activeFeature, bridgeReady = true } = {}) {
         onCancel=${() => setRunNowJob(null)}
         onConfirm=${handleRunConfirm}
       />
+
+      ${toast && html`
+        <div
+          class=${cn('ao-toast', toast.kind)}
+          role="status"
+          aria-live="polite"
+        >${toast.msg}</div>
+      `}
     </div>
   `;
 }

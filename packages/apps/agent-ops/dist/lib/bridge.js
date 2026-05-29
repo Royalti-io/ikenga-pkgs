@@ -161,6 +161,49 @@ export async function hostAgentOpsListJobs() {
   return sc;
 }
 
+/**
+ * Trigger an immediate out-of-schedule run for a job via the shell's
+ * host.agentOps.runNow verb (WP-09 host side, WP-12 wires the call).
+ *
+ * Returns the structuredContent payload directly:
+ *   { ok: true,  status: 200, message: string }
+ * | { ok: false, code: string, status: number, error: string }
+ *
+ * Throws if the bridge is not connected (caller should handle).
+ *
+ * @param {string} jobId
+ */
+export async function hostAgentOpsRunNow(jobId) {
+  if (!app) throw new Error('[agent-ops] bridge not connected — agentOps.runNow unavailable');
+  const res = await app.callServerTool({
+    name: 'host.agentOps.runNow',
+    arguments: { jobId },
+  });
+  return res?.structuredContent ?? null;
+}
+
+/**
+ * Enable or disable a job via the shell's host.agentOps.setEnabled verb
+ * (WP-09 host side, WP-12 wires the call).
+ *
+ * Returns the structuredContent payload directly:
+ *   { ok: true,  jobId: string, enabled: boolean }
+ * | { ok: false, code: string, error: string }
+ *
+ * Throws if the bridge is not connected (caller should handle).
+ *
+ * @param {string} jobId
+ * @param {boolean} enabled
+ */
+export async function hostAgentOpsSetEnabled(jobId, enabled) {
+  if (!app) throw new Error('[agent-ops] bridge not connected — agentOps.setEnabled unavailable');
+  const res = await app.callServerTool({
+    name: 'host.agentOps.setEnabled',
+    arguments: { jobId, enabled },
+  });
+  return res?.structuredContent ?? null;
+}
+
 /** Detect standalone-dev (no parent shell). */
 export function isStandalone() {
   return typeof window !== 'undefined' && window.parent === window;
