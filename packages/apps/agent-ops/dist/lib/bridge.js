@@ -204,6 +204,61 @@ export async function hostAgentOpsSetEnabled(jobId, enabled) {
   return res?.structuredContent ?? null;
 }
 
+/**
+ * Create or update a cron job via the shell's host.agentOps.upsertJob verb (WP-14).
+ *
+ * Sends a full AgentOpsJobInput; the shell writes the job definition to config
+ * and notifies the daemon. Returns the structuredContent payload directly:
+ *   { ok: true,  jobId: string, created: boolean }
+ * | { ok: false, code: string, error: string }
+ *
+ * Throws if the bridge is not connected (caller should handle).
+ *
+ * @typedef {{
+ *   id: string,
+ *   label: string,
+ *   schedule: string,
+ *   command: string,
+ *   timezone?: string,
+ *   enabled?: boolean,
+ *   mode?: 'agent'|'script',
+ *   model?: string,
+ *   agent?: string,
+ *   schedule_dialect?: '5f'|'6f',
+ *   timeout_ms?: number,
+ * }} AgentOpsJobInput
+ *
+ * @param {AgentOpsJobInput} job
+ */
+export async function hostAgentOpsUpsertJob(job) {
+  if (!app) throw new Error('[agent-ops] bridge not connected — agentOps.upsertJob unavailable');
+  const res = await app.callServerTool({
+    name: 'host.agentOps.upsertJob',
+    arguments: { job },
+  });
+  return res?.structuredContent ?? null;
+}
+
+/**
+ * Delete a cron job via the shell's host.agentOps.deleteJob verb (WP-14).
+ *
+ * Returns the structuredContent payload directly:
+ *   { ok: true,  jobId: string }
+ * | { ok: false, code: string, error: string }
+ *
+ * Throws if the bridge is not connected (caller should handle).
+ *
+ * @param {string} jobId
+ */
+export async function hostAgentOpsDeleteJob(jobId) {
+  if (!app) throw new Error('[agent-ops] bridge not connected — agentOps.deleteJob unavailable');
+  const res = await app.callServerTool({
+    name: 'host.agentOps.deleteJob',
+    arguments: { jobId },
+  });
+  return res?.structuredContent ?? null;
+}
+
 /** Detect standalone-dev (no parent shell). */
 export function isStandalone() {
   return typeof window !== 'undefined' && window.parent === window;

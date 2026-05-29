@@ -13,6 +13,7 @@
 
 import { html, cn, Icon, Button, useState, useMemo, useEffect, useRef } from '../../lib/ui.js';
 import { isStandalone, setMenu, hostAgentOpsRunNow, hostAgentOpsSetEnabled } from '../../lib/bridge.js';
+import { JobFormModal } from './job-form.js';
 import { FIXTURE, isJobView } from '../../lib/view-model.js';
 import { loadScheduleData } from '../../lib/queries.js';
 import { RunsView } from '../runs/runs-view.js';
@@ -379,9 +380,10 @@ function RunNowModal({ job, onCancel, onConfirm }) {
  *   daemonUp: boolean,
  *   onRunNow: (job: import('../../lib/view-model.js').JobView) => void,
  *   onToggleEnabled: (job: import('../../lib/view-model.js').JobView) => void,
+ *   onEdit: (job: import('../../lib/view-model.js').JobView) => void,
  * }} props
  */
-function JobRow({ job, daemonUp, onRunNow, onToggleEnabled }) {
+function JobRow({ job, daemonUp, onRunNow, onToggleEnabled, onEdit }) {
   const badge = healthBadge(job);
   const bars = buildBars(job.last_runs, null);
   const nextLabel = job.next_run_at_ms != null
@@ -452,6 +454,11 @@ function JobRow({ job, daemonUp, onRunNow, onToggleEnabled }) {
             >▶ run</button>
           `}
           <button class="ao-btn sz-sm" title="View logs — WP-11">log</button>
+          <button
+            class="ao-btn sz-sm"
+            title="Edit job"
+            onClick=${() => onEdit(job)}
+          >edit</button>
         </div>
       </td>
     </tr>
@@ -498,9 +505,9 @@ function ExtRow({ ext }) {
  * Schedule view — KPI strip + 12h timeline + job table.
  * Renders FIXTURE for WP-07. WP-08 replaces FIXTURE with live pa.db reads.
  *
- * @param {{ daemonUp: boolean, daemonPid: number|null, data: import('../../lib/view-model.js').ScheduleData, activeFilter: string, onRunNow: (job: any) => void, onToggleEnabled: (job: any) => void }} props
+ * @param {{ daemonUp: boolean, daemonPid: number|null, data: import('../../lib/view-model.js').ScheduleData, activeFilter: string, onRunNow: (job: any) => void, onToggleEnabled: (job: any) => void, onAdd: () => void, onEdit: (job: import('../../lib/view-model.js').JobView) => void }} props
  */
-function ScheduleContent({ daemonUp, daemonPid, data, activeFilter, onRunNow, onToggleEnabled }) {
+function ScheduleContent({ daemonUp, daemonPid, data, activeFilter, onRunNow, onToggleEnabled, onAdd, onEdit }) {
   const { jobs, external, summary } = data;
 
   // Apply filter from activeFilter.
@@ -571,6 +578,7 @@ function ScheduleContent({ daemonUp, daemonPid, data, activeFilter, onRunNow, on
         <h2>${nsFilter ? `${nsFilter} jobs` : activeFilter === 'f:ext' ? 'Externally managed' : 'All jobs'} · ${filteredJobs.length + (showExt ? shownExternal.length : 0)}</h2>
         <span class="rule"></span>
         <span class="meta">filter via the side-menu · click a header to sort</span>
+        ${onAdd && html`<button class="ao-btn sz-sm" onClick=${onAdd}>+ Add job</button>`}
       </div>
       <table class="ao-table">
         <thead>
@@ -594,6 +602,7 @@ function ScheduleContent({ daemonUp, daemonPid, data, activeFilter, onRunNow, on
               daemonUp=${daemonUp}
               onRunNow=${onRunNow}
               onToggleEnabled=${onToggleEnabled}
+              onEdit=${onEdit}
             />
           `)}
           ${showExt && shownExternal.length > 0 && html`
@@ -679,6 +688,20 @@ export function ScheduleView({ activeFeature, bridgeReady = true } = {}) {
   }
 
   const [runNowJob, setRunNowJob] = useState(/** @type {import('../../lib/view-model.js').JobView|null} */ (null));
+
+  // WP-14: form modal state.
+  // undefined = closed, null = add-new mode, JobView = edit mode.
+  /** @type {[import('../../lib/view-model.js').JobView|null|undefined, Function]} */
+  const [formJob, setFormJob] = useState(/** @type {import('../../lib/view-model.js').JobView|null|undefined} */ (undefined));
+
+  function openAdd() { setFormJob(null); }
+  /** @param {import('../../lib/view-model.js').JobView} j */
+  function openEdit(j) { setFormJob(j); }
+  function handleFormSaved() {
+    setFormJob(undefined);
+    showToast('ok', formJob === null ? 'Job added' : 'Job saved');
+    loadScheduleData().then((sd) => setData(sd)).catch(() => {});
+  }
 
   /** @type {[{kind:'ok'|'err', msg:string}|null, Function]} */
   const [toast, setToast] = useState(null);
@@ -849,6 +872,8 @@ export function ScheduleView({ activeFeature, bridgeReady = true } = {}) {
           activeFilter=${activeFilter}
           onRunNow=${handleRunNow}
           onToggleEnabled=${onToggleEnabled}
+          onAdd=${openAdd}
+          onEdit=${openEdit}
         />
       `}
       ${view === 'runs'     && html`<${RunsView} bridgeReady=${bridgeReady} />`}
@@ -860,6 +885,12 @@ export function ScheduleView({ activeFeature, bridgeReady = true } = {}) {
         onCancel=${() => setRunNowJob(null)}
         onConfirm=${handleRunConfirm}
       />
+
+      ${formJob !== undefined && html`<${JobFormModal}
+        job=${formJob}
+        onCancel=${() => setFormJob(undefined)}
+        onSaved=${handleFormSaved}
+      />`}
 
       ${toast && html`
         <div
