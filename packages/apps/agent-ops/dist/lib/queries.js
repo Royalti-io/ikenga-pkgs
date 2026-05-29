@@ -98,3 +98,21 @@ export async function loadAgentRuns(limit = 50) {
   );
   return rows.map(shapeAgentRunView);
 }
+
+// ── loadRecentRuns ────────────────────────────────────────────────────────────
+
+/**
+ * Load recent cron_job_runs across ALL jobs (WP-11 Runs + Failures views).
+ * Returns rows newest-first, shaped as RunView[].
+ *
+ * @param {number} [limit=80]
+ * @returns {Promise<import('./view-model.js').RunView[]>}
+ */
+export async function loadRecentRuns(limit = 80) {
+  const { shapeRunView } = await import('./shape.js');
+  const rows = await hostDbQuery(
+    'SELECT * FROM cron_job_runs ORDER BY created_at DESC LIMIT ?',
+    [limit],
+  );
+  return rows.map(shapeRunView);
+}

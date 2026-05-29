@@ -15,6 +15,8 @@ import { html, cn, Icon, Button, useState, useMemo, useEffect } from '../../lib/
 import { isStandalone, setMenu } from '../../lib/bridge.js';
 import { FIXTURE, isJobView } from '../../lib/view-model.js';
 import { loadScheduleData } from '../../lib/queries.js';
+import { RunsView } from '../runs/runs-view.js';
+import { FailuresView } from '../failures/failures-view.js';
 
 // ── side-menu model ──────────────────────────────────────────────────────────
 // Views section.
@@ -592,24 +594,7 @@ function ScheduleContent({ daemonUp, daemonPid, data, activeFilter, onRunNow }) 
 }
 
 // ── Placeholder views ────────────────────────────────────────────────────────
-
-function RunsPlaceholder() {
-  return html`
-    <div class="ao-placeholder">
-      <${Icon} name="list" size=${32} />
-      <div class="label">Runs · WP-11</div>
-    </div>
-  `;
-}
-
-function FailuresPlaceholder() {
-  return html`
-    <div class="ao-placeholder">
-      <${Icon} name="alert-triangle" size=${32} />
-      <div class="label">Failures · WP-13</div>
-    </div>
-  `;
-}
+// RunsPlaceholder + FailuresPlaceholder removed — WP-11 ships the real views.
 
 function LivePlaceholder() {
   return html`
@@ -744,8 +729,8 @@ export function ScheduleView({ activeFeature, bridgeReady = true } = {}) {
           onRunNow=${handleRunNow}
         />
       `}
-      ${view === 'runs'     && html`<${RunsPlaceholder} />`}
-      ${view === 'failures' && html`<${FailuresPlaceholder} />`}
+      ${view === 'runs'     && html`<${RunsView} bridgeReady=${bridgeReady} />`}
+      ${view === 'failures' && html`<${FailuresView} bridgeReady=${bridgeReady} />`}
       ${view === 'live'     && html`<${LivePlaceholder} />`}
 
       <${RunNowModal}
