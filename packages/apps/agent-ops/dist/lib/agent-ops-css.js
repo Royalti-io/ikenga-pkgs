@@ -495,12 +495,20 @@ tr:focus-within .ao-ctrls { opacity: 1; }
 
 /* ============ LEGEND ============ */
 .ao-legend {
+  /* Sticky footer, Ngwa-style — pinned to the pane bottom, scroll rides under it.
+     Negative margins bleed it to the .ao-body edges (body padding 8px 18px 18px). */
+  position: sticky;
+  bottom: 0;
   display: flex;
   gap: 14px;
   flex-wrap: wrap;
   font-size: 10.5px;
   color: var(--fg-faint, var(--fg-muted));
-  margin: 10px 0 0;
+  margin: 10px -18px -18px;
+  padding: 9px 18px;
+  background: var(--bg-base);
+  border-top: 1px solid var(--border);
+  z-index: 2;
 }
 .ao-legend span { display: inline-flex; align-items: center; gap: 5px; }
 .ao-legend i {
