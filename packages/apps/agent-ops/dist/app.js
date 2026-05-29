@@ -19,6 +19,7 @@ import tokensCss from './lib/tokens-css.js';
 import agentOpsCss from './lib/agent-ops-css.js';
 import agentOpsRunsCss from './lib/agent-ops-runs-css.js';
 import agentOpsFormCss from './lib/agent-ops-form-css.js';
+import agentOpsLiveCss from './lib/agent-ops-live-css.js';
 
 // Styling, the no-build way. A <link>/fetch to a .css fails inside the shell's
 // about:srcdoc iframe (WebKitGTK subresource bug — see index.html), so CSS
@@ -52,6 +53,7 @@ injectCss('data-token-aliases', aliasCss);
 injectCss('data-agent-ops-css', agentOpsCss);
 injectCss('data-agent-ops-runs-css', agentOpsRunsCss);
 injectCss('data-agent-ops-form-css', agentOpsFormCss);
+injectCss('data-agent-ops-live-css', agentOpsLiveCss);
 
 // Theme — own it directly by mirroring the shell's <html> attributes, NOT via
 // the AppBridge host-context push (which was unreliable: it clobbered our
