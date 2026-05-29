@@ -42,7 +42,7 @@ const FILTER_ITEMS = [
  * @param {number|null} failureBadge
  * @param {number|null} liveBadge
  */
-function buildAgentOpsMenu(view, activeFilter, failureBadge, liveBadge) {
+function buildAgentOpsMenu(view, activeFilter, failureBadge, liveBadge, domains = []) {
   const filtersInert = view !== 'schedule';
   const viewRows = VIEW_ITEMS.map((it) => ({
     ...it,
@@ -56,7 +56,26 @@ function buildAgentOpsMenu(view, activeFilter, failureBadge, liveBadge) {
     disabled: filtersInert,
     active: !filtersInert && activeFilter === it.id,
   }));
-  return [...viewRows, ...filterRows];
+  // By-domain (the namespaces = agent areas: pa / sales / fundraising / …).
+  // D-01 Round-4 design; one row per namespace present, badge = job count.
+  const domainRows = domains.map((d) => ({
+    id: `f:ns:${d.ns}`,
+    label: d.ns,
+    icon: 'folder',
+    section: 'By domain',
+    badge: d.count,
+    disabled: filtersInert,
+    active: !filtersInert && activeFilter === `f:ns:${d.ns}`,
+  }));
+  return [...viewRows, ...filterRows, ...domainRows];
+}
+
+/** Distinct namespaces present in the jobs, with counts, sorted by count desc.
+ * @param {import('../../lib/view-model.js').JobView[]} jobs */
+function deriveDomains(jobs) {
+  const counts = new Map();
+  for (const j of jobs) counts.set(j.namespace, (counts.get(j.namespace) ?? 0) + 1);
+  return Array.from(counts, ([ns, count]) => ({ ns, count })).sort((a, b) => b.count - a.count);
 }
 
 // ── view type ────────────────────────────────────────────────────────────────
@@ -485,15 +504,30 @@ function ScheduleContent({ daemonUp, daemonPid, data, activeFilter, onRunNow, on
   const { jobs, external, summary } = data;
 
   // Apply filter from activeFilter.
+  // 'f:ns:<namespace>' filters to one domain (e.g. pa / sales / fundraising).
+  const nsFilter = activeFilter && activeFilter.startsWith('f:ns:')
+    ? activeFilter.slice('f:ns:'.length)
+    : null;
+
   const filteredJobs = useMemo(() => {
     if (activeFilter === 'f:enabled') return jobs.filter((j) => j.enabled);
     if (activeFilter === 'f:disabled') return jobs.filter((j) => !j.enabled);
-    // 'f:ext' shows the external table section only — all daemon jobs still shown
+    if (activeFilter === 'f:ext') return []; // external-only: hide daemon jobs
+    if (nsFilter) return jobs.filter((j) => j.namespace === nsFilter);
     return jobs;
-  }, [jobs, activeFilter]);
+  }, [jobs, activeFilter, nsFilter]);
 
-  const showExt = activeFilter === 'f:all' || activeFilter === 'f:ext' || !activeFilter;
+  // External rows show on All + Externally-managed; a domain filter shows them
+  // only if that domain actually owns external rows.
+  const showExt =
+    activeFilter === 'f:all' ||
+    activeFilter === 'f:ext' ||
+    !activeFilter ||
+    (nsFilter != null && external.some((e) => e.namespace === nsFilter));
   const showTimeline = activeFilter !== 'f:disabled' && activeFilter !== 'f:ext';
+  // Timeline mirrors the active domain filter so lanes match the table.
+  const timelineJobs = nsFilter ? jobs.filter((j) => j.namespace === nsFilter) : jobs;
+  const shownExternal = nsFilter ? external.filter((e) => e.namespace === nsFilter) : external;
 
   const nextLabel = summary.next_label
     ? `${fmtCountdown(summary.next_in_ms ?? null)} · ${summary.next_label}`
@@ -530,11 +564,11 @@ function ScheduleContent({ daemonUp, daemonPid, data, activeFilter, onRunNow, on
           <span class="rule"></span>
           <span class="meta">grouped by namespace · click a lane to expand</span>
         </div>
-        <${Timeline} jobs=${jobs} />
+        <${Timeline} jobs=${timelineJobs} />
       `}
 
       <div class="ao-section-h">
-        <h2>All jobs · ${jobs.length + external.length}</h2>
+        <h2>${nsFilter ? `${nsFilter} jobs` : activeFilter === 'f:ext' ? 'Externally managed' : 'All jobs'} · ${filteredJobs.length + (showExt ? shownExternal.length : 0)}</h2>
         <span class="rule"></span>
         <span class="meta">filter via the side-menu · click a header to sort</span>
       </div>
@@ -562,13 +596,13 @@ function ScheduleContent({ daemonUp, daemonPid, data, activeFilter, onRunNow, on
               onToggleEnabled=${onToggleEnabled}
             />
           `)}
-          ${showExt && external.length > 0 && html`
+          ${showExt && shownExternal.length > 0 && html`
             <tr class="ao-grp">
               <td colspan="9">
-                Externally managed · read-only · ${external.length} · not fired or observed by this daemon
+                Externally managed · read-only · ${shownExternal.length} · not fired or observed by this daemon
               </td>
             </tr>
-            ${external.map((ext) => html`<${ExtRow} key=${ext.id} ext=${ext} />`)}
+            ${shownExternal.map((ext) => html`<${ExtRow} key=${ext.id} ext=${ext} />`)}
           `}
         </tbody>
       </table>
@@ -690,14 +724,19 @@ export function ScheduleView({ activeFeature, bridgeReady = true } = {}) {
     }
   }, [activeFeature]);
 
-  // Publish the shell side-menu. Derives failure badge from FIXTURE.failing.
-  // Re-sends whenever view, activeFilter, or failing count changes.
+  // Domains (namespaces) present in the catalog → the "By domain" filter rows.
+  const domains = useMemo(() => deriveDomains(data.jobs), [data.jobs]);
+  const domainKey = domains.map((d) => `${d.ns}:${d.count}`).join(',');
+
+  // Publish the shell side-menu. Re-sends whenever view, activeFilter, failing
+  // count, or the domain set changes.
   useEffect(() => {
     if (isStandalone()) return;
     const failureBadge = data.summary.failing > 0 ? data.summary.failing : null;
-    setMenu(buildAgentOpsMenu(view, activeFilter, failureBadge, null))
+    setMenu(buildAgentOpsMenu(view, activeFilter, failureBadge, null, domains))
       .catch((e) => console.warn('[agent-ops] setMenu failed', e));
-  }, [view, activeFilter, data.summary.failing]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, activeFilter, data.summary.failing, domainKey]);
 
   const daemonUp = data.daemon_up;
 
