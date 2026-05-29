@@ -1,0 +1,46 @@
+{
+  "id": "com.ikenga.agent-ops",
+  "name": "Agent Ops",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "embedded",
+  "author": { "name": "Royalti", "key": "royalti" },
+
+  "ui": {
+    "nav": [
+      {
+        "id": "agentops.index",
+        "label": "Agent Ops",
+        "icon": "activity",
+        "section": "ops",
+        "route": "/pkg/com.ikenga.agent-ops/"
+      }
+    ],
+    "routes": [
+      {
+        "path": "/",
+        "kind": "iframe",
+        "source": "dist/index.html"
+      }
+    ],
+    "csp": {
+      "script-src": ["'self'", "'unsafe-inline'", "https://esm.sh"],
+      "style-src": ["'self'", "'unsafe-inline'", "https://esm.sh"],
+      "font-src": ["'self'", "https://esm.sh", "data:"],
+      "connect-src": ["'self'", "https://esm.sh"]
+    }
+  },
+
+  "capabilities": {
+    "sqlite": { "db": "ikenga.local" }
+  },
+
+  "permissions": {
+    "shell.execute": [],
+    "fs.read": [],
+    "fs.write": [],
+    "net": ["https://esm.sh"],
+    "sqlite.tables": ["cron_job_runs", "agent_runs"],
+    "vault.keys": []
+  }
+}
