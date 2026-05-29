@@ -12,7 +12,7 @@
 // activeFeature dispatch useEffect.
 
 import { html, cn, Icon, Button, useState, useMemo, useEffect, useRef } from '../../lib/ui.js';
-import { isStandalone, setMenu, hostAgentOpsRunNow, hostAgentOpsSetEnabled } from '../../lib/bridge.js';
+import { isStandalone, setMenu, hostAgentOpsRunNow, hostAgentOpsSetEnabled, hostAgentOpsTailRun } from '../../lib/bridge.js';
 import { JobFormModal } from './job-form.js';
 import { FIXTURE, isJobView } from '../../lib/view-model.js';
 import { loadScheduleData } from '../../lib/queries.js';
@@ -631,14 +631,287 @@ function ScheduleContent({ daemonUp, daemonPid, data, activeFilter, onRunNow, on
   `;
 }
 
-// ── Placeholder views ────────────────────────────────────────────────────────
-// RunsPlaceholder + FailuresPlaceholder removed — WP-11 ships the real views.
+// ── Live view (WP-13) ────────────────────────────────────────────────────────
 
-function LivePlaceholder() {
+/**
+ * LiveView — stream tail output of a running (or recently-completed) job.
+ *
+ * Behaviour:
+ *   - Standalone (no bridge): renders a static "connect to shell" placeholder.
+ *   - Job picker: shows all known jobs; clicking one starts tailing.
+ *   - Script-mode running job: polls hostAgentOpsTailRun every ~1 s, appends
+ *     chunks to a monospace <pre> console, auto-scrolls to the bottom.
+ *   - Agent-mode running job: shows a spinner + notice (no byte-for-byte output
+ *     available); spinner stops when res.running flips false.
+ *   - Completed run: polling stops, a "run finished" banner appears with a
+ *     "view details" link that navigates to the Runs view via onViewRuns.
+ *
+ * @param {{ data: import('../../lib/view-model.js').ScheduleData, onViewRuns?: () => void }} props
+ */
+function LiveView({ data, onViewRuns }) {
+  // Which job are we tailing? null = picker.
+  const [targetJobId, setTargetJobId] = useState(/** @type {string|null} */ (null));
+
+  // Console buffer (raw text accumulated from chunks).
+  const [consoleBuf, setConsoleBuf] = useState('');
+  const [lastOffset, setLastOffset] = useState(0);
+
+  // Current tail state returned by the host.
+  /** @type {[{running:boolean, status:string|null, mode:string|null, startedAtMs:number|null}|null, Function]} */
+  const [tailState, setTailState] = useState(null);
+
+  // Polling error message (non-fatal; shown inline).
+  const [pollError, setPollError] = useState(/** @type {string|null} */ (null));
+
+  // Whether the run has finished (polling stopped).
+  const [finished, setFinished] = useState(false);
+
+  // Auto-scroll ref.
+  /** @type {{ current: HTMLPreElement|null }} */
+  const consoleRef = useRef(null);
+
+  // Standalone dev: static placeholder.
+  if (isStandalone()) {
+    return html`
+      <div class="ao-live-screen">
+        <div class="ao-live-header">
+          <h1>Live</h1>
+        </div>
+        <div class="ao-live-standalone">
+          <${Icon} name="radio" size=${28} />
+          <div>Connect to the Ikenga shell to stream live run output.</div>
+          <div class="console-mock">$ connect shell to stream\n…waiting for host bridge…</div>
+        </div>
+      </div>
+    `;
+  }
+
+  // Pick-a-job view.
+  if (targetJobId === null) {
+    const jobs = data.jobs ?? [];
+    return html`
+      <div class="ao-live-screen">
+        <div class="ao-live-header">
+          <h1>Live</h1>
+          <span class="sub">Select a job to tail its output</span>
+        </div>
+        <div class="ao-live-picker">
+          ${jobs.length === 0 && html`
+            <div class="ao-live-picker-empty">
+              <${Icon} name="clock" size=${28} />
+              <div>No jobs configured yet.</div>
+            </div>
+          `}
+          ${jobs.map((j) => {
+            const isRunning = j.health === 'running';
+            const [ns, slug] = j.id.includes(':')
+              ? j.id.split(/:(.+)/)
+              : ['', j.id];
+            return html`
+              <div
+                key=${j.id}
+                class=${'ao-live-job-row' + (isRunning ? ' is-running' : '')}
+                role="button"
+                tabIndex=${0}
+                onClick=${() => {
+                  setTargetJobId(j.id);
+                  setConsoleBuf('');
+                  setLastOffset(0);
+                  setTailState(null);
+                  setPollError(null);
+                  setFinished(false);
+                }}
+                onKeyDown=${(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    setTargetJobId(j.id);
+                    setConsoleBuf('');
+                    setLastOffset(0);
+                    setTailState(null);
+                    setPollError(null);
+                    setFinished(false);
+                  }
+                }}
+              >
+                <div class="ao-live-job-id">
+                  <span class="ns">${ns ? `${ns}:` : ''}</span>${slug}
+                </div>
+                <div class="ao-live-job-meta">${isRunning ? '● running' : j.label || j.schedule}</div>
+              </div>
+            `;
+          })}
+        </div>
+      </div>
+    `;
+  }
+
+  // Tailing console view for targetJobId.
+  const [ns, slug] = targetJobId.includes(':')
+    ? targetJobId.split(/:(.+)/)
+    : ['', targetJobId];
+
+  // Polling effect — runs while we have a targetJobId.
+  useEffect(() => {
+    if (!targetJobId) return;
+
+    // Use a ref-local offset so the interval closure always reads the latest.
+    let currentOffset = 0;
+    let stopped = false;
+
+    /**
+     * @typedef {{
+     *   ok: boolean,
+     *   running: boolean,
+     *   status: 'running'|'done'|null,
+     *   startedAtMs: number|null,
+     *   mode: 'agent'|'script'|null,
+     *   chunk: string,
+     *   nextOffset: number,
+     *   eof: boolean,
+     *   code?: string,
+     *   error?: string,
+     * }} TailRunResult
+     */
+    async function poll() {
+      if (stopped) return;
+      try {
+        /** @type {TailRunResult|null} */
+        const res = /** @type {any} */ (await hostAgentOpsTailRun(targetJobId, currentOffset));
+        if (stopped) return;
+        if (!res) {
+          setPollError('No response from host — bridge may be down.');
+          return;
+        }
+        if (res.ok === false) {
+          setPollError(res.error ?? 'tailRun returned ok:false');
+          return;
+        }
+        // Update tail state (running, mode, startedAtMs, status).
+        setTailState({
+          running: res.running,
+          status: res.status,
+          mode: res.mode,
+          startedAtMs: res.startedAtMs,
+        });
+        // Append new chunk to console buffer.
+        if (res.chunk && res.chunk.length > 0) {
+          setConsoleBuf((/** @type {string} */ prev) => prev + res.chunk);
+          currentOffset = res.nextOffset;
+          setLastOffset(res.nextOffset);
+        }
+        // Stop polling only when the run has ENDED *and* the tail is fully
+        // drained. `eof` is true on every poll that catches up to the current
+        // file length, so `!running && eof` is the correct terminal condition;
+        // `|| eof` would freeze the stream after the first chunk while the job
+        // is still running.
+        if (!res.running && res.eof) {
+          stopped = true;
+          setFinished(true);
+        }
+      } catch (err) {
+        if (!stopped) {
+          setPollError(String(err));
+        }
+      }
+    }
+
+    // Immediate first poll, then on interval.
+    poll();
+    const intervalId = setInterval(poll, 1000);
+
+    return () => {
+      stopped = true;
+      clearInterval(intervalId);
+    };
+  // Re-run whenever the target job changes (picker selection).
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetJobId]);
+
+  // Auto-scroll to bottom when new content arrives.
+  useEffect(() => {
+    if (consoleRef.current) {
+      consoleRef.current.scrollTop = consoleRef.current.scrollHeight;
+    }
+  }, [consoleBuf]);
+
+  const isRunning = tailState?.running !== false && !finished;
+  const isAgentMode = tailState?.mode === 'agent';
+
   return html`
-    <div class="ao-placeholder">
-      <${Icon} name="radio" size=${32} />
-      <div class="label">Live · WP-13</div>
+    <div class="ao-live-screen">
+      <div class="ao-live-header">
+        <h1>Live</h1>
+        <span class="sub">tail output</span>
+        <span class="ao-spacer"></span>
+        <button
+          class="ao-btn ghost xs"
+          onClick=${() => {
+            setTargetJobId(null);
+            setConsoleBuf('');
+            setLastOffset(0);
+            setTailState(null);
+            setPollError(null);
+            setFinished(false);
+          }}
+          title="Back to job picker"
+        >← Back</button>
+      </div>
+
+      <div class="ao-live-body">
+        <div class="ao-live-toolbar">
+          <span class="ao-live-target">
+            <span class="ns">${ns ? `${ns}:` : ''}</span>${slug}
+          </span>
+          <span class=${'ao-live-status-badge ' + (isRunning ? 'running' : 'done')}>
+            <span class="dot"></span>
+            ${isRunning ? 'running' : (tailState?.status ?? 'idle')}
+          </span>
+        </div>
+
+        ${isAgentMode
+          ? html`
+            <div class="ao-live-agent-notice">
+              <${Icon} name="loader" size=${24} />
+              <div class="notice-title">Agent job in progress</div>
+              <div>
+                Live output is not available for agent jobs — the full result
+                appears in Runs once the job completes.
+              </div>
+              ${!isRunning && html`<div style=${{ color: 'var(--systemic)', fontWeight: 600 }}>Run complete.</div>`}
+            </div>
+          `
+          : html`
+            <div class="ao-live-console-wrap">
+              <pre class="ao-live-console" ref=${consoleRef}>${
+                consoleBuf.length > 0
+                  ? consoleBuf
+                  : (isRunning ? '…waiting for output…' : '(no output)')
+              }</pre>
+            </div>
+          `
+        }
+
+        ${pollError && html`
+          <div style=${{ padding: '8px 14px', fontSize: '11px', color: 'var(--danger)', borderTop: '1px solid var(--border-soft)' }}>
+            Poll error: ${pollError}
+          </div>
+        `}
+
+        ${finished && html`
+          <div class="ao-live-finish-bar">
+            <${Icon} name="check-circle" size=${14} />
+            <span>Run finished</span>
+            <span class="ao-spacer"></span>
+            ${typeof onViewRuns === 'function' && html`
+              <a
+                role="button"
+                tabIndex=${0}
+                onClick=${onViewRuns}
+                onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') onViewRuns(); }}
+              >View details →</a>
+            `}
+          </div>
+        `}
+      </div>
     </div>
   `;
 }
@@ -878,7 +1151,7 @@ export function ScheduleView({ activeFeature, bridgeReady = true } = {}) {
       `}
       ${view === 'runs'     && html`<${RunsView} bridgeReady=${bridgeReady} />`}
       ${view === 'failures' && html`<${FailuresView} bridgeReady=${bridgeReady} />`}
-      ${view === 'live'     && html`<${LivePlaceholder} />`}
+      ${view === 'live'     && html`<${LiveView} data=${data} onViewRuns=${() => changeView('runs')} />`}
 
       <${RunNowModal}
         job=${runNowJob}

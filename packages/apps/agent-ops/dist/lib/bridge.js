@@ -259,6 +259,31 @@ export async function hostAgentOpsDeleteJob(jobId) {
   return res?.structuredContent ?? null;
 }
 
+/**
+ * Tail the output of a currently-running (or recently-completed) job via the
+ * shell's host.agentOps.tailRun verb (WP-13).
+ *
+ * Returns the structuredContent payload directly:
+ *   { ok: true,  running: boolean, status: 'running'|'done'|null,
+ *     startedAtMs: number|null, mode: 'agent'|'script'|null,
+ *     chunk: string, nextOffset: number, eof: boolean }
+ * | { ok: false, code: string, status: number|null, error: string }
+ *
+ * Returns null if the bridge is not connected (caller must guard).
+ *
+ * @param {string} jobId
+ * @param {number} [offset]
+ * @returns {Promise<object|null>}
+ */
+export async function hostAgentOpsTailRun(jobId, offset) {
+  if (!app) throw new Error('[agent-ops] bridge not connected — agentOps.tailRun unavailable');
+  const res = await app.callServerTool({
+    name: 'host.agentOps.tailRun',
+    arguments: { jobId, offset },
+  });
+  return res?.structuredContent ?? null;
+}
+
 /** Detect standalone-dev (no parent shell). */
 export function isStandalone() {
   return typeof window !== 'undefined' && window.parent === window;
