@@ -1,0 +1,29 @@
+{
+  "id": "cta.talk-to-us",
+  "kind": "cta",
+  "name": "Talk to us CTA",
+  "description": "Book a call / contact end-card.",
+  "default_renderer": "hyperframes",
+  "template_path": "blocks/cta/talk-to-us/index.html",
+  "parameters": [
+    {
+      "name": "url",
+      "type": "string",
+      "default": "https://royalti.io/contact",
+      "required": true
+    },
+    {
+      "name": "label",
+      "type": "string",
+      "default": "Talk to us",
+      "required": false
+    }
+  ],
+  "tags": [
+    "cta",
+    "closer"
+  ],
+  "metadata": {},
+  "category": "narrative",
+  "default_duration_ms": 3000
+}

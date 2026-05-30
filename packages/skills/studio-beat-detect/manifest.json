@@ -1,0 +1,20 @@
+{
+  "id": "com.ikenga.studio-beat-detect",
+  "name": "Studio Beat Detect",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "skill",
+  "author": {
+    "name": "Royalti",
+    "key": "royalti"
+  },
+  "skills": "skills",
+  "permissions": {
+    "shell.execute": [],
+    "fs.read": [],
+    "fs.write": [],
+    "net": [],
+    "sqlite.tables": [],
+    "vault.keys": []
+  }
+}

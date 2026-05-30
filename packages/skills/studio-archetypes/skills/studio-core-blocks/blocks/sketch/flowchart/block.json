@@ -1,0 +1,24 @@
+{
+  "id": "sketch.flowchart",
+  "kind": "sketch",
+  "name": "Flowchart sketch",
+  "description": "Lo-fi boxes-and-arrows flow scene.",
+  "default_renderer": "auto",
+  "template_path": "blocks/sketch/flowchart/template.excalidraw",
+  "parameters": [
+    {
+      "name": "title",
+      "type": "string",
+      "default": "Flowchart sketch",
+      "required": false
+    }
+  ],
+  "tags": [
+    "sketch",
+    "lofi"
+  ],
+  "metadata": {
+    "renderer_hint": "excalidraw"
+  },
+  "category": "visual"
+}

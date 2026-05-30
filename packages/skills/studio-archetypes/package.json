@@ -1,0 +1,47 @@
+{
+  "name": "@ikenga/studio-archetypes",
+  "version": "0.1.0",
+  "description": "Studio archetype suite \u2014 the 7 video archetypes (ai-short, explainer, montage, music-video, narrative, product, tutorial) + the shared core block catalog + animation patterns. One publish unit: archetype block-ID resolution stays intra-package.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "agent-skills",
+    "skills",
+    "ikenga",
+    "studio",
+    "video",
+    "archetype",
+    "blocks",
+    "remotion",
+    "hyperframes"
+  ],
+  "homepage": "https://ikenga.dev",
+  "bugs": {
+    "url": "https://github.com/Royalti-io/ikenga-pkgs/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/skills/studio-archetypes"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "manifest.json",
+    "skills",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "echo 'no build \u2014 content-only pkg'",
+    "typecheck": "echo 'no ts \u2014 content-only pkg'"
+  },
+  "peerDependencies": {
+    "@ikenga/studio-schema": "^0.1.0"
+  }
+}

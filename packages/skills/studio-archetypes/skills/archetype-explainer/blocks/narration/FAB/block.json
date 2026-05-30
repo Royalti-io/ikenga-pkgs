@@ -1,0 +1,29 @@
+{
+  "id": "narration.FAB",
+  "kind": "narration_pattern",
+  "name": "FAB",
+  "description": "Feature → Advantage → Benefit narration arc.",
+  "default_renderer": "hyperframes",
+  "template_path": "blocks/narration/FAB/index.html",
+  "parameters": [
+    {
+      "name": "topic",
+      "type": "string",
+      "default": "",
+      "required": true,
+      "description": "Subject the narration arc is written around."
+    }
+  ],
+  "tags": [
+    "narration",
+    "structure"
+  ],
+  "metadata": {
+    "stages": [
+      "Feature",
+      "Advantage",
+      "Benefit"
+    ]
+  },
+  "category": "narrative"
+}

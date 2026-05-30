@@ -1,0 +1,32 @@
+{
+  "id": "montage",
+  "name": "Montage",
+  "description": "Rhythm-cut montage: cold-open then rapid demo/proof beats over a music bed.",
+  "chain": [
+    {
+      "block_id": "hook.cold-open",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.demo",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.proof",
+      "bindings": {}
+    },
+    {
+      "block_id": "transition.smash-cut",
+      "bindings": {}
+    },
+    {
+      "block_id": "cta.link",
+      "bindings": {}
+    }
+  ],
+  "default_total_duration_ms": 30000,
+  "metadata": {
+    "music_preset": "music.upbeat-tech",
+    "transition_default": "transition.smash-cut"
+  }
+}

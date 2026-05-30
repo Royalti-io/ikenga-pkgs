@@ -1,0 +1,42 @@
+{
+  "name": "@ikenga/storyboard-workflow",
+  "version": "0.1.0",
+  "description": "Engine-agnostic 3-pass storyboard workflow. The only Studio-coupled fragment is an optional --mode personal block that stays inert elsewhere.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "agent-skills",
+    "skills",
+    "ikenga",
+    "video",
+    "storyboard",
+    "workflow",
+    "planning"
+  ],
+  "homepage": "https://ikenga.dev",
+  "bugs": {
+    "url": "https://github.com/Royalti-io/ikenga-pkgs/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/skills/storyboard-workflow"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "manifest.json",
+    "skills",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "echo 'no build \u2014 content-only pkg'",
+    "typecheck": "echo 'no ts \u2014 content-only pkg'"
+  }
+}

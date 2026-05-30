@@ -1,0 +1,39 @@
+{
+  "id": "product",
+  "name": "Product demo",
+  "description": "Product walkthrough: hook \u2192 problem \u2192 solution \u2192 demo \u2192 features \u2192 proof \u2192 CTA.",
+  "chain": [
+    {
+      "block_id": "hook.stat",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.problem",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.solution",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.demo",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.feature-list",
+      "bindings": {}
+    },
+    {
+      "block_id": "beat.proof",
+      "bindings": {}
+    },
+    {
+      "block_id": "cta.talk-to-us",
+      "bindings": {}
+    }
+  ],
+  "default_total_duration_ms": 60000,
+  "metadata": {
+    "narration_pattern": "narration.PAS"
+  }
+}

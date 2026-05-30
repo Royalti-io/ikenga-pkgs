@@ -1,0 +1,36 @@
+{
+  "id": "music.upbeat-tech",
+  "kind": "music_preset",
+  "name": "Upbeat tech",
+  "description": "Driving, optimistic electronic bed for product/explainer.",
+  "default_renderer": "hyperframes",
+  "template_path": "blocks/music/upbeat-tech/index.html",
+  "parameters": [
+    {
+      "name": "track",
+      "type": "asset_ref",
+      "required": false,
+      "description": "Override music bed."
+    },
+    {
+      "name": "bpm",
+      "type": "number",
+      "default": 128,
+      "required": false
+    },
+    {
+      "name": "gain_db",
+      "type": "number",
+      "default": -12,
+      "required": false
+    }
+  ],
+  "tags": [
+    "music",
+    "audio"
+  ],
+  "metadata": {
+    "bpm": 128
+  },
+  "category": "audio"
+}

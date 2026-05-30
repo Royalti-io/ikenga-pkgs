@@ -1,0 +1,29 @@
+{
+  "id": "sfx.outro-resolve",
+  "kind": "sfx",
+  "name": "Outro resolve",
+  "description": "Resolving chord/sting on the closing frame.",
+  "default_renderer": "hyperframes",
+  "template_path": "blocks/sfx/outro-resolve/index.html",
+  "parameters": [
+    {
+      "name": "asset",
+      "type": "asset_ref",
+      "required": false,
+      "description": "Override SFX audio file."
+    },
+    {
+      "name": "gain_db",
+      "type": "number",
+      "default": 0,
+      "required": false
+    }
+  ],
+  "tags": [
+    "sfx",
+    "audio"
+  ],
+  "metadata": {},
+  "category": "audio",
+  "default_duration_ms": 1200
+}

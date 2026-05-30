@@ -1,0 +1,30 @@
+{
+  "id": "narration.AIDA",
+  "kind": "narration_pattern",
+  "name": "AIDA",
+  "description": "Attention → Interest → Desire → Action narration arc.",
+  "default_renderer": "hyperframes",
+  "template_path": "blocks/narration/AIDA/index.html",
+  "parameters": [
+    {
+      "name": "topic",
+      "type": "string",
+      "default": "",
+      "required": true,
+      "description": "Subject the narration arc is written around."
+    }
+  ],
+  "tags": [
+    "narration",
+    "structure"
+  ],
+  "metadata": {
+    "stages": [
+      "Attention",
+      "Interest",
+      "Desire",
+      "Action"
+    ]
+  },
+  "category": "narrative"
+}

@@ -1,0 +1,34 @@
+{
+  "id": "anchor.brand-pack",
+  "kind": "anchor_pack",
+  "name": "Brand pack",
+  "description": "Reusable brand anchor set: logo, palette, type.",
+  "default_renderer": "hyperframes",
+  "template_path": "blocks/anchor/brand-pack/index.html",
+  "parameters": [
+    {
+      "name": "logo",
+      "type": "asset_ref",
+      "required": false,
+      "description": "Brand logo asset."
+    },
+    {
+      "name": "primary_color",
+      "type": "string",
+      "default": "#6366f1",
+      "required": false
+    },
+    {
+      "name": "font",
+      "type": "string",
+      "default": "Inter",
+      "required": false
+    }
+  ],
+  "tags": [
+    "anchor",
+    "reuse"
+  ],
+  "metadata": {},
+  "category": "style"
+}

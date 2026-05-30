@@ -1,0 +1,43 @@
+{
+  "name": "@ikenga/video-script-structure",
+  "version": "0.1.0",
+  "description": "Pure schema/convention doc for video script structure. Engine-agnostic, zero deps \u2014 a reusable authoring convention any agent can adopt.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "agent-skills",
+    "skills",
+    "ikenga",
+    "video",
+    "script",
+    "structure",
+    "convention",
+    "writing"
+  ],
+  "homepage": "https://ikenga.dev",
+  "bugs": {
+    "url": "https://github.com/Royalti-io/ikenga-pkgs/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/skills/video-script-structure"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "manifest.json",
+    "skills",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "echo 'no build \u2014 content-only pkg'",
+    "typecheck": "echo 'no ts \u2014 content-only pkg'"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "id": "sketch.wireframe",
+  "kind": "sketch",
+  "name": "Wireframe sketch",
+  "description": "Lo-fi UI wireframe scene.",
+  "default_renderer": "auto",
+  "template_path": "blocks/sketch/wireframe/template.excalidraw",
+  "parameters": [
+    {
+      "name": "title",
+      "type": "string",
+      "default": "Wireframe sketch",
+      "required": false
+    }
+  ],
+  "tags": [
+    "sketch",
+    "lofi"
+  ],
+  "metadata": {
+    "renderer_hint": "excalidraw"
+  },
+  "category": "visual"
+}

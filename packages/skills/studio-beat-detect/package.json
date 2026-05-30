@@ -1,0 +1,43 @@
+{
+  "name": "@ikenga/studio-beat-detect",
+  "version": "0.1.0",
+  "description": "Portable beat-detection skill \u2014 self-contained beat_detect.py (stdlib + optional librosa/madmom). Zero Ikenga runtime calls; usable by any agent via npx skills add.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "agent-skills",
+    "skills",
+    "ikenga",
+    "studio",
+    "video",
+    "beat-detection",
+    "audio",
+    "music-video"
+  ],
+  "homepage": "https://ikenga.dev",
+  "bugs": {
+    "url": "https://github.com/Royalti-io/ikenga-pkgs/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/skills/studio-beat-detect"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "manifest.json",
+    "skills",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "echo 'no build \u2014 content-only pkg'",
+    "typecheck": "echo 'no ts \u2014 content-only pkg'"
+  }
+}
