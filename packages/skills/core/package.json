@@ -1,0 +1,41 @@
+{
+  "name": "@ikenga/skill-core",
+  "version": "0.1.0",
+  "description": "skill-core — the lean dependency hub for the Ikenga skill graph. Ships the per-project identity generator (setup) every domain skill depends on.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "agent-skills",
+    "skills",
+    "ikenga",
+    "skill-core",
+    "setup",
+    "identity"
+  ],
+  "homepage": "https://ikenga.dev",
+  "bugs": {
+    "url": "https://github.com/Royalti-io/ikenga-pkgs/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/skills/core"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "manifest.json",
+    "skills",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "echo 'no build — content-only pkg'",
+    "typecheck": "echo 'no ts — content-only pkg'"
+  }
+}
