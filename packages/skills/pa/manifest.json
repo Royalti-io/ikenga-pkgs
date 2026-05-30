@@ -30,5 +30,11 @@
       "notifications"
     ],
     "vault.keys": []
-  }
+  },
+  "requires": [
+    {
+      "kind": "skill",
+      "name": "skill-core"
+    }
+  ]
 }

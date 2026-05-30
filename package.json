@@ -5,6 +5,8 @@
 	"scripts": {
 		"build": "pnpm -r build",
 		"test": "pnpm -r test --if-present",
+		"lift:requires": "node scripts/lift-requires.mjs",
+		"lift:requires:check": "node scripts/lift-requires.mjs --check",
 		"changeset": "changeset",
 		"version-packages": "changeset version",
 		"release": "changeset publish"
