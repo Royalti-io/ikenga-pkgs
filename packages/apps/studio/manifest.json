@@ -6,7 +6,14 @@
   "kind": "embedded",
   "author": { "name": "Royalti", "key": "royalti" },
 
-  "skills": "skills",
+  "requires": [
+    { "kind": "skill", "name": "@ikenga/studio-archetypes", "source": "npx" },
+    { "kind": "skill", "name": "@ikenga/studio-toolchain", "source": "npx" },
+    { "kind": "skill", "name": "@ikenga/studio-beat-detect", "source": "npx" },
+    { "kind": "skill", "name": "@ikenga/studio-doctor", "source": "npx" },
+    { "kind": "skill", "name": "@ikenga/video-script-structure", "source": "npx" },
+    { "kind": "skill", "name": "@ikenga/storyboard-workflow", "source": "npx" }
+  ],
 
   "ui": {
     "nav": [
