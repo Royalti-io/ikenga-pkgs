@@ -8,7 +8,6 @@
     "name": "Royalti",
     "key": "royalti"
   },
-  "skills": "skills",
   "permissions": {
     "shell.execute": [],
     "fs.read": [],
