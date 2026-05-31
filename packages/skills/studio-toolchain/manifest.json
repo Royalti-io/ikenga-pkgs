@@ -3,7 +3,7 @@
   "name": "Studio Toolchain",
   "version": "0.1.0",
   "ikenga_api": "1",
-  "kind": "skill",
+  "kind": "bundle",
   "author": {
     "name": "Royalti",
     "key": "royalti"

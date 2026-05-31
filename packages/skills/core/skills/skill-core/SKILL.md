@@ -74,7 +74,7 @@ The `setup` action conforms to the locked `ActionFrontmatter` Zod schema in
 ## Critical files
 
 ```
-core/
+skill-core/
 ├── SKILL.md                  ← you are here (router only; the hub)
 └── actions/
     └── setup.md              ← the per-project identity generator (the only action)

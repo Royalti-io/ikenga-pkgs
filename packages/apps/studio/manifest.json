@@ -7,12 +7,12 @@
   "author": { "name": "Royalti", "key": "royalti" },
 
   "requires": [
-    { "kind": "skill", "name": "@ikenga/studio-archetypes", "source": "npx" },
-    { "kind": "skill", "name": "@ikenga/studio-toolchain", "source": "npx" },
-    { "kind": "skill", "name": "@ikenga/studio-beat-detect", "source": "npx" },
-    { "kind": "skill", "name": "@ikenga/studio-doctor", "source": "npx" },
-    { "kind": "skill", "name": "@ikenga/video-script-structure", "source": "npx" },
-    { "kind": "skill", "name": "@ikenga/storyboard-workflow", "source": "npx" }
+    { "kind": "bundle", "name": "studio-archetypes", "source": "npx" },
+    { "kind": "bundle", "name": "studio-toolchain", "source": "npx" },
+    { "kind": "skill", "name": "studio-beat-detect", "source": "npx" },
+    { "kind": "skill", "name": "studio-doctor", "source": "npx" },
+    { "kind": "skill", "name": "video-script-structure", "source": "npx" },
+    { "kind": "skill", "name": "storyboard-workflow", "source": "npx" }
   ],
 
   "ui": {

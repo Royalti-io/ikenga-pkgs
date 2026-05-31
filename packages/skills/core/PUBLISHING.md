@@ -36,7 +36,7 @@ The package's `files` field controls what ships to npm:
 "files": ["manifest.json", "skills", "README.md"]
 ```
 
-The skill tree lives under `skills/core/`.
+The skill tree lives under `skills/skill-core/`.
 
 ---
 
@@ -48,7 +48,7 @@ The skill tree lives under `skills/core/`.
 
 ```bash
 # From ikenga-pkgs root
-ls packages/skills/core/skills/core/actions/
+ls packages/skills/core/skills/skill-core/actions/
 # Expect: setup.md
 ```
 
@@ -94,7 +94,7 @@ cd dist-mirror && git init -b main && git add . \
 ```bash
 mkdir /tmp/skill-core-test && cd /tmp/skill-core-test
 npx skills add royalti-io/skill-core
-ls .claude/skills/core/      # expect SKILL.md + actions/setup.md
+ls .claude/skills/skill-core/      # expect SKILL.md + actions/setup.md
 ```
 
 ---
