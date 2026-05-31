@@ -50,6 +50,19 @@ if (!Array.isArray(published) || published.length === 0) {
 console.log(`Updating registry for ${published.length} published pkg(s):`);
 for (const p of published) console.log(`  - ${p.name}@${p.version}`);
 
+/**
+ * Catalog curation: pkgs kept installable (by exact name) but HIDDEN from the
+ * default browse/catalog surfaces. Dev/test fixtures + non-functional
+ * scaffolds. Reconciled across the whole index on every publish (below), so
+ * adding/removing a name here takes effect on the next publish — no manual
+ * re-sign needed.
+ */
+const HIDDEN_PKGS = new Set([
+  '@ikenga/pkg-hello', // registry-pipeline smoke fixture
+  '@ikenga/pkg-engine-noop', // test fixture / shell-without-AI mode
+  '@ikenga/pkg-engine-cursor-agent', // scaffold-only; runtime stubbed (ADR-013 Phase 4)
+]);
+
 /** `@ikenga/pkg-engine-claude-code` → `engine-claude-code` */
 function shortName(npmName) {
   return npmName.replace(/^@ikenga\//, '').replace(/^pkg-/, '');
@@ -169,6 +182,18 @@ for (const { name, version } of published) {
   } else {
     index.pkgs.push(entry);
     index.pkgs.sort((a, b) => a.name.localeCompare(b.name));
+  }
+}
+
+// Reconcile catalog visibility across ALL entries (not just the ones published
+// this run) so the HIDDEN_PKGS set is self-healing: any publish re-stamps the
+// flag and re-signs the index. `hidden` is omitted (not set to "public") so
+// public entries stay byte-identical to before this feature.
+for (const e of index.pkgs) {
+  if (HIDDEN_PKGS.has(e.name)) {
+    e.visibility = 'hidden';
+  } else if (e.visibility) {
+    delete e.visibility;
   }
 }
 
