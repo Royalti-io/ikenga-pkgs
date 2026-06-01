@@ -15,6 +15,8 @@ importers:
         specifier: ^2.27.10
         version: 2.31.0(@types/node@22.19.19)
 
+  packages/apps/agent-ops: {}
+
   packages/apps/hello: {}
 
   packages/apps/studio:
@@ -281,7 +283,31 @@ importers:
         specifier: latest
         version: 1.3.14
 
+  packages/skills/core: {}
+
   packages/skills/groundwork: {}
+
+  packages/skills/pa: {}
+
+  packages/skills/storyboard-workflow: {}
+
+  packages/skills/studio-archetypes:
+    dependencies:
+      '@ikenga/studio-schema':
+        specifier: ^0.1.0
+        version: 0.1.0
+
+  packages/skills/studio-beat-detect: {}
+
+  packages/skills/studio-doctor: {}
+
+  packages/skills/studio-toolchain:
+    dependencies:
+      '@ikenga/studio-schema':
+        specifier: ^0.1.0
+        version: 0.1.0
+
+  packages/skills/video-script-structure: {}
 
 packages:
 
@@ -688,6 +714,9 @@ packages:
 
   '@ikenga/contract@0.7.0':
     resolution: {integrity: sha512-OsBdwaZ+tuIbtl33E8tiXPVeN5l2eUwgY6IPo9Mqff6E1CgMxN6PnCxCrng08PdBpVqQoyeYmFqM2c5I8jFfNA==}
+
+  '@ikenga/studio-schema@0.1.0':
+    resolution: {integrity: sha512-YHLVFqe6K4MiAhtLt1Ol4Q/K5P/KeFW4vsf7j+6P8g6PiO0+n6PuE6F3NMoxwEzsdpvwJzi/B+da+uVR1WHOjA==}
 
   '@ikenga/tokens@0.2.0':
     resolution: {integrity: sha512-L0RiUEkywv+cXwZR8i2K7aoKd0ZK5gXxZ36x2ipXgM610AowoDTqjRBPvc27GaZ7CxgRey68FtNHD+d9Ry+aig==}
@@ -3396,6 +3425,10 @@ snapshots:
     dependencies:
       zod: 3.25.76
       zod-to-json-schema: 3.25.2(zod@3.25.76)
+
+  '@ikenga/studio-schema@0.1.0':
+    dependencies:
+      zod: 3.25.76
 
   '@ikenga/tokens@0.2.0': {}
 

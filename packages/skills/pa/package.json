@@ -1,6 +1,7 @@
 {
   "name": "@ikenga/skill-pa",
   "version": "0.1.0",
+  "private": true,
   "description": "PA skill — dispatch-only briefing, triage, and send-queue surface for the Ikenga personal-assistant domain.",
   "keywords": [
     "claude",

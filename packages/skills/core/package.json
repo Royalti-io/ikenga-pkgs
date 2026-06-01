@@ -1,6 +1,7 @@
 {
   "name": "@ikenga/skill-core",
   "version": "0.1.0",
+  "private": true,
   "description": "skill-core — the lean dependency hub for the Ikenga skill graph. Ships the per-project identity generator (setup) every domain skill depends on.",
   "keywords": [
     "claude",
