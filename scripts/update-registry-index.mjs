@@ -112,6 +112,22 @@ function ikengaDeps(packageJson) {
   return out;
 }
 
+/**
+ * For a `kind:"bundle"` pkg (Ọba WP-18/22), derive its member skill leaves from
+ * the on-disk `skills/<member>/` subdirs. The catalog carries this so the Ọba
+ * resolver can expand a bundle into its members — and the consent UX can list
+ * "also installs N skills" — WITHOUT fetching the tarball (WP-20). Returns
+ * `undefined` for non-bundle pkgs so their catalog entries stay byte-identical.
+ */
+function bundleMembers(pkgDir, manifest) {
+  if (manifest.kind !== 'bundle') return undefined;
+  const skillsDir = join(pkgDir, 'skills');
+  if (!existsSync(skillsDir)) return [];
+  return readdirSync(skillsDir)
+    .filter((m) => statSync(join(skillsDir, m)).isDirectory())
+    .sort();
+}
+
 // Clone the registry repo into a tempdir using the PAT
 const tmp = mkdtempSync(join(tmpdir(), 'ikenga-registry-'));
 const registryDir = join(tmp, 'ikenga-registry');
@@ -144,6 +160,9 @@ for (const { name, version } of published) {
   manifest.version = version;
   const dist = await npmDistInfo(name, version);
   const deps = ikengaDeps(pkgJson);
+  // WP-22/20: a bundle pkg carries its member skill leaves so the resolver can
+  // expand it without fetching the tarball. `undefined` for non-bundles.
+  const members = bundleMembers(pkgDir, manifest);
 
   const detailPath = join(registryDir, 'pkgs', `${short}.json`);
   let detail;
@@ -163,6 +182,7 @@ for (const { name, version } of published) {
     size: dist.size,
     manifest,
     deps,
+    ...(members ? { members } : {}),
   });
   detail.updatedAt = nowIso;
   writeFileSync(detailPath, JSON.stringify(detail, null, 2) + '\n');
@@ -176,6 +196,7 @@ for (const { name, version } of published) {
     detail: `pkgs/${short}.json`,
     description: pkgJson.description,
     kind: manifest.kind,
+    ...(members ? { members } : {}),
   };
   if (existing) {
     Object.assign(existing, entry);
