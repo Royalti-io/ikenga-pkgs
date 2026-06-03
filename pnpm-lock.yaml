@@ -73,7 +73,11 @@ importers:
 
   packages/apps/suite: {}
 
-  packages/apps/tasks: {}
+  packages/apps/tasks:
+    devDependencies:
+      '@ikenga/tokens':
+        specifier: ^0.3.0
+        version: 0.3.0
 
   packages/engine/claude-code:
     dependencies:
@@ -720,6 +724,9 @@ packages:
 
   '@ikenga/tokens@0.2.0':
     resolution: {integrity: sha512-L0RiUEkywv+cXwZR8i2K7aoKd0ZK5gXxZ36x2ipXgM610AowoDTqjRBPvc27GaZ7CxgRey68FtNHD+d9Ry+aig==}
+
+  '@ikenga/tokens@0.3.0':
+    resolution: {integrity: sha512-t2ND8Eeq39Zg2qHeyWlCjmRWOk7u4pCLtIOJE9l6gi5/ANfNY69ff2cK5SKSnr3X3phXu0z1tBJUQUpeTSTZ0w==}
 
   '@inquirer/external-editor@1.0.3':
     resolution: {integrity: sha512-RWbSrDiYmO4LbejWY7ttpxczuwQyZLBUyygsA9Nsv95hpzUWwnNTVQmAq3xuh7vNwCp07UTmE5i11XAEExx4RA==}
@@ -3431,6 +3438,8 @@ snapshots:
       zod: 3.25.76
 
   '@ikenga/tokens@0.2.0': {}
+
+  '@ikenga/tokens@0.3.0': {}
 
   '@inquirer/external-editor@1.0.3(@types/node@22.19.19)':
     dependencies:

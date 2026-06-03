@@ -1,7 +1,7 @@
 {
   "name": "@ikenga/pkg-tasks",
   "version": "0.4.0",
-  "description": "Tasks — List, Agenda, Triage over the production tasks schema. Multi-file iframe pkg, no build step.",
+  "description": "Tasks — List, Agenda, Triage over the production tasks schema. Multi-file iframe pkg; deterministic CSS vendoring build.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -18,7 +18,10 @@
     "README.md"
   ],
   "scripts": {
-    "build": "echo 'no build — multi-file ESM pkg'",
+    "build": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.dev.json"
+  },
+  "devDependencies": {
+    "@ikenga/tokens": "^0.3.0"
   }
 }

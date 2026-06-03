@@ -30,4 +30,9 @@ jobs:
 
       - run: pnpm -r build
 
+      # Drift guard: a committed dist/ artifact that doesn't match a fresh build
+      # fails CI. Catches the hand-vendored CSS-string drift the tasks build
+      # (scripts/build.mjs) was added to kill — and applies to every pkg.
+      - run: git diff --exit-code
+
       - run: pnpm -r test --if-present

@@ -31,28 +31,12 @@ function injectCss(id, css) {
   el.textContent = css;
   document.head.appendChild(el);
 }
-// Legacy token aliases. tasks.css (ported from the source app) uses a handful
-// of token names @ikenga/tokens doesn't expose — map each to its canonical
-// bundled token. These are theme-AGNOSTIC (no --color-* host slots, no literal
-// fallbacks): they ride whatever [data-theme][data-mode] palette the bundled
-// tokens.css resolves, so they track the shell's theme automatically once the
-// mirror below sets the matching attributes. (--mail-fg, --tab-h, --radius-pill
-// keep their inline fallbacks in tasks.css and aren't aliased here.)
-const aliasCss = `
-:root {
-  --live:             var(--success);
-  --live-soft:        color-mix(in srgb, var(--success) 14%, transparent);
-  --agent-soft:       color-mix(in srgb, var(--agent) 14%, transparent);
-  --achievement-soft: color-mix(in srgb, var(--achievement) 14%, transparent);
-  --fg-faint:         var(--fg-subtle);
-  --text-body-sm:     var(--text-body);
-  --text-h4:          var(--text-h3);
-  --font-body:        var(--font-sans);
-  --motion-fast:      120ms;
-  --ease-calm:        ease;
-}`;
+// Token-alias shim REMOVED (P3 retrofit, 2026-06-03). @ikenga/tokens@0.3.0 now
+// defines --live/--live-soft/--live-fg, --agent-soft, --achievement-soft,
+// --fg-faint, --text-body-sm, --text-h4, --font-body, and --motion-*/--ease-*
+// natively (the P0 reconciliation), so the hand-maintained drift-prone shim is
+// gone. tokens-css.js below is the reconciled @ikenga/tokens (Dusk Wood).
 injectCss('data-tokens-css', tokensCss);
-injectCss('data-token-aliases', aliasCss);
 injectCss('data-tasks-css', tasksCss);
 
 // Theme — own it directly by mirroring the shell's <html> attributes, NOT via
