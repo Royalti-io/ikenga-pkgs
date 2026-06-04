@@ -24,7 +24,15 @@
          whole iframe document scroll, which also defeats sticky group headers
          (they'd stick to the page, not the list). */
       html, body, #root { height: 100%; overflow: hidden; }
-      body { margin: 0; background: var(--tasks-bg); color: var(--tasks-fg); font: 14px/1.4 var(--font-sans, system-ui); -webkit-font-smoothing: antialiased; }
+      /* `html body` (specificity 0,0,2), not `body` (0,0,1): app.js injects the
+         vendored app-kit-css AFTER this <style> (P3 inc-3), and its 00-base
+         `body {}` reset sets font-family:var(--font-body) (Inter) / 13px / 1.55.
+         The shipped Tasks pane has always rendered its inherited text in
+         var(--font-sans) (Plus Jakarta Sans) at 14px/1.4 — bumping the
+         specificity here keeps that base intact so adopting the kit introduces
+         no pane-wide font/size shift (the kit's box-sizing + margin resets are
+         duplicates of the rules above, so they stay no-ops). */
+      html body { margin: 0; background: var(--tasks-bg); color: var(--tasks-fg); font: 14px/1.4 var(--font-sans, system-ui); -webkit-font-smoothing: antialiased; }
       #root > .boot { padding: 1rem 1.25rem; font-size: 0.85rem; color: var(--tasks-muted); }
     </style>
   </head>
