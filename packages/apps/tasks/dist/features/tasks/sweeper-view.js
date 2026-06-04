@@ -116,10 +116,10 @@ export function SweeperView() {
           Awaiting your call · ${awaitingRows.length}
         </div>
         ${awaitingRows.map((t) => html`
-          <div class="tk-row" key=${t.id}>
-            <span class=${`pri-dot ${priClass(t.priority)}`}></span>
-            <div class="body">
-              <div class="title">${t.title}</div>
+          <div class="dense-row dense-row--task" key=${t.id}>
+            <span class=${`dense-row-dot ${priClass(t.priority)}`}></span>
+            <div class="dense-row-body">
+              <div class="dense-row-title">${t.title}</div>
               <div class="meta">
                 <span class="tk-autoclose" style=${{ color: 'var(--achievement)' }}>
                   <${Icon} name="alert-circle" size=${11} />
@@ -127,7 +127,7 @@ export function SweeperView() {
                 </span>
               </div>
             </div>
-            <div class="right" style=${{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
+            <div class="dense-row-right" style=${{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
               <${Button} size="sm" variant="ghost">Keep open</${Button}>
               <${Button} size="sm" variant="affirmative">Approve close</${Button}>
             </div>
@@ -150,7 +150,7 @@ export function SweeperView() {
         </div>
       `}
       ${recentRows.map((t) => html`
-        <div class="tk-row is-completed" key=${t.id}>
+        <div class="dense-row dense-row--task is-completed" key=${t.id}>
           <span class=${`pri-dot ${priClass(t.priority)}`}></span>
           <div class="body">
             <div class="title">${t.title}</div>
@@ -162,7 +162,7 @@ export function SweeperView() {
               </span>
             </div>
           </div>
-          <div class="right"><span class="due">${relTime(t.completed_at)}</span></div>
+          <div class="dense-row-right"><span class="dense-row-due">${relTime(t.completed_at)}</span></div>
         </div>
       `)}
     </div>

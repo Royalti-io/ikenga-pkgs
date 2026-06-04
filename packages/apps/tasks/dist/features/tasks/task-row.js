@@ -29,12 +29,12 @@ export function TaskRow({ task, selected, onSelect }) {
   return html`
     <button
       type="button"
-      class=${cn('tk-row', selected && 'is-on', autoClosed && 'is-completed')}
+      class=${cn('dense-row dense-row--task', selected && 'is-on', autoClosed && 'is-completed')}
       onClick=${() => onSelect(task.id)}
     >
-      <span class=${cn('pri-dot', priorityClass(task.priority))}></span>
-      <div class="body">
-        <div class="title">${task.title}</div>
+      <span class=${cn('dense-row-dot', priorityClass(task.priority))}></span>
+      <div class="dense-row-body">
+        <div class="dense-row-title">${task.title}</div>
         <div class="meta">
           <span class=${cn('tk-badge', statusClass(task.status))}>
             <span class="dot"></span>
@@ -62,8 +62,8 @@ export function TaskRow({ task, selected, onSelect }) {
           `}
         </div>
       </div>
-      <div class="right">
-        <span class=${cn('due', due.cls)}>${due.label}</span>
+      <div class="dense-row-right">
+        <span class=${cn('dense-row-due', due.cls)}>${due.label}</span>
       </div>
     </button>
   `;
