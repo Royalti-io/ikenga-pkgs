@@ -113,11 +113,11 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
 
   return html`
     <div class=${cn('tk-detail-pane', `is-${density}`)}>
-      <div class="tk-det-head">
-        <div class="tk-det-topline">
+      <div class="ip-head">
+        <div class="ip-topline">
           <span class="id">task · ${shortId(task.id)}</span>
           ${density === 'full' && html`
-            <div class="tk-det-actions">
+            <div class="ip-topline-actions">
               <${Button} variant="outline" size="sm" type="button">Reschedule</${Button}>
               <${Button}
                 variant=${reassignOpen ? 'default' : 'outline'}
@@ -190,7 +190,7 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
           </div>
         `}
 
-        <h2 class="tk-det-title">${task.title}</h2>
+        <h2 class="ip-title">${task.title}</h2>
 
         <div class="tk-det-meta-row">
           <span class=${cn('tk-badge', statusClass(task.status))}>
@@ -229,7 +229,7 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
         </div>
       </div>
 
-      <div class="tk-det-body">
+      <div class="ip-body">
         ${autoClosed && task.outcome_notes && html`
           <div class="tk-evidence">
             <div class="tk-evidence-head">
@@ -275,7 +275,7 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
         ${task.description && html`
           <div>
             <div class="tk-section-label"><span>Description</span></div>
-            <div class="tk-desc">${task.description}</div>
+            <div class="ip-desc">${task.description}</div>
           </div>
         `}
 
@@ -307,8 +307,8 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
             ${task.progress_pct !== null && html`
               <dt>Progress</dt>
               <dd>
-                <div class="tk-progress">
-                  <span style=${{ width: `${task.progress_pct}%` }}></span>
+                <div class="ip-progress">
+                  <span class="ip-progress-fill" style=${{ width: `${task.progress_pct}%` }}></span>
                 </div>
                 <span style=${{ fontFamily: 'var(--font-mono)', fontSize: 10.5, color: 'var(--fg-muted)' }}>
                   ${task.progress_pct}%
@@ -447,9 +447,9 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
       </div>
 
       ${density !== 'full' && html`
-        <div class="tk-action-bar">
+        <div class="ip-action-bar">
           <${Button} variant="outline" size="sm" type="button">Reschedule</${Button}>
-          <span class="spacer"></span>
+          <span class="ip-action-bar-spacer"></span>
           <${Button}
             size="sm"
             type="button"

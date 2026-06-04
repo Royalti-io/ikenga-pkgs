@@ -20,6 +20,12 @@ mkdirSync('dist/lib', { recursive: true });
 // 1. Vendor the reconciled tokens JS-string from the installed @ikenga/tokens.
 copyFileSync(require.resolve('@ikenga/tokens/tokens-css'), 'dist/lib/tokens-css.js');
 
+// 1b. Vendor the app-kit component layer (P3 inc-3) — the kit primitives tasks
+//     now consumes (.frame*, .ip-*, .dense-row*, .tk-badge, .tk-execmode). Copied
+//     from the same installed @ikenga/tokens so it can never drift; app.js injects
+//     it between tokens-css and tasks-css (tokens → app-kit → domain residue).
+copyFileSync(require.resolve('@ikenga/tokens/app-kit-css'), 'dist/lib/app-kit-css.js');
+
 // 2. Regenerate the domain CSS string from dist/tasks.css (the source of truth).
 const css = readFileSync('dist/tasks.css', 'utf8');
 const header =
@@ -28,4 +34,4 @@ const header =
   '// about:srcdoc the shell mounts, so app.js injects this as an inline <style>.\n';
 writeFileSync('dist/lib/tasks-css.js', header + 'export default ' + JSON.stringify(css) + '\n');
 
-console.log('[tasks build] vendored tokens-css.js + regenerated tasks-css.js from dist/tasks.css');
+console.log('[tasks build] vendored tokens-css.js + app-kit-css.js + regenerated tasks-css.js from dist/tasks.css');

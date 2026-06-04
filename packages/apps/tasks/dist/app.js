@@ -17,13 +17,18 @@ import {
 import { connectBridge, isStandalone } from './lib/bridge.js';
 import { TasksView } from './features/tasks/tasks-view.js';
 import tokensCss from './lib/tokens-css.js';
+import appKitCss from './lib/app-kit-css.js';
 import tasksCss from './lib/tasks-css.js';
 
 // Styling, the no-build way. A <link>/fetch to a .css fails inside the shell's
 // about:srcdoc iframe (WebKitGTK subresource bug — see index.html), so CSS
 // rides the script path as JS strings and is injected as inline <style>
-// (style-src 'unsafe-inline' permits it). Order matters: tokens first (they
-// define --fg/--bg-base/--space-*/etc.), then tasks.css which consumes them.
+// (style-src 'unsafe-inline' permits it). Order matters (cascade): tokens first
+// (they define --fg/--bg-base/--space-*/etc.), THEN the app-kit component layer
+// (.frame*/.ip-*/.dense-row*/.tk-badge/.tk-execmode — the kit primitives tasks
+// now consumes, P3 inc-3), THEN tasks.css (the slim domain residue, which is
+// injected LAST so its scoped rules win over any kit base it intentionally
+// overrides, e.g. the .ag-block agenda variant).
 function injectCss(id, css) {
   if (document.querySelector(`style[${id}]`)) return;
   const el = document.createElement('style');
@@ -35,8 +40,10 @@ function injectCss(id, css) {
 // defines --live/--live-soft/--live-fg, --agent-soft, --achievement-soft,
 // --fg-faint, --text-body-sm, --text-h4, --font-body, and --motion-*/--ease-*
 // natively (the P0 reconciliation), so the hand-maintained drift-prone shim is
-// gone. tokens-css.js below is the reconciled @ikenga/tokens (Dusk Wood).
+// gone. tokens-css.js below is the reconciled @ikenga/tokens (Dusk Wood);
+// app-kit-css.js is the kit component layer vendored alongside it (P3 inc-3).
 injectCss('data-tokens-css', tokensCss);
+injectCss('data-app-kit-css', appKitCss);
 injectCss('data-tasks-css', tasksCss);
 
 // Theme — own it directly by mirroring the shell's <html> attributes, NOT via

@@ -134,10 +134,10 @@ export function DoneView() {
               ? t.outcome_notes.replace(/^Auto-closed by task-health:?\s*/, '') || 'auto-closed'
               : null;
             return html`
-              <div class="tk-row is-completed" key=${t.id}>
-                <span class=${`pri-dot ${priClass(t.priority)}`}></span>
-                <div class="body">
-                  <div class="title">${t.title}</div>
+              <div class="dense-row dense-row--task is-completed" key=${t.id}>
+                <span class=${`dense-row-dot ${priClass(t.priority)}`}></span>
+                <div class="dense-row-body">
+                  <div class="dense-row-title">${t.title}</div>
                   <div class="meta">
                     <span class="tk-badge is-completed"><span class="dot"></span>completed</span>
                     ${isAuto && html`
@@ -148,8 +148,8 @@ export function DoneView() {
                     `}
                   </div>
                 </div>
-                <div class="right">
-                  <span class="due">${relTime(t.completed_at ?? t.updated_at)}</span>
+                <div class="dense-row-right">
+                  <span class="dense-row-due">${relTime(t.completed_at ?? t.updated_at)}</span>
                 </div>
               </div>
             `;

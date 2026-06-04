@@ -399,11 +399,11 @@ export function TasksView({ activeFeature } = {}) {
 
   return html`
     <div class="tk-screen">
-      <div class="tk-frame" style=${{ flex: 1 }}>
-        <div class="tk-frame-head">
-          <div class="tk-frame-title-wrap">
-            <${Icon} name="check-square" size=${15} className="tk-frame-title-mark" />
-            <h2 class="tk-frame-title">
+      <div class="frame" style=${{ flex: 1 }}>
+        <div class="frame-head">
+          <div class="frame-title-wrap">
+            <${Icon} name="check-square" size=${15} className="frame-title-mark" />
+            <h2 class="frame-title">
               ${VIEW_LABELS[view] ?? 'Tasks'}
               ${autoClosedCount > 0 &&
               html`<span class="tk-frame-count">· ${autoClosedCount} auto-closed</span>`}
