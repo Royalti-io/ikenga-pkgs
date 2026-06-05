@@ -1,6 +1,6 @@
 {
   "name": "@ikenga/pkg-engine-gemini",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Gemini CLI engine adapter for Ikenga.",
   "license": "Apache-2.0",
   "repository": {

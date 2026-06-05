@@ -45,7 +45,11 @@ jobs:
         id: changesets
         uses: changesets/action@v1
         with:
-          version: pnpm changeset version
+          # version-packages = `changeset version` + sync-manifest-versions, so
+          # the Release PR carries manifest.json versions matching package.json
+          # (the shell kernel records the manifest version on install — drift
+          # here makes updates install but never change the displayed version).
+          version: pnpm version-packages
           publish: pnpm changeset publish
           createGithubReleases: true
           title: "chore: version packages"

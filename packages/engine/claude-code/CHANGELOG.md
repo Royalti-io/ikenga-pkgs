@@ -1,5 +1,15 @@
 # @ikenga/pkg-engine-claude-code
 
+## 0.2.1
+
+### Patch Changes
+
+- Republish with `manifest.json` version synced to the npm version. Previous
+  tarballs shipped a stale manifest version, so the shell recorded the old
+  version after every update and re-offered the same update forever.
+  (`@ikenga/pkg-tasks` also catches its npm version up to the manifest's 0.8.x
+  line — npm history jumps 0.4.1 → 0.8.1.)
+
 ## 0.2.0
 
 ### Minor Changes

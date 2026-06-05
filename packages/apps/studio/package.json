@@ -1,6 +1,6 @@
 {
   "name": "@ikenga/studio",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "description": "com.ikenga.studio app pkg — sidecars/project, mcp, src/studio. (WP-05a scaffolding minimum.)",

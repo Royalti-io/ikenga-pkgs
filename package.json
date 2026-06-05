@@ -8,7 +8,9 @@
 		"lift:requires": "node scripts/lift-requires.mjs",
 		"lift:requires:check": "node scripts/lift-requires.mjs --check",
 		"changeset": "changeset",
-		"version-packages": "changeset version",
+		"sync:versions": "node scripts/sync-manifest-versions.mjs",
+		"sync:versions:check": "node scripts/sync-manifest-versions.mjs --check",
+		"version-packages": "changeset version && node scripts/sync-manifest-versions.mjs",
 		"release": "changeset publish"
 	},
 	"devDependencies": {

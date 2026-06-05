@@ -1,6 +1,6 @@
 {
   "name": "@ikenga/pkg-engine-codex",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Codex CLI engine adapter for Ikenga — install-time portability for the OpenAI `codex` CLI (ADR-012 Track C).",
   "license": "Apache-2.0",
   "repository": {

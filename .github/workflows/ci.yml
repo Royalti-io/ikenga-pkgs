@@ -35,4 +35,10 @@ jobs:
       # (scripts/build.mjs) was added to kill — and applies to every pkg.
       - run: git diff --exit-code
 
+      # Version drift guard: manifest.json must match package.json in every
+      # pkg — the registry advertises the npm version but the shell kernel
+      # records the manifest version, so drift makes updates install without
+      # ever changing the displayed version.
+      - run: pnpm sync:versions:check
+
       - run: pnpm -r test --if-present

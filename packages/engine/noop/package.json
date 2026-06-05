@@ -1,6 +1,6 @@
 {
   "name": "@ikenga/pkg-engine-noop",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "No-op engine adapter for Ikenga — proves the engine pluggability pattern; used as a test fixture and for shell-without-AI mode.",
   "license": "Apache-2.0",
   "repository": {
