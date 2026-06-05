@@ -87,7 +87,7 @@ export async function hostSendToActiveSession(prompt, source = 'com.ikenga.agent
 }
 
 /**
- * Read the local `pa.db` via the host's `host.dbQuery` verb.
+ * Read the local `ikenga.db` via the host's `host.dbQuery` verb.
  * SELECT/WITH only — the shell rejects writes and gates this on the pkg
  * declaring `capabilities.sqlite`. Returns the row array
  * (`structuredContent.rows`); throws on a closed/failed bridge so callers can
@@ -110,7 +110,7 @@ export async function hostDbQuery(sql, params = []) {
 }
 
 /**
- * Write to the local `pa.db` via the host's `host.dbExec` verb.
+ * Write to the local `ikenga.db` via the host's `host.dbExec` verb.
  * INSERT/UPDATE/DELETE only — the shell rejects reads/DDL, gates on the pkg
  * declaring `capabilities.sqlite`, and scopes the target table to the pkg's
  * declared `permissions['sqlite.tables']`. Resolves on success; throws on a

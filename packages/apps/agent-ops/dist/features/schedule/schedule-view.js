@@ -1,7 +1,7 @@
 // Agent Ops — Schedule view (+ Runs/Failures/Live placeholders).
 //
 // G-VIEW contract: all types pin to dist/lib/view-model.js (FROZEN). This
-// file renders FIXTURE from view-model.js for WP-07. The swap to live pa.db
+// file renders FIXTURE from view-model.js for WP-07. The swap to live ikenga.db
 // reads happens in WP-08 at the clearly marked line below.
 //
 // Side-menu (Ngwa-style: Views + Filters, published via host.pkg.setMenu).
@@ -532,7 +532,7 @@ function ExtRow({ ext }) {
 
 /**
  * Schedule view — KPI strip + 12h timeline + job table.
- * Renders FIXTURE for WP-07. WP-08 replaces FIXTURE with live pa.db reads.
+ * Renders FIXTURE for WP-07. WP-08 replaces FIXTURE with live ikenga.db reads.
  *
  * @param {{ daemonUp: boolean, daemonPid: number|null, data: import('../../lib/view-model.js').ScheduleData, activeFilter: string, onRunNow: (job: any) => void, onToggleEnabled: (job: any) => void, onAdd: () => void, onEdit: (job: import('../../lib/view-model.js').JobView) => void }} props
  */
@@ -953,7 +953,7 @@ export function ScheduleView({ activeFeature, bridgeReady = true } = {}) {
   const [activeFilter, setActiveFilter] = useState('f:all');
 
   // WP-08: live data load. Initial paint uses FIXTURE (immediate, no flash).
-  // Once the bridge is available, loadScheduleData() fetches from pa.db via
+  // Once the bridge is available, loadScheduleData() fetches from ikenga.db via
   // host.agentOps.listJobs + host.dbQuery. Standalone dev keeps FIXTURE.
   /** @type {[import('../../lib/view-model.js').ScheduleData, Function]} */
   const [data, setData] = useState(FIXTURE);

@@ -2,7 +2,7 @@
 //
 // Single-feature app (Schedule view as the primary; Runs/Failures/Live are
 // WP-11/WP-13 placeholders). All data flows through the host bridge
-// (host.dbQuery reads pa.db cron_job_runs + agent_runs) — there is no
+// (host.dbQuery reads ikenga.db cron_job_runs + agent_runs) — there is no
 // supabase-js client. WP-07 renders FIXTURE from view-model.js.
 
 import {
@@ -148,7 +148,7 @@ function App() {
       // Standalone dev — no parent shell, so no host bridge and no data
       // backend. The view still mounts (themed first paint); data queries will
       // use FIXTURE (no bridge needed in WP-07). Mount the pkg inside the
-      // shell for live pa.db data (WP-08).
+      // shell for live ikenga.db data (WP-08).
       setBridgeReady(true);
       return;
     }

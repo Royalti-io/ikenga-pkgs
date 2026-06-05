@@ -107,7 +107,7 @@ export async function hostPaActionsRun(args) {
 }
 
 /**
- * Read the local `pa.db` via the host's `host.dbQuery` verb (WP-04 read-swap).
+ * Read the local `ikenga.db` via the host's `host.dbQuery` verb (WP-04 read-swap).
  * SELECT/WITH only — the shell rejects writes and gates this on the pkg
  * declaring `capabilities.sqlite`. Returns the row array
  * (`structuredContent.rows`); throws on a closed/failed bridge so callers can
@@ -131,7 +131,7 @@ export async function hostDbQuery(sql, params = []) {
 }
 
 /**
- * Write to the local `pa.db` via the host's `host.dbExec` verb (write-path WP).
+ * Write to the local `ikenga.db` via the host's `host.dbExec` verb (write-path WP).
  * INSERT/UPDATE/DELETE only — the shell rejects reads/DDL, gates on the pkg
  * declaring `capabilities.sqlite`, and scopes the target table to the pkg's
  * declared `permissions['sqlite.tables']`. Resolves on success; throws on a
@@ -160,4 +160,23 @@ export function getContext() {
 /** Detect standalone-dev (no parent shell). */
 export function isStandalone() {
   return typeof window !== 'undefined' && window.parent === window;
+}
+
+/**
+ * Publish a key/value into the shell's iyke iframe-state registry, so
+ * external agents can read "what's open in this pane" via
+ * `iyke iframe-state` / `iyke state` instead of guessing from the DB.
+ *
+ * This is NOT the AppBridge wire: the shell's window-level iyke listener
+ * (iframe-registry.ts) matches `{__iyke:true, kind:'state'}` postMessages by
+ * source window for any registered iframe — pkg iframes are registered by the
+ * host (pkg-iframe-host.tsx Step 1c). Fire-and-forget; no-ops standalone.
+ */
+export function publishIykeState(key, value) {
+  if (isStandalone()) return;
+  try {
+    window.parent.postMessage({ __iyke: true, kind: 'state', payload: { key, value } }, '*');
+  } catch {
+    /* never let debug-surface publishing break the app */
+  }
 }

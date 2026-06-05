@@ -5,7 +5,13 @@
 // choice persists to localStorage.
 
 import { html, cn, Icon, Button, useState, useMemo, useEffect, useQuery } from '../../lib/ui.js';
-import { hostDbQuery, hostSendToActiveSession, isStandalone, setMenu } from '../../lib/bridge.js';
+import {
+  hostDbQuery,
+  hostSendToActiveSession,
+  isStandalone,
+  publishIykeState,
+  setMenu,
+} from '../../lib/bridge.js';
 import { queryKeys } from '../../lib/query-keys.js';
 import { TASKS_LIST_COLUMNS, triageCountsQuery } from '../../lib/queries.js';
 import { CURRENT_USER } from '../../lib/assignees.js';
@@ -283,6 +289,14 @@ export function TasksView({ activeFeature } = {}) {
       console.warn('[tasks] setMenu failed', e),
     );
   }, [view, activeFilter, triageBadge]);
+
+  // Publish the mounted view + open-task selection to the shell's iyke
+  // iframe-state registry, so external agents can answer "what's open in
+  // this pane" from `iyke state` / `iyke iframe-state` instead of guessing
+  // from the DB. Fire-and-forget debug surface — no host round-trip.
+  useEffect(() => {
+    publishIykeState('selection', { view, taskId: selectedId });
+  }, [view, selectedId]);
 
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.tasks.list(

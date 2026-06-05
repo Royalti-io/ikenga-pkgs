@@ -44,7 +44,7 @@
 // ---------- RunView ← cron_job_runs (0031) ----------
 
 /**
- * One run-history row. Source: pa.db cron_job_runs (migration 0031, STRICT).
+ * One run-history row. Source: ikenga.db cron_job_runs (migration 0031, STRICT).
  * @typedef {Object} RunView
  * @property {string}        id                 cron_job_runs.id (PK, randomUUID)
  * @property {string}        job_id             cron_job_runs.job_id (namespace:slug)
@@ -66,7 +66,7 @@
 // ---------- AgentRunView ← agent_runs (0025) ----------
 
 /**
- * One agent-run row (the /agent-runs view). Source: pa.db agent_runs (migration 0025, STRICT).
+ * One agent-run row (the /agent-runs view). Source: ikenga.db agent_runs (migration 0025, STRICT).
  * NB (M7): agent_runs has NO cost/token columns — usage lives only on the correlated RunView.
  * @typedef {Object} AgentRunView
  * @property {string}        id                 agent_runs.id (PK)
@@ -135,7 +135,7 @@
  */
 
 // ---------- fixture (mock contract #P2-1) — lets WP-10/11/13 build before WP-08 ----------
-// 3 jobs (agent ok / script running / agent failing) + 1 disabled + 1 external; pa.db-shaped.
+// 3 jobs (agent ok / script running / agent failing) + 1 disabled + 1 external; ikenga.db-shaped.
 
 export const FIXTURE = /** @type {ScheduleData} */ ({
   daemon_up: true,

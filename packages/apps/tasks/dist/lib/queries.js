@@ -1,9 +1,9 @@
 // Query layer — ported from src/lib/queries/tasks.ts. JSDoc carries the TS
-// types. Schema verified against the local pa.db `tasks` table (shell
+// types. Schema verified against the local ikenga.db `tasks` table (shell
 // migration 0025_tasks_domain.sql): every selected column exists.
 //
 // WP-04 read-swap: reads go through the host's `host.dbQuery` verb (local
-// pa.db) instead of an in-iframe supabase-js client. Write-path WP: the
+// ikenga.db) instead of an in-iframe supabase-js client. Write-path WP: the
 // status-update WRITE goes through `host.dbExec` (see `updateTaskStatus`), so
 // this pkg no longer depends on supabase-js at all.
 
@@ -11,7 +11,7 @@ import { hostDbExec, hostDbQuery } from './bridge.js';
 import { queryKeys } from './query-keys.js';
 import { CURRENT_USER } from './assignees.js';
 
-// pa.db stores former Postgres array/json columns as TEXT (the Pg→SQLite
+// ikenga.db stores former Postgres array/json columns as TEXT (the Pg→SQLite
 // down-map, shell migration 0025). `tags` arrives as a string, not a JS array
 // — normalize it back so the Task shape matches the JSDoc + the detail pane's
 // `.map`/`.length` usage. JSON first (the canonical ETL encoding), then a
@@ -194,7 +194,7 @@ export function blockingTaskQuery(blockingId) {
 }
 
 /**
- * Write a task's status to the local pa.db via `host.dbExec` (write-path WP).
+ * Write a task's status to the local ikenga.db via `host.dbExec` (write-path WP).
  * `completed_at` is set to now when moving to `completed` and cleared to NULL
  * otherwise, so a non-completed task never carries a stale completion stamp.
  * The host scopes this write to the pkg's declared `sqlite.tables` (`tasks`).
@@ -224,7 +224,7 @@ export async function updateTaskStatus(taskId, status) {
  */
 
 /**
- * Insert a new task into the local pa.db via `host.dbExec` (write-path WP).
+ * Insert a new task into the local ikenga.db via `host.dbExec` (write-path WP).
  * Now that `host.dbExec` allows a real INSERT (the table is in the pkg's
  * declared `sqlite.tables`), creation no longer has to round-trip through the
  * agent. The id is a client-generated uuid; created_at/updated_at are stamped

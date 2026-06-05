@@ -1,6 +1,6 @@
 // Sweeper — auto-close review queue. Ports the design's SWEEPER_HTML
 // (atelier-tasks.html). The full design surfaces a confidence band: ≥ 0.9
-// auto-closes silently; 0.6–0.9 waits here for human sign-off. The pa.db
+// auto-closes silently; 0.6–0.9 waits here for human sign-off. The ikenga.db
 // schema does not yet have a `task_signals` table to carry that signal, so
 // this first cut shows two cohorts:
 //

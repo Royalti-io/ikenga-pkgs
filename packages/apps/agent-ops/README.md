@@ -1,7 +1,7 @@
 # Agent Ops
 
 Ikenga pkg — **schedule observability** and **agent run history** over the
-local `pa.db`. Multi-file iframe pkg, **no build step**. React 19 + htm +
+local `ikenga.db`. Multi-file iframe pkg, **no build step**. React 19 + htm +
 TanStack Query via esm.sh.
 
 | | |
@@ -9,7 +9,7 @@ TanStack Query via esm.sh.
 | Pkg id | `com.ikenga.agent-ops` |
 | Kind | `embedded` (UI iframe) |
 | Surface | `/pkg/com.ikenga.agent-ops/` + deep-linkable sub-routes `/schedule` `/runs` `/failures` `/live` — all mount this same bundle; the pkg derives its initial view from the pane pathname and keeps the URL in sync on view change via `host.navigate`. The shell's `/cron` + `/agent-runs` routes deep-link here. |
-| Data | pa.db `cron_job_runs` + `agent_runs` (WP-08 live; WP-07 uses FIXTURE) |
+| Data | ikenga.db `cron_job_runs` + `agent_runs` (WP-08 live; WP-07 uses FIXTURE) |
 | Build | none — `dist/` is the whole app |
 | License | Apache-2.0 (per ADR-009) |
 
@@ -50,7 +50,7 @@ Filters dim on Runs/Live/Failures (list-only, mirrors tasks-pkg `filtersInert`).
 
 WP-07: all data comes from `FIXTURE` in `lib/view-model.js`.
 
-WP-08 will swap in live pa.db reads via `hostDbQuery`. The swap point is
+WP-08 will swap in live ikenga.db reads via `hostDbQuery`. The swap point is
 `schedule-view.js` at the `// WP-08: replace FIXTURE with hostDbQuery(...)` marker.
 
 ## G-VIEW contract
