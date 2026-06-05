@@ -1,7 +1,7 @@
 {
   "id": "com.ikenga.agent-ops",
   "name": "Agent Ops",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "ikenga_api": "1",
   "kind": "embedded",
   "author": { "name": "Royalti", "key": "royalti" },
@@ -19,6 +19,26 @@
     "routes": [
       {
         "path": "/",
+        "kind": "iframe",
+        "source": "dist/index.html"
+      },
+      {
+        "path": "/schedule",
+        "kind": "iframe",
+        "source": "dist/index.html"
+      },
+      {
+        "path": "/runs",
+        "kind": "iframe",
+        "source": "dist/index.html"
+      },
+      {
+        "path": "/failures",
+        "kind": "iframe",
+        "source": "dist/index.html"
+      },
+      {
+        "path": "/live",
         "kind": "iframe",
         "source": "dist/index.html"
       }

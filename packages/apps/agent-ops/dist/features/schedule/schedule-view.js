@@ -12,7 +12,7 @@
 // activeFeature dispatch useEffect.
 
 import { html, cn, Icon, Button, useState, useMemo, useEffect, useRef } from '../../lib/ui.js';
-import { isStandalone, setMenu, hostAgentOpsRunNow, hostAgentOpsSetEnabled, hostAgentOpsTailRun } from '../../lib/bridge.js';
+import { isStandalone, setMenu, hostNavigate, hostAgentOpsRunNow, hostAgentOpsSetEnabled, hostAgentOpsTailRun } from '../../lib/bridge.js';
 import { JobFormModal } from './job-form.js';
 import { FIXTURE, isJobView } from '../../lib/view-model.js';
 import { loadScheduleData } from '../../lib/queries.js';
@@ -83,14 +83,43 @@ function deriveDomains(jobs) {
 /** @typedef {'schedule'|'runs'|'failures'|'live'} AgentOpsView */
 
 const VIEW_STORAGE_KEY = 'ikenga-agentops-view';
+const PKG_ROUTE_BASE = '/pkg/com.ikenga.agent-ops';
 
-/** @returns {AgentOpsView} */
-function loadView() {
+/** Coerce an arbitrary string to a view name, or null.
+ *  @param {string|null|undefined} v
+ *  @returns {AgentOpsView|null} */
+function asView(v) {
+  return v === 'schedule' || v === 'runs' || v === 'failures' || v === 'live'
+    ? /** @type {AgentOpsView} */ (v)
+    : null;
+}
+
+/** The view named by the shell pane's current route, or null when the pane is
+ *  on the pkg root `/` (or standalone / cross-origin). The manifest registers
+ *  /schedule /runs /failures /live as real sub-routes — all mounting this same
+ *  bundle — so `/cron` and `/agent-runs` can deep-link a specific view and a
+ *  persisted pane restores the view it was on. Same-origin parent read, same
+ *  pattern as the theme mirror in app.js.
+ *  @returns {AgentOpsView|null} */
+function viewFromPath() {
   try {
-    const v = localStorage.getItem(VIEW_STORAGE_KEY);
-    if (v === 'schedule' || v === 'runs' || v === 'failures' || v === 'live') {
-      return /** @type {AgentOpsView} */ (v);
-    }
+    if (window.parent === window) return null;
+    const path = window.parent.location.pathname;
+    if (!path.startsWith(`${PKG_ROUTE_BASE}/`)) return null;
+    return asView(path.slice(PKG_ROUTE_BASE.length + 1).replace(/\/+$/, ''));
+  } catch {
+    return null; // standalone / cross-origin embed
+  }
+}
+
+/** Initial view: deep-linked sub-route wins, then the last-used view from
+ *  localStorage, then Schedule. @returns {AgentOpsView} */
+function loadView() {
+  const fromPath = viewFromPath();
+  if (fromPath) return fromPath;
+  try {
+    const v = asView(localStorage.getItem(VIEW_STORAGE_KEY));
+    if (v) return v;
   } catch {
     /* localStorage unavailable (sandboxed iframe) */
   }
@@ -996,14 +1025,34 @@ export function ScheduleView({ activeFeature, bridgeReady = true } = {}) {
   function changeView(v) {
     setView(v);
     try { localStorage.setItem(VIEW_STORAGE_KEY, v); } catch { /* ignore */ }
+    // Keep the shell pane's URL on the matching sub-route so the persisted
+    // pane-tree (and anything reading the address bar) reflects the active
+    // view. Same-source routes → PkgIframeHost doesn't remount, so this is a
+    // pure URL update. No-op when already there; best-effort otherwise.
+    if (!isStandalone() && viewFromPath() !== v) {
+      hostNavigate(`${PKG_ROUTE_BASE}/${v}`).catch(() => {});
+    }
   }
 
   // Shell side-menu selection → view + filter dispatch.
   // id taxonomy:
   //   v:schedule | v:runs | v:failures | v:live  — switch the mounted view
   //   f:all | f:enabled | f:disabled | f:ext     — filter the job table (schedule-only)
+  //
+  // Mount-time precedence: the host re-emits the LAST STORED activeFeature
+  // when the iframe (re)mounts — which may be stale relative to a sub-route
+  // deep-link (/pkg/…/runs). The pathname is the more recent intent, so the
+  // FIRST pushed feature loses to a pathname-derived view unless it agrees;
+  // every subsequent push is a real user click and is honored.
+  const initialPathView = useRef(viewFromPath());
+  const sawFirstFeature = useRef(false);
   useEffect(() => {
     if (!activeFeature) return;
+    const isFirst = !sawFirstFeature.current;
+    sawFirstFeature.current = true;
+    if (isFirst && initialPathView.current && activeFeature !== `v:${initialPathView.current}`) {
+      return; // stale re-emit — the deep-linked sub-route wins
+    }
 
     if (activeFeature.startsWith('v:')) {
       const v = activeFeature.slice(2);
@@ -1014,7 +1063,7 @@ export function ScheduleView({ activeFeature, bridgeReady = true } = {}) {
     }
 
     if (activeFeature.startsWith('f:')) {
-      setView('schedule');
+      changeView('schedule'); // filters only apply to the Schedule job table
       setActiveFilter(activeFeature);
       return;
     }
