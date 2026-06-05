@@ -1,6 +1,6 @@
 {
   "name": "@ikenga/pkg-tasks",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Tasks — List, Agenda, Triage over the production tasks schema. Multi-file iframe pkg; deterministic CSS vendoring build.",
   "license": "Apache-2.0",
   "repository": {
