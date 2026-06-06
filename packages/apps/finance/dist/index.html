@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Finance</title>
+    <!-- No <link rel="stylesheet">: WebKitGTK can't load subresources (link/
+         fetch/img) from the about:srcdoc document the shell mounts — only
+         inlined scripts work. So finance.css ships as a JS string (lib/finance-css.js)
+         and app.js injects it as an inline <style>. -->
+    <style>
+      :root {
+        --fin-bg: var(--bg-base, #fff);
+        --fin-fg: var(--fg, #111);
+        --fin-muted: var(--fg-muted, #666);
+        --fin-danger: var(--danger, #c44);
+        font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
+      }
+      * { box-sizing: border-box; }
+      html, body, #root { height: 100%; overflow: hidden; }
+      html body {
+        margin: 0;
+        background: var(--fin-bg);
+        color: var(--fin-fg);
+        font: 13px/1.4 var(--font-sans, system-ui);
+        -webkit-font-smoothing: antialiased;
+      }
+      #root > .boot { padding: 1rem 1.25rem; font-size: 0.85rem; color: var(--fin-muted); }
+    </style>
+  </head>
+  <body>
+    <div id="root"><div class="boot">Loading…</div></div>
+    <script type="module">
+      try {
+        await import(new URL('app.js', document.baseURI).href);
+      } catch (e) {
+        const root = document.getElementById('root');
+        root.innerHTML = `<div class="boot" style="color:var(--fin-danger)">Failed to load app.js: ${e.message ?? e}</div>`;
+        throw e;
+      }
+    </script>
+  </body>
+</html>
