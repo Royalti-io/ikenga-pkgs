@@ -297,6 +297,8 @@ importers:
 
   packages/skills/groundwork: {}
 
+  packages/skills/mail: {}
+
   packages/skills/pa: {}
 
   packages/skills/storyboard-workflow: {}
@@ -316,6 +318,8 @@ importers:
       '@ikenga/studio-schema':
         specifier: ^0.1.0
         version: 0.1.0
+
+  packages/skills/tasks: {}
 
   packages/skills/video-script-structure: {}
 
