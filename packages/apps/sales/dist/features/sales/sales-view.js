@@ -234,8 +234,10 @@ function buildSalesMenu(activeView, pipeMode, deals) {
         kind: 'seg',
         section: 'View',
         options: [
-          { id: 'list',   label: 'List',   active: pipeMode === 'list' },
-          { id: 'kanban', label: 'Kanban', active: pipeMode === 'kanban' },
+          // Option ids ARE the activeFeature values the shell publishes back
+          // (PkgMenuItem kind:'seg' contract — pkg-menu-store.ts).
+          { id: 'seg:list',   label: 'List',   active: pipeMode === 'list' },
+          { id: 'seg:kanban', label: 'Kanban', active: pipeMode === 'kanban' },
         ],
       }]
     : [];
