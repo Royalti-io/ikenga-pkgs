@@ -1,0 +1,42 @@
+{
+  "name": "@ikenga/skill-content",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Content skill — dispatch-only pipeline-sweep and piece-draft surface for the Ikenga content domain.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "agent-skills",
+    "skills",
+    "ikenga",
+    "content",
+    "editorial",
+    "pipeline"
+  ],
+  "homepage": "https://ikenga.dev",
+  "bugs": {
+    "url": "https://github.com/Royalti-io/ikenga-pkgs/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/skills/content"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "manifest.json",
+    "skills",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "echo 'no build — content-only pkg'",
+    "typecheck": "echo 'no ts — content-only pkg'"
+  }
+}
