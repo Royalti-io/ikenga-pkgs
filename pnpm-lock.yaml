@@ -19,6 +19,12 @@ importers:
 
   packages/apps/hello: {}
 
+  packages/apps/mail:
+    devDependencies:
+      '@ikenga/tokens':
+        specifier: ^0.3.0
+        version: 0.3.0
+
   packages/apps/studio:
     dependencies:
       '@excalidraw/excalidraw':

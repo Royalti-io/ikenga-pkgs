@@ -1,0 +1,389 @@
+/* mail.css — domain residue for com.ikenga.mail.
+ *
+ * Only mail-local classes live here (.mail-row*, .reader-*, .thread-*, .pane-split).
+ * Kit primitives (.frame*, .ip-*, .dense-row*, .btn*, .tag, .chip, .badge,
+ * .atelier-state*, .avatar*, .chat-msg*, .nav-group*, .nav-item*, etc.) are
+ * consumed from app-kit-css.js — never re-derived here.
+ *
+ * Inject order: tokens-css → app-kit-css → mail-css (this file).
+ * Scoped under data-workspace="mail" where needed (amber tint).
+ */
+
+/* ── Reduced motion gate ── */
+@media (prefers-reduced-motion: reduce) {
+  .mail-row { transition: none; }
+}
+
+/* ── Two-column split ── */
+/* mail-local — NOT .ip-split (the reading pane is richer than a pipeline detail) */
+.pane-split {
+  display: grid;
+  grid-template-columns: 380px 1fr;
+  overflow: hidden;
+  height: 100%;
+}
+
+/* ── Mail list column ── */
+.mail-list {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--bg-surface, var(--bg-base));
+  border-right: 1px solid var(--border-soft, rgba(0,0,0,0.08));
+}
+
+.mail-list-head {
+  padding: 12px 14px 8px;
+  border-bottom: 1px solid var(--border-soft, rgba(0,0,0,0.06));
+  flex-shrink: 0;
+}
+
+.mail-list-head-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1.3;
+}
+
+.mail-list-head-meta {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.7rem;
+  color: var(--fg-faint, var(--fg-muted));
+  margin-top: 2px;
+}
+
+.mail-list-search {
+  padding: 8px 10px 6px;
+  flex-shrink: 0;
+}
+
+.mail-list-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--bg-sunken, var(--bg-raised));
+  border: 1px solid var(--border-soft, rgba(0,0,0,0.08));
+  border-radius: 6px;
+  padding: 0 8px;
+  height: 30px;
+  color: var(--fg-muted);
+}
+
+.mail-list-search-row .input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-size: 0.8rem;
+  color: var(--fg);
+  outline: none;
+  padding: 0;
+}
+
+.mail-list-search-row .input::placeholder {
+  color: var(--fg-faint, var(--fg-muted));
+  font-style: italic;
+}
+
+.mail-list-section {
+  padding: 6px 14px 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-faint, var(--fg-muted));
+  flex-shrink: 0;
+}
+
+/* Scrollable thread list area */
+.mail-list > :last-child {
+  overflow-y: auto;
+  flex: 1;
+}
+
+/* ── Mail row ── */
+.mail-row {
+  display: flex;
+  align-items: stretch;
+  cursor: pointer;
+  min-height: 68px;
+  border-bottom: 1px solid var(--border-soft, rgba(0,0,0,0.04));
+  transition: background 120ms ease;
+  outline: none;
+}
+
+.mail-row:hover,
+.mail-row.is-selected {
+  background: var(--bg-raised);
+}
+
+.mail-row:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+}
+
+/* Left accent stripe — fills amber when unread or selected */
+.mail-row-tick {
+  width: 4px;
+  flex-shrink: 0;
+  background: transparent;
+  transition: background 120ms ease;
+}
+
+.mail-row.is-unread .mail-row-tick,
+.mail-row.is-selected .mail-row-tick {
+  background: var(--tint-fg-active, var(--tint-mail-fg, hsl(42,70%,62%)));
+}
+
+.mail-row-body {
+  flex: 1;
+  padding: 9px 10px 8px;
+  min-width: 0;
+}
+
+.mail-row-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.mail-row-from {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: var(--fg);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+}
+
+.mail-row-time {
+  font-size: 0.72rem;
+  color: var(--fg-faint, var(--fg-muted));
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.mail-row-subject {
+  font-size: 0.82rem;
+  color: var(--fg-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+
+.mail-row.is-unread .mail-row-subject {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+.mail-row-preview {
+  font-size: 0.78rem;
+  color: var(--fg-faint, var(--fg-muted));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.mail-row-tags {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+/* ── Reader pane ── */
+.reader-pane {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  height: 100%;
+  background: var(--bg-base);
+}
+
+.reader-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-soft, rgba(0,0,0,0.06));
+  flex-shrink: 0;
+  background: var(--bg-surface, var(--bg-base));
+}
+
+.reader-toolbar-spacer {
+  flex: 1;
+}
+
+.reader-toolbar-meta {
+  font-size: 0.72rem;
+  color: var(--fg-faint, var(--fg-muted));
+  font-variant-numeric: tabular-nums;
+}
+
+.reader-body-wrap {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.reader-head {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.reader-from-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.reader-from-name {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1.25;
+}
+
+.reader-from-addr {
+  font-size: 0.76rem;
+  color: var(--fg-muted);
+  line-height: 1.3;
+}
+
+.reader-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.reader-subject {
+  font-size: 1.05rem;
+  font-weight: 600;
+  color: var(--fg);
+  line-height: 1.35;
+  font-family: var(--font-display, var(--font-sans));
+}
+
+.reader-meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.reader-body {
+  font-size: 0.875rem;
+  line-height: 1.65;
+  color: var(--fg);
+  font-family: var(--font-body, var(--font-sans));
+  max-width: 680px;
+}
+
+.reader-body p {
+  margin: 0 0 0.8em;
+}
+
+/* ── Quick reply ── */
+.reader-quick-reply {
+  border: 1px solid var(--border-soft, rgba(0,0,0,0.1));
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-raised);
+}
+
+.reader-quick-reply-head {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft, rgba(0,0,0,0.06));
+  background: var(--bg-surface, var(--bg-base));
+}
+
+.reader-quick-reply-tag {
+  font-size: 0.75rem;
+  color: var(--fg-muted);
+}
+
+.reader-quick-reply .input {
+  display: block;
+  width: 100%;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  padding: 10px 12px;
+  font-size: 0.85rem;
+  font-family: var(--font-body, var(--font-sans));
+  color: var(--fg);
+  line-height: 1.55;
+  resize: none;
+  outline: none;
+}
+
+.reader-quick-reply-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 12px 8px;
+  font-size: 0.72rem;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ── Thread collapse rail ── */
+.thread-other {
+  margin: 8px 0;
+}
+
+.thread-collapse {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  font-size: 0.78rem;
+  color: var(--fg-muted);
+  width: 100%;
+  text-align: left;
+}
+
+.thread-collapse-line {
+  flex: 1;
+  height: 1px;
+  background: var(--border-soft, rgba(0,0,0,0.08));
+}
+
+/* ── Workspace amber tint (applied when data-workspace="mail") ── */
+/* The shell already sets --tint-mail-bg / --tint-mail-fg via @ikenga/tokens;
+ * we just document the mapping here for reference.
+ *   dark:  --tint-mail-bg = hsl(42,30%,11%); --tint-mail-fg = hsl(42,70%,62%)
+ *   light: --tint-mail-bg = hsl(42,60%,92%); --tint-mail-fg = hsl(42,80%,28%)
+ */
+[data-workspace="mail"] {
+  --tint-bg-active: var(--tint-mail-bg, hsl(42, 30%, 11%));
+  --tint-fg-active: var(--tint-mail-fg, hsl(42, 70%, 62%));
+}
+
+/* Tag color overrides for mail domain tags */
+.tag.tag-deal   { --tag-color: var(--amber, hsl(42,80%,50%)); color: var(--tag-color); border-color: var(--tag-color); }
+.tag.tag-warn   { --tag-color: var(--danger, hsl(0,60%,55%)); color: var(--tag-color); border-color: var(--tag-color); }
+.tag.tag-system { --tag-color: var(--fg-muted); color: var(--tag-color); border-color: var(--tag-color); }
+.tag.tag-primary { --tag-color: var(--primary, hsl(220,70%,55%)); color: var(--tag-color); border-color: var(--tag-color); }
+
+/* dense-row--outbox modifier (Triage view) */
+.dense-row--outbox {
+  cursor: pointer;
+  padding-left: 0;
+}
+
+.dense-row--outbox:hover,
+.dense-row--outbox.is-on {
+  background: var(--bg-raised);
+}
