@@ -42,5 +42,12 @@
     "net": ["https://esm.sh"],
     "sqlite.tables": ["tasks"],
     "vault.keys": []
-  }
+  },
+
+  "requires": [
+    {
+      "kind": "skill",
+      "name": "skill-tasks"
+    }
+  ]
 }

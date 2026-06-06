@@ -52,5 +52,12 @@
       "outbound_sequence_steps"
     ],
     "vault.keys": []
-  }
+  },
+
+  "requires": [
+    {
+      "kind": "skill",
+      "name": "skill-outbound"
+    }
+  ]
 }

@@ -50,5 +50,12 @@
       "finance_alerts"
     ],
     "vault.keys": []
-  }
+  },
+
+  "requires": [
+    {
+      "kind": "skill",
+      "name": "skill-finance"
+    }
+  ]
 }

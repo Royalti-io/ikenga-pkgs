@@ -49,5 +49,12 @@
       "calendar_events"
     ],
     "vault.keys": []
-  }
+  },
+
+  "requires": [
+    {
+      "kind": "skill",
+      "name": "skill-content"
+    }
+  ]
 }
