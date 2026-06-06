@@ -40,6 +40,17 @@ import { hostDbQuery, hostDbExec, setMenu, isStandalone } from '../../lib/bridge
 const STAGES = ['lead', 'qualified', 'proposal', 'negotiation', 'closing'];
 const TERMINAL_STAGES = ['won', 'lost'];
 
+/** Tolerant grouping (founder call 2026-06-06, WP-18b live-verify follow-up):
+ *  rows with a non-enum stage render as their own visible group/column (raw
+ *  value as label) instead of silently vanishing from the stage-grouped views.
+ *  0045_sales_stage_backfill maps known legacy values; this guards the rest. */
+function stagesWithExtras(grouped) {
+  const extras = Object.keys(grouped)
+    .filter((s) => !STAGES.includes(s) && grouped[s].length > 0)
+    .sort();
+  return [...STAGES, ...extras];
+}
+
 const STAGE_LABEL = {
   lead: 'Lead',
   qualified: 'Qualified',
@@ -399,9 +410,9 @@ function PipelineList({ deals, selectedDeal, onSelectDeal, activities }) {
   return html`
     <div class="ip-split" style=${{ height:'100%' }}>
       <div class="ip-split-list" style=${{ overflowY:'auto' }} role="grid" aria-label="Sales pipeline list">
-        ${STAGES.map((s) => grouped[s]?.length > 0 ? html`
+        ${stagesWithExtras(grouped).map((s) => grouped[s]?.length > 0 ? html`
           <div class="split-group" key=${s}>
-            <div class="split-group-head">${STAGE_LABEL[s]} · ${grouped[s].length}</div>
+            <div class="split-group-head">${STAGE_LABEL[s] ?? s} · ${grouped[s].length}</div>
             ${grouped[s].map((d) => html`
               <${DealRow}
                 key=${d.id}
@@ -454,7 +465,7 @@ function PipelineKanban({ deals, onStageChange }) {
   return html`
     <div class="kb-board-wrap">
       <div class="kb-board" role="region" aria-label="Sales pipeline board">
-        ${STAGES.map((s) => {
+        ${stagesWithExtras(grouped).map((s) => {
           const stagDeals = grouped[s] ?? [];
           const totalVal = stagDeals.reduce((sum, d) => sum + (parseFloat(d.value) || 0), 0);
           return html`
@@ -465,11 +476,11 @@ function PipelineKanban({ deals, onStageChange }) {
               onDragOver=${(e) => onDragOver(e, s)}
               onDrop=${(e) => onDrop(e, s)}
               role="region"
-              aria-label=${'Stage: ' + STAGE_LABEL[s]}
+              aria-label=${'Stage: ' + (STAGE_LABEL[s] ?? s)}
             >
               <div class="kb-col-head">
                 <span class="kb-col-dot" aria-hidden="true"></span>
-                <span class="kb-col-name">${STAGE_LABEL[s]}</span>
+                <span class="kb-col-name">${STAGE_LABEL[s] ?? s}</span>
                 <span class="kb-col-meta">${stagDeals.length} · ${fmtCurrency(totalVal)}</span>
               </div>
               <div class="kb-col-body">
