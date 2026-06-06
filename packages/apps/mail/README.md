@@ -17,6 +17,13 @@ No-build `srcdoc` iframe pkg following the [08-pkg-retrofit-recipe](../../../../
 Migration `0042_mail_domain.sql` creates `mail_thread_state` (STRICT, soft TEXT links to
 `email_messages.id`). Fields: `message_id`, `is_read`, `snoozed_until`, `tags`, `preview`.
 
+## Performance note
+
+`fetchThreadList` (list rendering) does **not** select `body_text` — full message bodies
+never cross the IPC bridge for list rows. The preview column is computed SQL-side as
+`COALESCE(mts.preview, substr(em.body_text, 1, 160))`. `fetchMessage` (reader path)
+selects `em.*` and delivers the full body only when a thread is opened.
+
 ## Build
 
 ```bash
