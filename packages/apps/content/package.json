@@ -1,0 +1,26 @@
+{
+  "name": "@ikenga/pkg-content",
+  "version": "0.1.0",
+  "description": "Content — Pipeline (kanban + list), Calendar, Published over the production content schema. Multi-file iframe pkg; deterministic CSS vendoring build.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/apps/content"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "files": [
+    "manifest.json",
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "@ikenga/tokens": "^0.3.0"
+  }
+}
