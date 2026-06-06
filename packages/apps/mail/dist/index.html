@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Mail</title>
+    <!-- No <link rel="stylesheet">: WebKitGTK can't load subresources (link/
+         fetch/img) from the about:srcdoc document the shell mounts — only
+         inlined scripts work. So mail.css ships as a JS string (lib/mail-css.js)
+         and app.js injects it as an inline <style>. -->
+    <style>
+      :root {
+        --mail-bg: var(--bg-base, #fff);
+        --mail-fg: var(--fg, #111);
+        --mail-muted: var(--fg-muted, #666);
+        --mail-danger: var(--danger, #c44);
+        font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
+      }
+      * { box-sizing: border-box; }
+      html, body, #root { height: 100%; overflow: hidden; }
+      html body { margin: 0; background: var(--mail-bg); color: var(--mail-fg); font: 14px/1.4 var(--font-sans, system-ui); -webkit-font-smoothing: antialiased; }
+      #root > .boot { padding: 1rem 1.25rem; font-size: 0.85rem; color: var(--mail-muted); }
+    </style>
+  </head>
+  <body>
+    <div id="root"><div class="boot">Loading…</div></div>
+    <!--
+      Why this looks indirect: pkg_content/mod.rs inlines `<script src="./x">`
+      into the srcdoc HTML to work around a WebKitGTK subresource-from-srcdoc
+      bug. Resolving against document.baseURI gives a real URL the module
+      loader accepts. Once app.js is loaded as a fetched file, its own url is
+      real and relative imports inside it work normally.
+    -->
+    <script type="module">
+      try {
+        await import(new URL('app.js', document.baseURI).href);
+      } catch (e) {
+        const root = document.getElementById('root');
+        root.innerHTML = `<div class="boot" style="color:var(--mail-danger)">Failed to load app.js: ${e.message ?? e}</div>`;
+        throw e;
+      }
+    </script>
+  </body>
+</html>
