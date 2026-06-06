@@ -1267,30 +1267,23 @@ export function OutboundView({ activeFeature }) {
     setMenu(items).catch(() => {/* standalone — ignore */});
   }, [channel, view, counts, agents]);
 
-  // Listen for sidebar nav-item clicks relayed by the shell pkg-menu-click message
+  // ── activeFeature → channel switching (side-menu item clicks) ──────────────
+  // The shell relays sidebar clicks via the host-context re-emit
+  // (royaltiSuite.activeFeature) — the same wire tasks/mail/sales use. The
+  // original "pkg-menu-click" window-message listener here referenced a relay
+  // that never existed (wave-2 live-verify finding: channel switching dead).
   useEffect(() => {
-    function onMessage(ev) {
-      const data = ev.data;
-      if (!data || data.__iyke) return;
-
-      // pkg-menu-click: { menuItemId }
-      const id = data?.menuItemId ?? data?.payload?.menuItemId;
-      if (!id) return;
-
-      if (id.startsWith('ch:')) {
-        const newChannel = id.slice(3);
-        if (CHANNELS.includes(newChannel)) {
-          setChannel(newChannel);
-          setView('queue'); // reset to queue on channel switch
-        }
+    if (!activeFeature) return;
+    if (activeFeature.startsWith('ch:')) {
+      const newChannel = activeFeature.slice(3);
+      if (CHANNELS.includes(newChannel)) {
+        setChannel(newChannel);
+        setView('queue'); // reset to queue on channel switch
       }
-      // Filter clicks (f:pa/f:cmo/f:cbo) — no state change needed in pkg
-      // (the shell menu already handles the is-on visual)
     }
-
-    window.addEventListener('message', onMessage);
-    return () => window.removeEventListener('message', onMessage);
-  }, []);
+    // Filter clicks (f:pa/f:cmo/f:cbo) — no state change needed in pkg
+    // (the shell menu already handles the is-on visual)
+  }, [activeFeature]);
 
   // Dim by-agent group when view is not 'queue' — JS class approach
   useEffect(() => {
