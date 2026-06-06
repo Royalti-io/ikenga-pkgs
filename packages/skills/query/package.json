@@ -1,0 +1,43 @@
+{
+  "name": "@ikenga/skill-query",
+  "version": "0.1.0",
+  "private": true,
+  "description": "skill-query — the single cross-domain reader skill. Translates natural-language questions into parameterised SELECTs over ikenga.db; streams the answer in the requested format. Absorbs R-03 (pa-query, ceo-query, cfo-query, cmo-query, sales-query).",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "agent-skills",
+    "skills",
+    "ikenga",
+    "query",
+    "natural-language",
+    "sqlite",
+    "read-only"
+  ],
+  "homepage": "https://ikenga.dev",
+  "bugs": {
+    "url": "https://github.com/Royalti-io/ikenga-pkgs/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/skills/query"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "manifest.json",
+    "skills",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "echo 'no build — content-only pkg'",
+    "typecheck": "echo 'no ts — content-only pkg'"
+  }
+}
