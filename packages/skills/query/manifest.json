@@ -1,0 +1,38 @@
+{
+  "id": "com.ikenga.skill-query",
+  "name": "Query",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "skill",
+  "author": { "name": "Royalti", "key": "royalti" },
+
+  "capabilities": {
+    "sqlite": { "db": "ikenga.local" }
+  },
+
+  "permissions": {
+    "sqlite.tables": [
+      "tasks",
+      "email_messages",
+      "sales_deals",
+      "sales_forecasts",
+      "sales_activities",
+      "receivables",
+      "transaction_ledger",
+      "inter_company_entries",
+      "content_calendar",
+      "social_queue",
+      "research_notes",
+      "strategic_initiatives",
+      "agent_runs",
+      "delegations",
+      "contacts"
+    ]
+  },
+  "requires": [
+    {
+      "kind": "skill",
+      "name": "skill-core"
+    }
+  ]
+}
