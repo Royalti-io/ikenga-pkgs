@@ -25,6 +25,18 @@ importers:
         specifier: ^0.3.0
         version: 0.3.0
 
+  packages/apps/outbound:
+    devDependencies:
+      '@ikenga/tokens':
+        specifier: ^0.3.0
+        version: 0.3.0
+
+  packages/apps/sales:
+    devDependencies:
+      '@ikenga/tokens':
+        specifier: ^0.3.0
+        version: 0.3.0
+
   packages/apps/studio:
     dependencies:
       '@excalidraw/excalidraw':
@@ -299,7 +311,11 @@ importers:
 
   packages/skills/mail: {}
 
+  packages/skills/outbound: {}
+
   packages/skills/pa: {}
+
+  packages/skills/sales: {}
 
   packages/skills/storyboard-workflow: {}
 
