@@ -1,0 +1,35 @@
+{
+  "id": "com.ikenga.skill-outbound",
+  "name": "Outbound",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "skill",
+  "author": { "name": "Royalti", "key": "royalti" },
+
+  "capabilities": {
+    "sqlite": { "db": "ikenga.local" }
+  },
+
+  "permissions": {
+    "shell.execute": [],
+    "fs.read": [],
+    "fs.write": [],
+    "net": [],
+    "sqlite.tables": [
+      "email_sequences",
+      "outbound_sequences",
+      "fundraising_outreach",
+      "newsletter_sends",
+      "social_queue",
+      "email_drafts",
+      "contacts"
+    ],
+    "vault.keys": []
+  },
+  "requires": [
+    {
+      "kind": "skill",
+      "name": "skill-core"
+    }
+  ]
+}

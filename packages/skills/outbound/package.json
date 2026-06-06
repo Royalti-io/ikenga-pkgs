@@ -1,0 +1,45 @@
+{
+  "name": "@ikenga/skill-outbound",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Outbound skill — campaign drafting, drip sequences, social scheduling, and send dispatch (absorbs outbound channels from skill-pa per R22).",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "agent-skills",
+    "skills",
+    "ikenga",
+    "outbound",
+    "email",
+    "newsletter",
+    "sequences",
+    "social",
+    "dispatch"
+  ],
+  "homepage": "https://ikenga.dev",
+  "bugs": {
+    "url": "https://github.com/Royalti-io/ikenga-pkgs/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/skills/outbound"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "manifest.json",
+    "skills",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "echo 'no build — content-only pkg'",
+    "typecheck": "echo 'no ts — content-only pkg'"
+  }
+}
