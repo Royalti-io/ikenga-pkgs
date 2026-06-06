@@ -296,7 +296,7 @@ function agingClass(days) {
 
 // ─── Menu builder ────────────────────────────────────────────────────────────
 
-function buildFinanceMenu(activeView, arAlerts, intercoAlerts) {
+function buildFinanceMenu(activeView, arAlerts, intercoAlerts, entity) {
   const hasArAlert = arAlerts > 0;
   const hasIntercoAlert = intercoAlerts > 0;
   return [
@@ -307,10 +307,10 @@ function buildFinanceMenu(activeView, arAlerts, intercoAlerts) {
     { id: 'inter-company',   label: 'Inter-Company',  icon: 'arrow-left-right', active: activeView === 'inter-company', section: 'view', badge: hasIntercoAlert ? String(intercoAlerts) : undefined },
     { id: 'reports',         label: 'Reports',        icon: 'bar-chart-2', active: activeView === 'reports',         section: 'view' },
     { id: 'section-accounts', label: 'Accounts', section: true, disabled: activeView !== 'transactions' },
-    { id: 'ent-all',      label: 'All entities',   icon: 'layers',    section: 'filter', active: false, disabled: activeView !== 'transactions' },
-    { id: 'ent-royalti',  label: 'Royalti.io',     icon: 'circle',    section: 'filter', active: false, disabled: activeView !== 'transactions' },
-    { id: 'ent-dixtrit',  label: 'Dixtrit.media',  icon: 'circle',    section: 'filter', active: false, disabled: activeView !== 'transactions' },
-    { id: 'ent-personal', label: 'Personal',        icon: 'circle',    section: 'filter', active: false, disabled: activeView !== 'transactions' },
+    { id: 'ent-all',      label: 'All entities',   icon: 'layers',    section: 'filter', active: entity === 'all',      disabled: activeView !== 'transactions' },
+    { id: 'ent-royalti',  label: 'Royalti.io',     icon: 'circle',    section: 'filter', active: entity === 'royalti',  disabled: activeView !== 'transactions' },
+    { id: 'ent-dixtrit',  label: 'Dixtrit.media',  icon: 'circle',    section: 'filter', active: entity === 'dixtrit',  disabled: activeView !== 'transactions' },
+    { id: 'ent-personal', label: 'Personal',        icon: 'circle',    section: 'filter', active: entity === 'personal', disabled: activeView !== 'transactions' },
   ];
 }
 
@@ -783,6 +783,10 @@ export function FinanceView({ activeFeature }) {
     // Sidebar nav item ids match VIEWS.
     if (VIEWS.includes(activeFeature)) {
       setView(activeFeature);
+    } else if (activeFeature.startsWith('ent-')) {
+      // Sidebar "Accounts" facet group → entity filter (Transactions view).
+      const ent = activeFeature.slice(4);
+      if (ENTITIES.includes(ent)) setEntity(ent);
     }
   }, [activeFeature]);
 
@@ -844,9 +848,9 @@ export function FinanceView({ activeFeature }) {
   const intercoAlertCount = alerts.filter((a) => a.type === 'interco').length;
 
   useEffect(() => {
-    const items = buildFinanceMenu(view, arAlertCount, intercoAlertCount);
+    const items = buildFinanceMenu(view, arAlertCount, intercoAlertCount, entity);
     setMenu(items).catch(() => {});
-  }, [view, arAlertCount, intercoAlertCount]);
+  }, [view, arAlertCount, intercoAlertCount, entity]);
 
   // Error state
   if (txnsQ.isError && view === 'transactions') {
@@ -862,7 +866,7 @@ export function FinanceView({ activeFeature }) {
   ];
 
   return html`
-    <div class="frame">
+    <div class="frame" style=${{ height: '100%', display: 'flex', flexDirection: 'column' }}>
       <!-- Frame head -->
       <div class="frame-head">
         <span class="frame-title">Accounting</span>
