@@ -1,0 +1,43 @@
+{
+  "name": "@ikenga/skill-finance",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Finance skill — dispatch-only reconciliation sweep and AR-chase surface for the Ikenga finance domain.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "agent-skills",
+    "skills",
+    "ikenga",
+    "finance",
+    "reconciliation",
+    "accounts-receivable",
+    "cfo"
+  ],
+  "homepage": "https://ikenga.dev",
+  "bugs": {
+    "url": "https://github.com/Royalti-io/ikenga-pkgs/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/skills/finance"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "manifest.json",
+    "skills",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "echo 'no build — content-only pkg'",
+    "typecheck": "echo 'no ts — content-only pkg'"
+  }
+}

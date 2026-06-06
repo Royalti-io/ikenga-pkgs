@@ -1,0 +1,34 @@
+{
+  "id": "com.ikenga.skill-finance",
+  "name": "Finance",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "skill",
+  "author": { "name": "Royalti", "key": "royalti" },
+
+  "capabilities": {
+    "sqlite": { "db": "ikenga.local" }
+  },
+
+  "permissions": {
+    "shell.execute": [],
+    "fs.read": [],
+    "fs.write": [],
+    "net": [],
+    "sqlite.tables": [
+      "transaction_ledger",
+      "receivables",
+      "inter_company_entries",
+      "bank_accounts",
+      "exchange_rates",
+      "contacts"
+    ],
+    "vault.keys": []
+  },
+  "requires": [
+    {
+      "kind": "skill",
+      "name": "skill-core"
+    }
+  ]
+}
