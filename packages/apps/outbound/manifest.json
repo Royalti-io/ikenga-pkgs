@@ -1,0 +1,56 @@
+{
+  "id": "com.ikenga.outbound",
+  "name": "Outbound",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "embedded",
+  "author": { "name": "Royalti", "key": "royalti" },
+
+  "ui": {
+    "nav": [
+      {
+        "id": "outbound.index",
+        "label": "Outbox",
+        "icon": "send",
+        "section": "ops",
+        "route": "/pkg/com.ikenga.outbound/"
+      }
+    ],
+    "routes": [
+      {
+        "path": "/",
+        "kind": "iframe",
+        "source": "dist/index.html"
+      }
+    ],
+    "csp": {
+      "script-src": ["'self'", "'unsafe-inline'", "https://esm.sh"],
+      "style-src": ["'self'", "'unsafe-inline'", "https://esm.sh"],
+      "font-src": ["'self'", "https://esm.sh", "data:"],
+      "connect-src": ["'self'", "https://esm.sh"]
+    }
+  },
+
+  "capabilities": {
+    "sqlite": { "db": "ikenga.local" }
+  },
+
+  "permissions": {
+    "shell.execute": [],
+    "fs.read": [],
+    "fs.write": [],
+    "net": ["https://esm.sh"],
+    "sqlite.tables": [
+      "email_sequences",
+      "outbound_sequences",
+      "fundraising_outreach",
+      "newsletter_sends",
+      "social_queue",
+      "outbound_email_approvals",
+      "outbound_sent_log",
+      "outbound_newsletter_drafts",
+      "outbound_sequence_steps"
+    ],
+    "vault.keys": []
+  }
+}
