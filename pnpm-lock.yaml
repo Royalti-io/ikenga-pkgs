@@ -17,6 +17,12 @@ importers:
 
   packages/apps/agent-ops: {}
 
+  packages/apps/finance:
+    devDependencies:
+      '@ikenga/tokens':
+        specifier: ^0.3.0
+        version: 0.3.0
+
   packages/apps/hello: {}
 
   packages/apps/mail:
