@@ -40,11 +40,10 @@ export async function fetchThreadList(view = 'inbox') {
       COALESCE(c.name, em.from_address) AS from_name,
       em.received_at,
       em.triage_category,
-      em.body_text,
       COALESCE(mts.is_read, 0) AS is_read,
       mts.snoozed_until,
       mts.tags,
-      COALESCE(mts.preview, substr(em.body_text, 1, 120)) AS preview
+      COALESCE(mts.preview, substr(em.body_text, 1, 160)) AS preview
     FROM email_messages em
     LEFT JOIN contacts c ON c.email = em.from_address
     LEFT JOIN mail_thread_state mts ON mts.message_id = em.id
