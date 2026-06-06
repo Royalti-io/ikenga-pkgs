@@ -1,0 +1,449 @@
+/* sales.css — domain residue for com.ikenga.sales.
+ *
+ * Only sales-local classes live here:
+ *   - .sl-* Forecast view layout (.sl-forecast-kpis, .sl-forecast-kpi, etc.)
+ *   - .sl-won-* Won view layout (.sl-won-wrap, .sl-won-table, .sl-won-badge)
+ *   - Kanban + pipeline overrides specific to this domain (.kb-mini-avatar.is-agent,
+ *     .split-row-when.is-urgent already in kit — no re-derive needed)
+ *
+ * Kit primitives (.frame*, .ip-split*, .dense-row*, .btn*, .tag, .chip, .badge,
+ * .atelier-state*, .nav-group*, .nav-item*, .kb-*, .seg*, .split-*, etc.) are
+ * consumed from app-kit-css.js — never re-derived here.
+ *
+ * Inject order: tokens-css → app-kit-css → sales-css (this file).
+ * data-workspace="sessions" on <html> → warm amber-ochre tint for active nav + accents.
+ */
+
+/* ── Reduced motion gate ── */
+@media (prefers-reduced-motion: reduce) {
+  .split-row { transition: none; }
+  .kb-card { transition: none; }
+  .kb-card:hover { transform: none; }
+}
+
+/* ── Forecast view (.sl-*) ─────────────────────────────────────────────────── */
+
+.sl-forecast-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.sl-forecast-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.sl-forecast-kpi {
+  background: var(--bg-surface, var(--bg-base));
+  border: 1px solid var(--border-soft, rgba(0,0,0,0.08));
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sl-kpi-k {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sl-kpi-v {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--fg);
+  font-family: var(--font-mono, monospace);
+}
+
+.sl-kpi-sub {
+  font-size: 0.7rem;
+  color: var(--fg-faint, var(--fg-muted));
+  font-family: var(--font-mono, monospace);
+}
+
+.sl-forecast-card {
+  background: var(--bg-surface, var(--bg-base));
+  border: 1px solid var(--border-soft, rgba(0,0,0,0.08));
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.sl-forecast-card-h {
+  padding: 10px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--fg-muted);
+  border-bottom: 1px solid var(--border-soft, rgba(0,0,0,0.06));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sl-funnel-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border-soft, rgba(0,0,0,0.04));
+}
+
+.sl-funnel-row:last-child {
+  border-bottom: none;
+}
+
+.sl-funnel-name {
+  width: 100px;
+  font-size: 0.78rem;
+  color: var(--fg);
+  flex-shrink: 0;
+}
+
+.sl-funnel-bar {
+  flex: 1;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--bg-inset, rgba(0,0,0,0.06));
+  position: relative;
+  overflow: hidden;
+}
+
+.sl-funnel-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background: var(--fg-faint, rgba(128,128,128,0.3));
+  border-radius: 3px;
+}
+
+.sl-funnel-bar-wt {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background: var(--primary, hsl(215,70%,55%));
+  border-radius: 3px;
+  opacity: 0.75;
+}
+
+.sl-funnel-val {
+  width: 72px;
+  font-size: 0.72rem;
+  font-family: var(--font-mono, monospace);
+  color: var(--fg-muted);
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.sl-months {
+  display: flex;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 14px;
+  height: 100px;
+}
+
+.sl-month {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+}
+
+.sl-month-bar-wrap {
+  flex: 1;
+  display: flex;
+  align-items: flex-end;
+  width: 100%;
+}
+
+.sl-month-bar {
+  width: 100%;
+  background: var(--primary, hsl(215,70%,55%));
+  border-radius: 3px 3px 0 0;
+  opacity: 0.7;
+  min-height: 4px;
+}
+
+.sl-month-val {
+  font-size: 0.65rem;
+  font-family: var(--font-mono, monospace);
+  color: var(--fg-muted);
+}
+
+.sl-month-lab {
+  font-size: 0.65rem;
+  color: var(--fg-faint, var(--fg-muted));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── Won view (.sl-won-*) ───────────────────────────────────────────────────── */
+
+.sl-won-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.sl-won-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+
+.sl-won-table-wrap {
+  background: var(--bg-surface, var(--bg-base));
+  border: 1px solid var(--border-soft, rgba(0,0,0,0.08));
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.sl-won-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.sl-won-table thead tr {
+  background: var(--bg-inset, rgba(0,0,0,0.04));
+}
+
+.sl-won-table th {
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border-bottom: 1px solid var(--border-soft, rgba(0,0,0,0.08));
+}
+
+.sl-won-table td {
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--border-soft, rgba(0,0,0,0.04));
+  color: var(--fg);
+  vertical-align: middle;
+}
+
+.sl-won-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.sl-won-table tbody tr:hover td {
+  background: var(--bg-hover, rgba(0,0,0,0.025));
+}
+
+.sl-won-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 500;
+  background: var(--bg-inset, rgba(0,0,0,0.08));
+  color: var(--fg-muted);
+  text-transform: capitalize;
+  letter-spacing: 0.02em;
+}
+
+.sl-won-amt {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--systemic, hsl(140,55%,42%));
+}
+
+/* ── Kanban domain overrides ────────────────────────────────────────────────── */
+
+/* Stage dot colours per the screen doc */
+.kb-col[data-stage="lead"] .kb-col-dot    { background: var(--fg-faint, rgba(128,128,128,0.4)); }
+.kb-col[data-stage="qualified"] .kb-col-dot { background: var(--systemic, hsl(140,55%,42%)); }
+.kb-col[data-stage="proposal"] .kb-col-dot  { background: var(--primary, hsl(215,70%,55%)); }
+.kb-col[data-stage="negotiation"] .kb-col-dot { background: var(--achievement, hsl(38,85%,52%)); }
+.kb-col[data-stage="closing"] .kb-col-dot  { background: var(--live, hsl(348,72%,52%)); }
+
+/* Deal row ux-mode dots */
+.ux-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+.ux-dot.ux-confirm  { background: var(--achievement, hsl(38,85%,52%)); }
+.ux-dot.ux-silent   { background: var(--fg-faint, rgba(128,128,128,0.4)); }
+.ux-dot.ux-approve  { background: var(--primary, hsl(215,70%,55%)); }
+
+/* Next-action chip in list rows */
+.next-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.68rem;
+  color: var(--fg-muted);
+  background: var(--bg-inset, rgba(0,0,0,0.06));
+  border-radius: 4px;
+  padding: 2px 6px;
+  max-width: 180px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Stage chip in detail pane */
+.stage-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: var(--bg-inset, rgba(0,0,0,0.07));
+  color: var(--fg-muted);
+  text-transform: capitalize;
+  letter-spacing: 0.03em;
+}
+
+/* Hot filter (Closing soon — achievement tint) */
+.nav-item.is-hot .nav-item-count {
+  color: var(--achievement, hsl(38,85%,52%));
+  font-weight: 700;
+}
+
+/* Deal amount in list rows */
+.split-row-amt {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--fg);
+  white-space: nowrap;
+}
+
+/* Age / urgency */
+.split-row-when {
+  font-size: 0.68rem;
+  color: var(--fg-faint, var(--fg-muted));
+  font-family: var(--font-mono, monospace);
+  white-space: nowrap;
+}
+
+.split-row-when.is-urgent {
+  color: var(--danger, hsl(0,65%,52%));
+}
+
+/* Split-detail facts grid */
+.split-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+  margin: 12px 0;
+}
+
+.split-fact-k {
+  font-size: 0.68rem;
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.split-fact-v {
+  font-size: 0.82rem;
+  color: var(--fg);
+  font-weight: 500;
+}
+
+/* Next-action card in split-detail */
+.split-next {
+  border: 1px solid var(--border-soft, rgba(0,0,0,0.08));
+  border-radius: 7px;
+  overflow: hidden;
+  margin: 12px 0;
+}
+
+.split-next-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--fg-muted);
+  background: var(--bg-inset, rgba(0,0,0,0.04));
+  border-bottom: 1px solid var(--border-soft, rgba(0,0,0,0.06));
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.split-next-body {
+  padding: 10px 12px;
+  font-size: 0.82rem;
+  color: var(--fg);
+  line-height: 1.4;
+}
+
+/* Activity timeline in detail pane */
+.split-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.split-tl-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.split-tl-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--fg-faint, rgba(128,128,128,0.4));
+  flex-shrink: 0;
+  margin-top: 5px;
+}
+
+.split-tl-body {
+  flex: 1;
+}
+
+.split-tl-title {
+  font-size: 0.78rem;
+  color: var(--fg);
+}
+
+.split-tl-when {
+  font-size: 0.65rem;
+  color: var(--fg-faint, var(--fg-muted));
+  font-family: var(--font-mono, monospace);
+}
+
+/* Seg toggle (list/kanban) injected into sidebar nav-group */
+.nav-view-seg {
+  margin: 4px 8px 6px;
+}
+
+/* Kanban board horizontal scroll mask */
+.kb-board-wrap {
+  overflow-x: auto;
+  height: 100%;
+  -webkit-mask-image: linear-gradient(to right, black calc(100% - 40px), transparent 100%);
+  mask-image: linear-gradient(to right, black calc(100% - 40px), transparent 100%);
+}

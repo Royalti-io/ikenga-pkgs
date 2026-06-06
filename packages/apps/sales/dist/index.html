@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en" data-theme="A" data-mode="dark" data-density="comfortable" data-workspace="sessions">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Sales</title>
+    <!-- No <link rel="stylesheet">: WebKitGTK can't load subresources (link/
+         fetch/img) from the about:srcdoc document the shell mounts — only
+         inlined scripts work. So sales.css ships as a JS string (lib/sales-css.js)
+         and app.js injects it as an inline <style>. The block below is the
+         boot/token shim only. -->
+    <style>
+      :root {
+        --sales-bg: var(--bg-base, #fff);
+        --sales-fg: var(--fg, #111);
+        --sales-muted: var(--fg-muted, #666);
+        --sales-danger: var(--danger, #c44);
+        font-family: var(--font-sans, system-ui, -apple-system, sans-serif);
+      }
+      * { box-sizing: border-box; }
+      /* The page itself never scrolls — only the inner list (overflow-y: auto) does. */
+      html, body, #root { height: 100%; overflow: hidden; }
+      /* data-workspace="sessions" is set on <html> (warm amber-ochre active tint for sales).
+         Higher specificity than app-kit 00-base body{} reset so font/size base stays intact. */
+      html body { margin: 0; background: var(--sales-bg); color: var(--sales-fg); font: 14px/1.4 var(--font-sans, system-ui); -webkit-font-smoothing: antialiased; }
+      #root > .boot { padding: 1rem 1.25rem; font-size: 0.85rem; color: var(--sales-muted); }
+    </style>
+  </head>
+  <body>
+    <div id="root"><div class="boot">Loading…</div></div>
+    <!--
+      Why this looks indirect: pkg_content/mod.rs inlines `<script src="./x">`
+      into the srcdoc HTML to work around a WebKitGTK subresource-from-srcdoc
+      bug. But the resulting inline module is rooted at `about:srcdoc`, so its
+      static `import './foo.js'` and even `import('./foo.js')` fail with
+      "does not resolve to a valid URL". Resolving against `document.baseURI`
+      (which reflects the host-injected `<base href>`) gives a real URL the
+      module loader accepts. Once app.js is loaded as a fetched file, its
+      OWN url is real and relative imports inside it work normally.
+    -->
+    <script type="module">
+      try {
+        await import(new URL('app.js', document.baseURI).href);
+      } catch (e) {
+        const root = document.getElementById('root');
+        root.innerHTML = `<div class="boot" style="color:var(--sales-danger)">Failed to load app.js: ${e.message ?? e}</div>`;
+        throw e;
+      }
+    </script>
+  </body>
+</html>

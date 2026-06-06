@@ -1,0 +1,5 @@
+node_modules/
+# This is a thin no-build pkg — dist/ is the source, not a build output.
+# Override the workspace-level `dist/` ignore.
+!dist/
+!dist/**

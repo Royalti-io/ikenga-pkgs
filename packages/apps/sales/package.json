@@ -1,0 +1,26 @@
+{
+  "name": "@ikenga/pkg-sales",
+  "version": "0.1.0",
+  "description": "Sales — Pipeline, Forecast, Won over the production sales schema. Multi-file iframe pkg; deterministic CSS vendoring build.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/apps/sales"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "files": [
+    "manifest.json",
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "@ikenga/tokens": "^0.3.0"
+  }
+}
