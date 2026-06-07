@@ -314,18 +314,20 @@ function DealRow({ deal, isSelected, onClick }) {
           ${deal.company}
           ${deal.owner ? html` · <span>${deal.owner === 'sales-agent' ? '⚡ sales-agent' : deal.owner}</span>` : null}
         </div>
+        ${deal.next_action ? html`
+          <div class="split-row-sub">
+            <span class="next-chip">
+              <span class=${cn('ux-dot', `ux-${deal.next_action_mode ?? 'silent'}`)}></span>
+              ${deal.next_action}
+            </span>
+          </div>
+        ` : null}
       </div>
-      <div class="dense-row-right" style=${{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:'3px' }}>
+      <div class="split-row-right dense-row-right">
         <span class="split-row-amt dense-row-amt">${fmtCurrency(deal.value)}</span>
         <span class=${cn('split-row-when dense-row-due', isUrgent && 'is-urgent')}>
           ${deal.age_days != null ? `${deal.age_days}d` : ''}
         </span>
-        ${deal.next_action ? html`
-          <span class="next-chip">
-            <span class=${cn('ux-dot', `ux-${deal.next_action_mode ?? 'silent'}`)}></span>
-            ${deal.next_action}
-          </span>
-        ` : null}
       </div>
     </div>
   `;
@@ -412,6 +414,10 @@ function PipelineList({ deals, selectedDeal, onSelectDeal, activities }) {
   return html`
     <div class="ip-split" style=${{ height:'100%' }}>
       <div class="ip-split-list" style=${{ overflowY:'auto' }} role="grid" aria-label="Sales pipeline list">
+        <div class="sl-list-head">
+          <span class="sl-list-title">Sales</span>
+          <span class="sl-list-meta">${deals.length} open</span>
+        </div>
         ${stagesWithExtras(grouped).map((s) => grouped[s]?.length > 0 ? html`
           <div class="split-group" key=${s}>
             <div class="split-group-head">${STAGE_LABEL[s] ?? s} · ${grouped[s].length}</div>
@@ -616,7 +622,7 @@ function WonView({ wonDeals }) {
       <div class="sl-won-kpis">
         <div class="sl-forecast-kpi">
           <span class="sl-kpi-k">Won this quarter</span>
-          <span class="sl-kpi-v">${fmtCurrency(kpis.total)}</span>
+          <span class="sl-kpi-v" style=${{ color: 'var(--live)' }}>${fmtCurrency(kpis.total)}</span>
           <span class="sl-kpi-sub">${wonDeals.length} deals</span>
         </div>
         <div class="sl-forecast-kpi">

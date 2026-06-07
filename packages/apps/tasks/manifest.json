@@ -40,7 +40,14 @@
     "fs.read": [],
     "fs.write": [],
     "net": ["https://esm.sh"],
-    "sqlite.tables": ["tasks"],
+    "sqlite.tables": ["tasks", "task_events", "task_signals"],
     "vault.keys": []
-  }
+  },
+
+  "requires": [
+    {
+      "kind": "skill",
+      "name": "skill-tasks"
+    }
+  ]
 }

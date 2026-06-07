@@ -48,5 +48,12 @@
       "contacts"
     ],
     "vault.keys": []
-  }
+  },
+
+  "requires": [
+    {
+      "kind": "skill",
+      "name": "skill-sales"
+    }
+  ]
 }

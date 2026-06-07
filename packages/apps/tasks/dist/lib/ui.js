@@ -62,6 +62,9 @@ const ICONS = {
   // the "double check" used for completed items.
   broom: 'M9.8 12.2 5 17l3 3 4.8-4.8M14 8l-3.5 3.5 4 4L18 12l-4-4z M14 8l5-5M19 3l2 2',
   'check-check': 'M18 6 7 17l-5-5M22 10l-7.5 7.5L13 16',
+  // Dependency-lane direction arrow (downstream "Blocks" rows). Mirrors the
+  // design's inline arrow-down svg in #tk-depth-data.
+  'arrow-down': 'M12 5v14M19 12l-7 7-7-7',
 };
 
 // Class-name joiner — replaces clsx + tailwind-merge. With Tailwind gone there

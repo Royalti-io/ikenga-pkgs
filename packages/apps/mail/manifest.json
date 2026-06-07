@@ -48,5 +48,12 @@
       "mail_thread_state"
     ],
     "vault.keys": []
-  }
+  },
+
+  "requires": [
+    {
+      "kind": "skill",
+      "name": "skill-mail"
+    }
+  ]
 }

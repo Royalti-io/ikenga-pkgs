@@ -359,6 +359,22 @@ export function TasksView({ activeFeature } = {}) {
     [groups, timeBucket],
   );
 
+  // Default selection (F-01): the design shows a populated detail pane on load,
+  // not an empty "Select a task". On the first load that yields rows — and any
+  // time the current selection drops out of view (filter change) — auto-select
+  // the first visible task. We only auto-fill when nothing is selected OR the
+  // selected id is no longer present, so a user's explicit pick is never
+  // clobbered while it remains visible.
+  useEffect(() => {
+    if (view !== 'tasks') return;
+    const firstId = visibleGroups[0]?.tasks?.[0]?.id ?? null;
+    if (!firstId) return;
+    const stillVisible =
+      selectedId != null &&
+      visibleGroups.some((g) => g.tasks.some((t) => t.id === selectedId));
+    if (!stillVisible) setSelectedId(firstId);
+  }, [view, visibleGroups, selectedId]);
+
   const openCount = useMemo(
     () => data?.filter((t) => t.status !== 'completed' && t.status !== 'cancelled').length ?? 0,
     [data],
@@ -451,7 +467,7 @@ export function TasksView({ activeFeature } = {}) {
         ${view === 'agenda' && html`<${AgendaView} tasks=${data ?? []} filterActive=${filterActive} />`}
         ${view === 'triage' && html`<${TriageView} listTasks=${data ?? []} />`}
         ${view === 'sweeper' && html`<${SweeperView} />`}
-        ${view === 'done' && html`<${DoneView} />`}
+        ${view === 'done' && html`<${DoneView} onSelectTask=${(id) => { setSelectedId(id); changeView('tasks'); }} />`}
 
         ${view === 'tasks' && html`
           <div class="tk-filterbar">

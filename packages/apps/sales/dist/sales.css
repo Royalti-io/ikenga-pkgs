@@ -49,18 +49,21 @@
 }
 
 .sl-kpi-k {
-  font-size: 0.72rem;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
   font-weight: 500;
-  color: var(--fg-muted);
+  color: var(--fg-faint, var(--fg-muted));
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
 }
 
 .sl-kpi-v {
-  font-size: 1.35rem;
-  font-weight: 700;
+  font-family: var(--font-display, Georgia, serif);
+  font-size: 26px;
+  font-weight: 500;
+  font-style: normal;
   color: var(--fg);
-  font-family: var(--font-mono, monospace);
+  margin-top: 4px;
 }
 
 .sl-kpi-sub {
@@ -107,9 +110,9 @@
 
 .sl-funnel-bar {
   flex: 1;
-  height: 12px;
-  border-radius: 3px;
-  background: var(--bg-inset, rgba(0,0,0,0.06));
+  height: 22px;
+  border-radius: var(--radius-xs, 3px);
+  background: var(--bg-sunken, rgba(0,0,0,0.06));
   position: relative;
   overflow: hidden;
 }
@@ -119,8 +122,9 @@
   left: 0;
   top: 0;
   height: 100%;
-  background: var(--fg-faint, rgba(128,128,128,0.3));
-  border-radius: 3px;
+  background: var(--bg-raised, rgba(128,128,128,0.3));
+  border: 1px solid var(--border-soft, rgba(0,0,0,0.08));
+  border-radius: var(--radius-xs, 3px);
 }
 
 .sl-funnel-bar-wt {
@@ -129,8 +133,8 @@
   top: 0;
   height: 100%;
   background: var(--primary, hsl(215,70%,55%));
-  border-radius: 3px;
-  opacity: 0.75;
+  border-radius: var(--radius-xs, 3px);
+  opacity: 0.9;
 }
 
 .sl-funnel-val {
@@ -147,7 +151,7 @@
   align-items: flex-end;
   gap: 16px;
   padding: 14px;
-  height: 100px;
+  height: 170px;
 }
 
 .sl-month {
@@ -263,7 +267,7 @@
   font-family: var(--font-mono, monospace);
   font-size: 0.8rem;
   font-weight: 600;
-  color: var(--systemic, hsl(140,55%,42%));
+  color: var(--live, hsl(150,48%,52%));
 }
 
 /* ── Kanban domain overrides ────────────────────────────────────────────────── */
@@ -346,56 +350,62 @@
   color: var(--danger, hsl(0,65%,52%));
 }
 
-/* Split-detail facts grid */
-.split-facts {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px 16px;
-  margin: 12px 0;
+/* F-03 · Selected-row accent rail → explicit warm-primary (design uses
+   var(--primary), not the sessions amber-ochre --tint-fg-active). */
+.split-row.is-selected .split-row-accent,
+.split-row.is-on .split-row-accent {
+  background: var(--primary, hsl(20,50%,34%));
+  border-radius: 2px;
 }
 
-.split-fact-k {
-  font-size: 0.68rem;
-  color: var(--fg-muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  font-weight: 600;
-}
-
-.split-fact-v {
-  font-size: 0.82rem;
-  color: var(--fg);
-  font-weight: 500;
-}
-
-/* Next-action card in split-detail */
-.split-next {
-  border: 1px solid var(--border-soft, rgba(0,0,0,0.08));
-  border-radius: 7px;
-  overflow: hidden;
-  margin: 12px 0;
-}
-
-.split-next-head {
+/* F-02 · Pipeline list-pane head — sticky Fraunces "Sales" title + mono
+   count above the stage groups. Ported from the design's .pl-list-head /
+   .pl-list-title / .pl-list-meta (not an app-kit primitive). */
+.sl-list-head {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  font-size: 0.72rem;
-  font-weight: 600;
-  color: var(--fg-muted);
-  background: var(--bg-inset, rgba(0,0,0,0.04));
-  border-bottom: 1px solid var(--border-soft, rgba(0,0,0,0.06));
-  text-transform: uppercase;
+  justify-content: space-between;
+  padding: var(--space-3, 12px) var(--space-4, 16px);
+  border-bottom: 1px solid var(--border-soft);
+  position: sticky;
+  top: 0;
+  background: var(--bg-surface);
+  z-index: 6;
+}
+
+.sl-list-title {
+  font-family: var(--font-display, Georgia, serif);
+  font-weight: 500;
+  font-size: var(--text-h3, 18px);
+  color: var(--fg);
+}
+
+.sl-list-meta {
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  color: var(--fg-faint, var(--fg-muted));
   letter-spacing: 0.04em;
 }
 
-.split-next-body {
-  padding: 10px 12px;
-  font-size: 0.82rem;
+/* F-05 · Detail-pane title → Fraunces 28px (design spec). The app-kit
+   primitive sets Fraunces at --text-h2 (24px); sales bumps it to 28px to
+   match the locked sales design's .pl-detail-title. */
+.split-detail-title {
+  font-family: var(--font-display, Georgia, serif);
+  font-size: 28px;
+  font-weight: 500;
+  line-height: 1.15;
+  letter-spacing: -0.012em;
   color: var(--fg);
-  line-height: 1.4;
+  margin: 0 0 var(--space-2, 8px);
 }
+
+/* F-06 / F-07 / F-08 · The facts grid (3-col card), next-action card
+   (live-tinted border + bg), and next-action head (UPPERCASE mono 10px)
+   are all consumed verbatim from the app-kit primitives (.split-facts,
+   .split-next, .split-next-head) — no sales-local override. The previous
+   2-col plain-grid / un-tinted overrides were drift and have been removed
+   so the kit's design-correct rules apply. */
 
 /* Activity timeline in detail pane */
 .split-timeline {

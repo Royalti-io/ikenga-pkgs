@@ -194,6 +194,120 @@ export function blockingTaskQuery(blockingId) {
 }
 
 /**
+ * Downstream dependents — the "Blocks" lane (D-1). Tasks that name THIS task as
+ * their `blocked_by_task_id` are waiting on it. Mirrors the upstream
+ * `blockingTaskQuery` but in the other direction. `blocked_by_task_id` is a
+ * TEXT soft-link in migration 0025 (no FK), so this is a plain WHERE scan.
+ *
+ * @param {string|null} taskId the task whose dependents we want
+ */
+export function dependentTasksQuery(taskId) {
+  return {
+    queryKey: queryKeys.tasks.dependents(taskId ?? 'none'),
+    /** @returns {Promise<Task[]>} */
+    queryFn: async () => {
+      if (!taskId) return [];
+      const rows = await hostDbQuery(
+        'SELECT id, title, status, priority FROM tasks WHERE blocked_by_task_id = ? ORDER BY created_at ASC LIMIT 25',
+        [taskId],
+      );
+      return /** @type {Task[]} */ (rows.map(normalizeTaskRow));
+    },
+    enabled: !!taskId,
+  };
+}
+
+/**
+ * @typedef {Object} TaskEvent
+ * @property {number} id
+ * @property {string} task_id
+ * @property {string} event_type  created | status_changed | completed | reopened | assigned | rescheduled | progress | checked
+ * @property {string|null} from_value
+ * @property {string|null} to_value
+ * @property {string|null} actor
+ * @property {string|null} detail
+ * @property {string} created_at
+ */
+
+/**
+ * Task activity/audit timeline (B.4). Reads the real `task_events` audit table
+ * (shell migration 0048) — backfilled from existing columns and appended to by
+ * the mutation helpers below. The detail pane still derives created/completed
+ * from the task row as a fallback, so the timeline is never empty.
+ *
+ * @param {string} taskId
+ */
+export function taskEventsQuery(taskId) {
+  return {
+    queryKey: queryKeys.tasks.events(taskId),
+    /** @returns {Promise<TaskEvent[]>} */
+    queryFn: async () => {
+      const rows = await hostDbQuery(
+        `SELECT id, task_id, event_type, from_value, to_value, actor, detail, created_at
+         FROM task_events WHERE task_id = ? ORDER BY created_at ASC, id ASC`,
+        [taskId],
+      ).catch(() => []);
+      return /** @type {TaskEvent[]} */ (rows);
+    },
+  };
+}
+
+/**
+ * Append an audit event. Best-effort: the audit trail must never block the
+ * primary mutation, so a failed write (e.g. table absent on an old DB) is
+ * swallowed. This is the forward-capture path complementing the 0048 backfill.
+ *
+ * @param {string} taskId
+ * @param {string} eventType
+ * @param {{ fromValue?: string|null, toValue?: string|null, actor?: string|null, detail?: string|null }} [meta]
+ */
+export async function logTaskEvent(taskId, eventType, meta = {}) {
+  try {
+    await hostDbExec(
+      `INSERT INTO task_events (task_id, event_type, from_value, to_value, actor, detail, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [
+        taskId,
+        eventType,
+        meta.fromValue ?? null,
+        meta.toValue ?? null,
+        meta.actor ?? CURRENT_USER,
+        meta.detail ?? null,
+        new Date().toISOString(),
+      ],
+    );
+  } catch {
+    /* audit is best-effort */
+  }
+}
+
+/**
+ * Reschedule a task's due date via `host.dbExec` (C.8). Pass `dueDate = null` to
+ * clear the due date. `updated_at` is bumped so triage/staleness logic doesn't
+ * treat a just-rescheduled task as stale, and the change is recorded in the
+ * audit timeline.
+ *
+ * @param {string} taskId
+ * @param {string|null} dueDate ISO timestamp / date, or null to clear
+ * @returns {Promise<void>}
+ */
+export async function rescheduleTask(taskId, dueDate) {
+  let prev = null;
+  try {
+    const rows = await hostDbQuery('SELECT due_date FROM tasks WHERE id = ? LIMIT 1', [taskId]);
+    prev = rows[0]?.due_date ?? null;
+  } catch {
+    /* prior value is only for the audit trail */
+  }
+  await hostDbExec('UPDATE tasks SET due_date = ?, updated_at = ? WHERE id = ?', [
+    dueDate,
+    new Date().toISOString(),
+    taskId,
+  ]);
+  await logTaskEvent(taskId, 'rescheduled', { fromValue: prev, toValue: dueDate });
+}
+
+/**
  * Write a task's status to the local ikenga.db via `host.dbExec` (write-path WP).
  * `completed_at` is set to now when moving to `completed` and cleared to NULL
  * otherwise, so a non-completed task never carries a stale completion stamp.
@@ -204,12 +318,23 @@ export function blockingTaskQuery(blockingId) {
  * @returns {Promise<void>}
  */
 export async function updateTaskStatus(taskId, status) {
+  let prev = null;
+  try {
+    const rows = await hostDbQuery('SELECT status FROM tasks WHERE id = ? LIMIT 1', [taskId]);
+    prev = rows[0]?.status ?? null;
+  } catch {
+    /* prior value is only for the audit trail */
+  }
   const completedAt = status === 'completed' ? new Date().toISOString() : null;
   await hostDbExec('UPDATE tasks SET status = ?, completed_at = ? WHERE id = ?', [
     status,
     completedAt,
     taskId,
   ]);
+  await logTaskEvent(taskId, status === 'completed' ? 'completed' : 'status_changed', {
+    fromValue: prev,
+    toValue: status,
+  });
 }
 
 /**
@@ -275,4 +400,5 @@ export async function reassignTask(taskId, assignedTo, assigneeType) {
     'UPDATE tasks SET assigned_to = ?, assignee_type = ?, updated_at = ? WHERE id = ?',
     [assignedTo, assigneeType, new Date().toISOString(), taskId],
   );
+  await logTaskEvent(taskId, 'assigned', { toValue: assignedTo ?? 'unassigned' });
 }

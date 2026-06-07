@@ -60,7 +60,8 @@ function bucketize(tasks) {
   return buckets.filter((b) => b.tasks.length > 0);
 }
 
-export function DoneView() {
+/** @param {{ onSelectTask?: (id: string) => void }} props */
+export function DoneView({ onSelectTask } = {}) {
   const { data, isLoading, error } = useQuery({
     queryKey: queryKeys.tasks.list('done'),
     /** @returns {Promise<Task[]>} */
@@ -119,14 +120,16 @@ export function DoneView() {
 
       ${buckets.map((b) => html`
         <div key=${b.key}>
-          <div class="tk-section-label" style=${{
-            fontSize: 11.5,
-            color: 'var(--fg-faint)',
-            margin: 'var(--space-5) 0 var(--space-2)',
-            textTransform: 'uppercase',
-            letterSpacing: '0.06em',
-          }}>
-            ${b.label} · ${b.tasks.length}
+          ${/* Sticky group divider (F-22) — same .tk-group-head as the List view,
+                so Done's time buckets get the mono eyebrow + chevron + count. The
+                "earlier"/older bucket shares the overdue-tinted variant cue only
+                for the auto-closed group; Done buckets stay neutral. */ ''}
+          <div class="tk-group-head" role="presentation">
+            <span class="tk-group-label">
+              <${Icon} name="chevron-down" size=${10} className="chev" />
+              ${b.label}
+            </span>
+            <span class="ct">${b.tasks.length}</span>
           </div>
           ${b.tasks.map((t) => {
             const isAuto = !!t.outcome_notes && t.outcome_notes.startsWith('Auto-closed by task-health');
@@ -134,7 +137,19 @@ export function DoneView() {
               ? t.outcome_notes.replace(/^Auto-closed by task-health:?\s*/, '') || 'auto-closed'
               : null;
             return html`
-              <div class="dense-row dense-row--task is-completed" key=${t.id}>
+              <div
+                class="dense-row dense-row--task is-completed is-clickable"
+                key=${t.id}
+                role="button"
+                tabIndex=${0}
+                onClick=${() => onSelectTask?.(t.id)}
+                onKeyDown=${(e) => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    onSelectTask?.(t.id);
+                  }
+                }}
+              >
                 <span class=${`dense-row-dot ${priClass(t.priority)}`}></span>
                 <div class="dense-row-body">
                   <div class="dense-row-title">${t.title}</div>

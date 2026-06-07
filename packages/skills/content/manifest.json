@@ -1,0 +1,32 @@
+{
+  "id": "com.ikenga.skill-content",
+  "name": "Content",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "skill",
+  "author": { "name": "Royalti", "key": "royalti" },
+
+  "capabilities": {
+    "sqlite": { "db": "ikenga.local" }
+  },
+
+  "permissions": {
+    "shell.execute": [],
+    "fs.read": [],
+    "fs.write": [],
+    "net": [],
+    "sqlite.tables": [
+      "content_calendar",
+      "social_queue",
+      "calendar_events",
+      "content_performance_history"
+    ],
+    "vault.keys": []
+  },
+  "requires": [
+    {
+      "kind": "skill",
+      "name": "skill-core"
+    }
+  ]
+}
