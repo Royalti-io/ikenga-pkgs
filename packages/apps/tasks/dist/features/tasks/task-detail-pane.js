@@ -13,6 +13,7 @@ import {
 import { queryKeys } from '../../lib/query-keys.js';
 import {
   blockingTaskQuery,
+  dependentTasksQuery,
   reassignTask,
   subtasksQuery,
   taskDetailQuery,
@@ -49,6 +50,9 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
   const { data: blockingTask } = useQuery(
     blockingTaskQuery(task?.blocked_by_task_id ?? null),
   );
+  // Downstream dependents — the "Blocks" lane. Tasks naming this one as their
+  // blocker are waiting on it.
+  const { data: dependentTasks } = useQuery(dependentTasksQuery(taskId));
 
   const updateStatus = useMutation({
     /** @param {TaskStatus} status */
@@ -118,7 +122,15 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
           <span class="id">task · ${shortId(task.id)}</span>
           ${density === 'full' && html`
             <div class="ip-topline-actions">
-              <${Button} variant="outline" size="sm" type="button">Reschedule</${Button}>
+              ${/* Reschedule is a visual stub (no scheduler dialog yet) —
+                    disabled so it doesn't read as actionable (F-07). */ ''}
+              <${Button}
+                variant="outline"
+                size="sm"
+                type="button"
+                disabled
+                title="Rescheduling is not wired up yet"
+              >Reschedule</${Button}>
               <${Button}
                 variant=${reassignOpen ? 'default' : 'outline'}
                 size="sm"
@@ -126,6 +138,7 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
                 onClick=${() => setReassignOpen((v) => !v)}
               >Reassign</${Button}>
               <${Button}
+                variant="affirmative"
                 size="sm"
                 type="button"
                 disabled=${updateStatus.isPending || task.status === 'completed'}
@@ -247,7 +260,6 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
           <div>
             <div class="tk-section-label">
               <span>Source & context</span>
-              <span class="tk-deferred-pill">deferred · UI</span>
             </div>
             <div class="tk-source-row">
               ${task.source_email_id && html`
@@ -355,16 +367,54 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
           </dl>
         </div>
 
-        ${blockingTask && html`
+        ${(blockingTask || (dependentTasks && dependentTasks.length > 0)) && html`
           <div>
-            <div class="tk-section-label"><span>Blocked by</span></div>
-            <button
-              type="button"
-              onClick=${() => onNavigateTask?.(blockingTask.id)}
-              class="tk-src"
-            >
-              ${blockingTask.title}
-            </button>
+            <div class="tk-section-label"><span>Dependencies</span></div>
+            ${blockingTask && html`
+              <div class="tk-dep-lane">Blocked by</div>
+              <div class="tk-dep-list">
+                <button
+                  type="button"
+                  class=${cn('tk-dep-row', blockingTask.status === 'completed' ? 'is-resolved' : 'is-up')}
+                  onClick=${() => onNavigateTask?.(blockingTask.id)}
+                >
+                  ${blockingTask.status === 'completed'
+                    ? html`<${Icon} name="check" size=${13} strokeWidth=${2.2} className="arr" />`
+                    : html`<${Icon} name="alert-circle" size=${13} className="arr" />`}
+                  <span class="name">${blockingTask.title}</span>
+                  <span class=${cn('tk-badge', statusClass(blockingTask.status))}>
+                    <span class="dot"></span>
+                    ${blockingTask.status === 'completed' ? 'resolved' : blockingTask.status.replace('_', ' ')}
+                  </span>
+                </button>
+              </div>
+            `}
+            ${dependentTasks && dependentTasks.length > 0 && html`
+              <div class="tk-dep-lane">Blocks</div>
+              <div class="tk-dep-list">
+                ${dependentTasks.map((d) => html`
+                  <button
+                    type="button"
+                    key=${d.id}
+                    class=${cn('tk-dep-row', d.status === 'completed' ? 'is-resolved' : 'is-down')}
+                    onClick=${() => onNavigateTask?.(d.id)}
+                  >
+                    ${d.status === 'completed'
+                      ? html`<${Icon} name="check" size=${13} strokeWidth=${2.2} className="arr" />`
+                      : html`<${Icon} name="arrow-down" size=${13} className="arr" />`}
+                    <span class="name">${d.title}</span>
+                    <span class=${cn('tk-badge', statusClass(d.status))}>
+                      <span class="dot"></span>
+                      ${d.status === 'completed'
+                        ? 'resolved'
+                        : d.status === 'pending'
+                          ? 'waiting'
+                          : d.status.replace('_', ' ')}
+                    </span>
+                  </button>
+                `)}
+              </div>
+            `}
           </div>
         `}
 
@@ -448,9 +498,16 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
 
       ${density !== 'full' && html`
         <div class="ip-action-bar">
-          <${Button} variant="outline" size="sm" type="button">Reschedule</${Button}>
+          <${Button}
+            variant="outline"
+            size="sm"
+            type="button"
+            disabled
+            title="Rescheduling is not wired up yet"
+          >Reschedule</${Button}>
           <span class="ip-action-bar-spacer"></span>
           <${Button}
+            variant="affirmative"
             size="sm"
             type="button"
             disabled=${updateStatus.isPending || task.status === 'completed'}

@@ -8,7 +8,9 @@
 //   - .nav-group[data-kind] / .nav-item / .nav-item.is-on / .nav-item.is-hot via setMenu
 //   - .atelier-state.is-{loading,empty,error,streaming} (kit part 26)
 //   - .tag / .chip / .btn / .btn-icon / .btn-sm / .badge (kit parts 10, 11)
-//   - .dense-row.dense-row--outbox in Triage view (kit part 20)
+//   - Triage renders the enriched .mail-row (same as Inbox/All) under a
+//     "Flagged by Chi" section — NOT .dense-row--outbox (its 16px/4px/1fr grid
+//     squeezed 2-child rows into the 4px column, corrupting subjects).
 //   - .chat-msg* in dock area (kit part 29)
 
 import { html, cn, Icon, useState, useEffect, useMemo, useRef, useQuery, useMutation, useQueryClient } from '../../lib/ui.js';
@@ -110,15 +112,30 @@ function tagClass(tag) {
   return 'tag';
 }
 
+// Map the real triage_category enum (action_needed · urgent · fyi ·
+// informational · ignore · replied · manual) to a tag colour.
 function triageCategoryTag(category) {
   if (!category) return null;
   const map = {
+    urgent: 'tag tag-warn',
+    action_needed: 'tag tag-primary',
+    awaiting: 'tag tag-primary',
+    replied: 'tag tag-deal',
     business: 'tag tag-deal',
     overdue: 'tag tag-warn',
+    fyi: 'tag tag-system',
+    informational: 'tag tag-system',
     automated: 'tag tag-system',
-    awaiting: 'tag tag-primary',
+    ignore: 'tag',
+    manual: 'tag',
   };
-  return map[category.toLowerCase()] ?? 'tag';
+  return map[String(category).toLowerCase()] ?? 'tag';
+}
+
+// Humanize a triage_category enum value for display (action_needed → "Action needed").
+function triageCategoryLabel(category) {
+  if (!category) return '';
+  return String(category).replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
 }
 
 // ─── Relative time ────────────────────────────────────────────────────────────
@@ -141,6 +158,49 @@ function relativeTime(dateStr) {
   } catch {
     return '';
   }
+}
+
+// Absolute-ish received label for the reader meta row, e.g. "Today 14:02",
+// "Yesterday 09:22", "Mar 4 14:02".
+function formatReceivedAt(dateStr) {
+  if (!dateStr) return '';
+  try {
+    const d = new Date(dateStr);
+    const time = d.toLocaleTimeString('en', { hour: '2-digit', minute: '2-digit', hour12: false });
+    const bucket = dateBucket(dateStr);
+    if (bucket === 'Today') return `Today ${time}`;
+    if (bucket === 'Yesterday') return `Yesterday ${time}`;
+    return `${d.toLocaleDateString('en', { month: 'short', day: 'numeric' })} ${time}`;
+  } catch {
+    return '';
+  }
+}
+
+// Coarse relative-date bucket used for list section grouping + reader meta.
+function dateBucket(dateStr) {
+  if (!dateStr) return 'Earlier';
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return 'Earlier';
+  const startOf = (x) => { const y = new Date(x); y.setHours(0, 0, 0, 0); return y.getTime(); };
+  const today = startOf(Date.now());
+  const day = 86400000;
+  const diffDays = Math.round((today - startOf(d.getTime())) / day);
+  if (diffDays <= 0) return 'Today';
+  if (diffDays === 1) return 'Yesterday';
+  if (diffDays < 7) return `${diffDays} days ago`;
+  if (diffDays < 30) return `${Math.floor(diffDays / 7)} ${Math.floor(diffDays / 7) === 1 ? 'week' : 'weeks'} ago`;
+  return 'Earlier';
+}
+
+// True when a message represents an active deal — drives the amber meta chip.
+function isDealMessage(message) {
+  if (!message) return false;
+  const cat = String(message.triage_category || '').toLowerCase();
+  if (cat === 'business' || cat === 'replied' || cat === 'action_needed') return true;
+  if (Array.isArray(message.tags)) {
+    return message.tags.some((t) => /deal|business/i.test(String(t)));
+  }
+  return false;
 }
 
 // ─── Components ──────────────────────────────────────────────────────────────
@@ -189,7 +249,7 @@ function MailRow({ thread, isSelected, onClick }) {
   // Build visible tags: from triage_category + tags array
   const visibleTags = [];
   if (triage_category) {
-    visibleTags.push({ label: triage_category, cls: triageCategoryTag(triage_category) ?? 'tag' });
+    visibleTags.push({ label: triageCategoryLabel(triage_category), cls: triageCategoryTag(triage_category) ?? 'tag' });
   }
   if (Array.isArray(tags)) {
     for (const t of tags) {
@@ -228,27 +288,46 @@ function MailRow({ thread, isSelected, onClick }) {
 
 /**
  * Reader toolbar with navigation actions.
+ * Order mirrors the design (atelier-mail.html §reader-toolbar):
+ *   Back → Snooze → Archive → Delete → Tag → spacer → "N of M" → Prev → Next
  */
-function ReaderToolbar({ onBack, onArchive, onSnooze, onTag, position }) {
+function ReaderToolbar({ onBack, onArchive, onSnooze, onTag, onDelete, onPrev, onNext, position, canPrev, canNext }) {
   return html`
     <div class="reader-toolbar" role="toolbar" aria-label="Thread actions">
       <button class="btn btn-icon" onClick=${onBack} title="Back" aria-label="Back">
         <${Icon} name="arrow-left" size=${16} />
       </button>
-      <span class="reader-toolbar-spacer"></span>
-      <span class="reader-toolbar-meta">${position}</span>
-      <span class="reader-toolbar-spacer"></span>
+      <button class="btn btn-icon" onClick=${onSnooze} title="Snooze 4h" aria-label="Snooze 4 hours">
+        <${Icon} name="clock" size=${16} />
+      </button>
       <button class="btn btn-icon" onClick=${onArchive} title="Archive" aria-label="Archive">
         <${Icon} name="archive" size=${16} />
       </button>
-      <button class="btn btn-icon" onClick=${onSnooze} title="Snooze 4h" aria-label="Snooze 4 hours">
-        <${Icon} name="clock" size=${16} />
+      <button class="btn btn-icon" onClick=${onDelete} title="Delete" aria-label="Delete">
+        <${Icon} name="trash" size=${16} />
       </button>
       <button class="btn btn-icon" onClick=${onTag} title="Tag" aria-label="Tag thread">
         <${Icon} name="tag" size=${16} />
       </button>
-      <button class="btn btn-icon" title="Delete" aria-label="Delete">
-        <${Icon} name="trash" size=${16} />
+      <span class="reader-toolbar-spacer"></span>
+      ${position ? html`<span class="reader-toolbar-meta">${position}</span>` : null}
+      <button
+        class="btn btn-icon"
+        onClick=${onPrev}
+        title="Previous"
+        aria-label="Previous thread"
+        disabled=${!canPrev}
+      >
+        <${Icon} name="chevron-up" size=${16} />
+      </button>
+      <button
+        class="btn btn-icon"
+        onClick=${onNext}
+        title="Next"
+        aria-label="Next thread"
+        disabled=${!canNext}
+      >
+        <${Icon} name="chevron-down" size=${16} />
       </button>
     </div>
   `;
@@ -257,7 +336,7 @@ function ReaderToolbar({ onBack, onArchive, onSnooze, onTag, position }) {
 /**
  * Reader pane — full thread view with quick-reply.
  */
-function ReaderPane({ messageId, queryClient, onBack }) {
+function ReaderPane({ messageId, queryClient, onBack, onPrev, onNext, position, canPrev, canNext }) {
   const [replyText, setReplyText] = useState('');
   const [draftSent, setDraftSent] = useState(false);
 
@@ -367,7 +446,12 @@ function ReaderPane({ messageId, queryClient, onBack }) {
         onArchive=${() => {}}
         onSnooze=${() => snoozeMut.mutate()}
         onTag=${() => {}}
-        position=""
+        onDelete=${() => {}}
+        onPrev=${onPrev}
+        onNext=${onNext}
+        position=${position}
+        canPrev=${canPrev}
+        canNext=${canNext}
       />
       <div class="reader-body-wrap">
         <div class="reader-head">
@@ -391,8 +475,10 @@ function ReaderPane({ messageId, queryClient, onBack }) {
           </div>
           <div class="reader-subject">${message.subject || '(no subject)'}</div>
           <div class="reader-meta">
-            <span class="chip">${relativeTime(message.received_at)}</span>
-            ${message.triage_category ? html`<span class=${triageCategoryTag(message.triage_category) ?? 'tag'}>${message.triage_category}</span>` : null}
+            <span>${formatReceivedAt(message.received_at)}</span>
+            ${message.from_org ? html`<span>${message.from_org}</span>` : null}
+            ${message.triage_category ? html`<span>${triageCategoryLabel(message.triage_category)}</span>` : null}
+            ${isDealMessage(message) ? html`<span class="reader-meta-deal">Active deal</span>` : null}
           </div>
         </div>
 
@@ -408,7 +494,7 @@ function ReaderPane({ messageId, queryClient, onBack }) {
         ${chiReply || replyText ? html`
           <div class="reader-quick-reply">
             <div class="reader-quick-reply-head">
-              <span class="reader-quick-reply-tag chip">Quick reply · drafted by your Chi · approve to send</span>
+              <span class="reader-quick-reply-tag">Quick reply · drafted by your Chi · approve to send</span>
             </div>
             <textarea
               class="input"
@@ -420,16 +506,17 @@ function ReaderPane({ messageId, queryClient, onBack }) {
               aria-label="Quick reply"
             ></textarea>
             <div class="reader-quick-reply-foot">
-              <span style=${{ color: 'var(--achievement, var(--live))' }}>
+              <span><kbd>⌘</kbd><kbd>↵</kbd> Send</span>
+              <span><kbd>⌘</kbd><kbd>R</kbd> Regenerate</span>
+              <span class="reader-quick-reply-tone">
                 Tone: warm · 3-line · matches your last 6 replies
               </span>
-              <span style=${{ color: 'var(--fg-faint)' }}>⌘↵ send · ⌘R regenerate</span>
             </div>
           </div>
         ` : html`
           <div class="reader-quick-reply">
             <div class="reader-quick-reply-head">
-              <span class="reader-quick-reply-tag chip">Quick reply</span>
+              <span class="reader-quick-reply-tag">Quick reply</span>
             </div>
             <textarea
               class="input"
@@ -441,7 +528,9 @@ function ReaderPane({ messageId, queryClient, onBack }) {
               aria-label="Quick reply"
             ></textarea>
             <div class="reader-quick-reply-foot">
-              <span style=${{ color: 'var(--fg-faint)' }}>⌘↵ send · ⌘R ask Chi to draft</span>
+              <span class="reader-quick-reply-foot-spacer"></span>
+              <span><kbd>⌘</kbd><kbd>↵</kbd> send</span>
+              <span><kbd>⌘</kbd><kbd>R</kbd> ask Chi to draft</span>
             </div>
           </div>
         `}
@@ -532,8 +621,41 @@ export function MailView({ activeFeature }) {
     drafts: 'Drafts',
   }[view] ?? 'Mail';
 
-  // Triage view uses .dense-row--outbox (kit part 20)
   const isTriageView = view === 'triage';
+
+  // Group threads into labelled date sections (Today / Yesterday / N days ago …),
+  // preserving the received_at DESC order the query already returns (F-12).
+  const sections = useMemo(() => {
+    const order = [];
+    const byBucket = new Map();
+    for (const t of threads) {
+      const b = isTriageView ? 'Flagged by Chi' : dateBucket(t.received_at);
+      if (!byBucket.has(b)) { byBucket.set(b, []); order.push(b); }
+      byBucket.get(b).push(t);
+    }
+    return order.map((label) => ({ label, rows: byBucket.get(label) }));
+  }, [threads, isTriageView]);
+
+  // Prev/Next navigation across the flat (already-ordered) thread list (F-04/F-05).
+  const selectedIndex = useMemo(
+    () => threads.findIndex((t) => t.id === selectedId),
+    [threads, selectedId]
+  );
+  const canPrev = selectedIndex > 0;
+  const canNext = selectedIndex >= 0 && selectedIndex < threads.length - 1;
+  const position = selectedIndex >= 0 && threads.length > 0
+    ? `${selectedIndex + 1} of ${threads.length}`
+    : '';
+  const goPrev = () => { if (canPrev) setSelectedId(threads[selectedIndex - 1].id); };
+  const goNext = () => { if (canNext) setSelectedId(threads[selectedIndex + 1].id); };
+
+  // Head-meta sub-line, per view (F-11).
+  const headMeta = {
+    inbox: `${counts.unread} unread · ${counts.snoozed} snoozed`,
+    triage: `${counts.triage} flagged · ${counts.snoozed} snoozed`,
+    all: `${threads.length} threads`,
+    drafts: `${counts.drafts} drafts`,
+  }[view] ?? `${threads.length} threads`;
 
   return html`
     <div class="frame" data-workspace="mail">
@@ -557,11 +679,7 @@ export function MailView({ activeFeature }) {
         <div class="mail-list" role="grid" aria-label=${`${viewLabel} thread list`}>
           <div class="mail-list-head">
             <div class="mail-list-head-title">${viewLabel}</div>
-            ${counts.unread > 0 && view === 'inbox' ? html`
-              <div class="mail-list-head-meta">
-                ${counts.unread} unread · ${counts.snoozed} snoozed
-              </div>
-            ` : null}
+            <div class="mail-list-head-meta">${headMeta}</div>
           </div>
           <div class="mail-list-search">
             <div class="mail-list-search-row">
@@ -575,58 +693,31 @@ export function MailView({ activeFeature }) {
             </div>
           </div>
 
-          ${threadsLoading ? html`<${FeedbackState} state="loading" />` : null}
-          ${threadsError ? html`<${FeedbackState} state="error" message=${threadsError.message} />` : null}
-          ${!threadsLoading && !threadsError && threads.length === 0
-            ? html`<${FeedbackState} state="empty" message="No threads in ${viewLabel}." />`
-            : null
-          }
+          <div class="mail-list-scroll">
+            ${threadsLoading ? html`<${FeedbackState} state="loading" />` : null}
+            ${threadsError ? html`<${FeedbackState} state="error" message=${threadsError.message} />` : null}
+            ${!threadsLoading && !threadsError && threads.length === 0
+              ? html`<${FeedbackState} state="empty" message="No threads in ${viewLabel}." />`
+              : null
+            }
 
-          ${!threadsLoading && !threadsError && isTriageView
-            ? html`
-              <div class="mail-list-section">Flagged by Chi</div>
-              ${threads.map((thread) => html`
-                <div
-                  key=${thread.id}
-                  class=${cn('dense-row dense-row--outbox', { 'is-on': selectedId === thread.id })}
-                  role="row"
-                  tabIndex="0"
-                  onClick=${() => setSelectedId(thread.id)}
-                  onKeyDown=${(e) => e.key === 'Enter' && setSelectedId(thread.id)}
-                >
-                  <div class="mail-row-tick" aria-hidden="true"></div>
-                  <div style=${{ flex: 1, minWidth: 0 }}>
-                    <div class="mail-row-meta">
-                      <span class="mail-row-from">${thread.from_name || thread.from_address}</span>
-                      <span class="mail-row-time">${relativeTime(thread.received_at)}</span>
-                    </div>
-                    <div class="mail-row-subject">${thread.subject || '(no subject)'}</div>
-                    ${thread.triage_category ? html`
-                      <span class=${triageCategoryTag(thread.triage_category) ?? 'tag'}>
-                        ${thread.triage_category}
-                      </span>
-                    ` : null}
-                  </div>
+            ${!threadsLoading && !threadsError && threads.length > 0
+              ? sections.map((section) => html`
+                <div key=${section.label}>
+                  <div class="mail-list-section">${section.label}</div>
+                  ${section.rows.map((thread) => html`
+                    <${MailRow}
+                      key=${thread.id}
+                      thread=${thread}
+                      isSelected=${selectedId === thread.id}
+                      onClick=${(id) => setSelectedId(id)}
+                    />
+                  `)}
                 </div>
-              `)}
-            `
-            : null
-          }
-
-          ${!threadsLoading && !threadsError && !isTriageView && threads.length > 0
-            ? html`
-              <div class="mail-list-section">Today</div>
-              ${threads.map((thread) => html`
-                <${MailRow}
-                  key=${thread.id}
-                  thread=${thread}
-                  isSelected=${selectedId === thread.id}
-                  onClick=${(id) => setSelectedId(id)}
-                />
-              `)}
-            `
-            : null
-          }
+              `)
+              : null
+            }
+          </div>
         </div>
 
         <!-- Right: reader pane -->
@@ -634,6 +725,11 @@ export function MailView({ activeFeature }) {
           messageId=${selectedId}
           queryClient=${queryClient}
           onBack=${() => setSelectedId(null)}
+          onPrev=${goPrev}
+          onNext=${goNext}
+          position=${position}
+          canPrev=${canPrev}
+          canNext=${canNext}
         />
       </div>
     </div>

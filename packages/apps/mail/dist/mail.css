@@ -33,23 +33,29 @@
 }
 
 .mail-list-head {
-  padding: 12px 14px 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
   border-bottom: 1px solid var(--border-soft, rgba(0,0,0,0.06));
   flex-shrink: 0;
 }
 
 .mail-list-head-title {
-  font-size: 0.9rem;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: var(--text-h3, 1.05rem);
   color: var(--fg);
   line-height: 1.3;
 }
 
 .mail-list-head-meta {
   font-family: var(--font-mono, monospace);
-  font-size: 0.7rem;
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
   color: var(--fg-faint, var(--fg-muted));
-  margin-top: 2px;
+  white-space: nowrap;
 }
 
 .mail-list-search {
@@ -85,29 +91,36 @@
 }
 
 .mail-list-section {
-  padding: 6px 14px 4px;
-  font-size: 0.7rem;
-  font-weight: 600;
+  padding: var(--space-3) var(--space-4) var(--space-1);
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.12em;
   color: var(--fg-faint, var(--fg-muted));
+  background: var(--bg-sunken, var(--bg-base));
+  border-bottom: 1px solid var(--border-soft, rgba(0,0,0,0.06));
   flex-shrink: 0;
 }
 
-/* Scrollable thread list area */
-.mail-list > :last-child {
+/* Scrollable thread list area — wraps the date-grouped sections. */
+.mail-list-scroll {
   overflow-y: auto;
   flex: 1;
+  min-height: 0;
 }
 
 /* ── Mail row ── */
+/* Design (atelier-mail.html): two-column grid — 4px tick + 1fr body. */
 .mail-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 4px 1fr;
+  gap: var(--space-2);
   align-items: stretch;
   cursor: pointer;
-  min-height: 68px;
-  border-bottom: 1px solid var(--border-soft, rgba(0,0,0,0.04));
-  transition: background 120ms ease;
+  padding: calc(var(--row-pad-y) + 4px) var(--space-4);
+  border-bottom: 1px solid var(--border-soft, rgba(0,0,0,0.06));
+  transition: background var(--motion-fast, 120ms) var(--ease-calm, ease);
   outline: none;
 }
 
@@ -121,12 +134,12 @@
   outline-offset: -2px;
 }
 
-/* Left accent stripe — fills amber when unread or selected */
+/* Left accent stripe — fills with the workspace tint when unread or selected */
 .mail-row-tick {
   width: 4px;
-  flex-shrink: 0;
+  border-radius: 2px;
   background: transparent;
-  transition: background 120ms ease;
+  transition: background var(--motion-fast, 120ms) var(--ease-calm, ease);
 }
 
 .mail-row.is-unread .mail-row-tick,
@@ -135,8 +148,6 @@
 }
 
 .mail-row-body {
-  flex: 1;
-  padding: 9px 10px 8px;
   min-width: 0;
 }
 
@@ -149,7 +160,7 @@
 }
 
 .mail-row-from {
-  font-size: 0.82rem;
+  font-size: var(--text-body-sm, 0.82rem);
   font-weight: 500;
   color: var(--fg);
   white-space: nowrap;
@@ -158,40 +169,50 @@
   flex: 1;
 }
 
+.mail-row.is-unread .mail-row-from {
+  font-weight: 600;
+}
+
 .mail-row-time {
-  font-size: 0.72rem;
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
   color: var(--fg-faint, var(--fg-muted));
   white-space: nowrap;
   flex-shrink: 0;
 }
 
+/* Subject is full --fg in the design for read + unread; weight carries unread. */
 .mail-row-subject {
-  font-size: 0.82rem;
-  color: var(--fg-muted);
-  white-space: nowrap;
+  font-size: var(--text-body-sm, 0.82rem);
+  color: var(--fg);
+  line-height: 1.35;
+  margin-bottom: 3px;
   overflow: hidden;
-  text-overflow: ellipsis;
-  margin-bottom: 2px;
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
 }
 
 .mail-row.is-unread .mail-row-subject {
-  color: var(--fg);
   font-weight: 500;
 }
 
+/* Two-line preview clamp (design: -webkit-line-clamp: 2). */
 .mail-row-preview {
-  font-size: 0.78rem;
-  color: var(--fg-faint, var(--fg-muted));
-  white-space: nowrap;
+  font-size: var(--text-caption, 0.78rem);
+  color: var(--fg-muted);
+  line-height: 1.4;
   overflow: hidden;
-  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
 }
 
 .mail-row-tags {
   display: flex;
-  gap: 4px;
+  gap: var(--space-1);
   flex-wrap: wrap;
-  margin-top: 4px;
+  margin-top: var(--space-2);
 }
 
 /* ── Reader pane ── */
@@ -226,10 +247,13 @@
 .reader-body-wrap {
   flex: 1;
   overflow-y: auto;
-  padding: 16px 20px 24px;
+  padding: var(--space-6) var(--space-8);
+  max-width: 780px;
+  margin: 0 auto;
+  width: 100%;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: var(--space-5);
 }
 
 .reader-head {
@@ -264,31 +288,59 @@
   flex-shrink: 0;
 }
 
+/* Display heading — Fraunces 30px / 500, per design. */
 .reader-subject {
-  font-size: 1.05rem;
-  font-weight: 600;
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 30px;
+  line-height: 1.15;
+  letter-spacing: -0.012em;
   color: var(--fg);
-  line-height: 1.35;
-  font-family: var(--font-display, var(--font-sans));
+  margin-bottom: var(--space-3);
 }
 
+/* Mono dot-separated meta chips — separators inserted via ::before (design). */
 .reader-meta {
+  font-family: var(--font-mono, monospace);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--fg-muted);
   display: flex;
-  gap: 6px;
+  gap: var(--space-4);
   align-items: center;
   flex-wrap: wrap;
 }
 
+.reader-meta span::before {
+  content: '· ';
+  color: var(--fg-faint);
+  margin-right: 2px;
+}
+
+.reader-meta span:first-child::before {
+  content: '';
+  margin: 0;
+}
+
+.reader-meta .reader-meta-deal {
+  color: var(--achievement);
+}
+
 .reader-body {
-  font-size: 0.875rem;
-  line-height: 1.65;
+  font-size: var(--text-body, 0.875rem);
+  line-height: 1.7;
   color: var(--fg);
-  font-family: var(--font-body, var(--font-sans));
-  max-width: 680px;
+  font-family: var(--font-body);
+  max-width: 64ch;
 }
 
 .reader-body p {
-  margin: 0 0 0.8em;
+  margin: 0 0 var(--space-4);
+}
+
+.reader-body strong {
+  color: var(--achievement);
+  font-weight: 600;
 }
 
 /* ── Quick reply ── */
@@ -305,9 +357,13 @@
   background: var(--bg-surface, var(--bg-base));
 }
 
+/* Amber label — drafted-by-Chi affordance (design uses --achievement). */
 .reader-quick-reply-tag {
-  font-size: 0.75rem;
-  color: var(--fg-muted);
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--achievement);
 }
 
 .reader-quick-reply .input {
@@ -317,22 +373,49 @@
   border-radius: 0;
   background: transparent;
   padding: 10px 12px;
-  font-size: 0.85rem;
-  font-family: var(--font-body, var(--font-sans));
+  font-size: var(--text-body, 0.85rem);
+  font-family: var(--font-body);
   color: var(--fg);
-  line-height: 1.55;
-  resize: none;
+  line-height: 1.6;
+  resize: vertical;
+  min-height: 64px;
   outline: none;
 }
 
 .reader-quick-reply-foot {
   display: flex;
-  justify-content: space-between;
   align-items: center;
-  padding: 6px 12px 8px;
-  font-size: 0.72rem;
-  gap: 8px;
+  padding: var(--space-2) 12px var(--space-2) 12px;
+  margin-top: 0;
+  border-top: 1px solid var(--border-soft, rgba(0,0,0,0.06));
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--fg-faint, var(--fg-muted));
+  gap: var(--space-2);
   flex-wrap: wrap;
+}
+
+.reader-quick-reply-foot kbd {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  color: var(--fg-faint, var(--fg-muted));
+  background: var(--bg-base);
+  border: 1px solid var(--border-soft, rgba(0,0,0,0.08));
+  border-radius: var(--radius-xs, 3px);
+  padding: 1px 5px;
+  margin-right: 1px;
+}
+
+/* Tone hint sits at the right edge, amber, when a draft is present. */
+.reader-quick-reply-tone {
+  margin-left: auto;
+  color: var(--achievement);
+}
+
+/* No-draft state pushes the shortcut hints to the right edge. */
+.reader-quick-reply-foot-spacer {
+  flex: 1;
 }
 
 /* ── Thread collapse rail ── */
@@ -371,19 +454,6 @@
   --tint-fg-active: var(--tint-mail-fg, hsl(42, 70%, 62%));
 }
 
-/* Tag color overrides for mail domain tags */
-.tag.tag-deal   { --tag-color: var(--amber, hsl(42,80%,50%)); color: var(--tag-color); border-color: var(--tag-color); }
-.tag.tag-warn   { --tag-color: var(--danger, hsl(0,60%,55%)); color: var(--tag-color); border-color: var(--tag-color); }
-.tag.tag-system { --tag-color: var(--fg-muted); color: var(--tag-color); border-color: var(--tag-color); }
-.tag.tag-primary { --tag-color: var(--primary, hsl(220,70%,55%)); color: var(--tag-color); border-color: var(--tag-color); }
-
-/* dense-row--outbox modifier (Triage view) */
-.dense-row--outbox {
-  cursor: pointer;
-  padding-left: 0;
-}
-
-.dense-row--outbox:hover,
-.dense-row--outbox.is-on {
-  background: var(--bg-raised);
-}
+/* Mail tag colours are owned by the app-kit (.tag-deal/.tag-warn/.tag-system/
+ * .tag-primary all reference @ikenga/tokens). No mail-local override needed —
+ * the previous overrides used a non-token `--amber` and silently fell back. */

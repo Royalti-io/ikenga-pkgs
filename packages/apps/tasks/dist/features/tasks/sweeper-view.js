@@ -1,21 +1,26 @@
 // Sweeper — auto-close review queue. Ports the design's SWEEPER_HTML
-// (atelier-tasks.html). The full design surfaces a confidence band: ≥ 0.9
+// (atelier-tasks.html, Section C). The design surfaces a confidence band: ≥ 0.9
 // auto-closes silently; 0.6–0.9 waits here for human sign-off. The ikenga.db
-// schema does not yet have a `task_signals` table to carry that signal, so
-// this first cut shows two cohorts:
+// schema does not yet carry a per-row confidence score (no `task_signals`
+// table), so the 4-segment confidence bar is rendered at a FIXED tier derived
+// from the cohort: recently-auto-closed rows read as high-confidence (lvl-4 /
+// lvl-3 alternating for visual texture, mirroring the design's two auto rows),
+// and awaiting/flagged rows read as the flag tier (lvl-2). Evidence prose is the
+// real `outcome_notes` text — no fabricated rows. Two cohorts:
 //
 //   1. "Awaiting your call" — open tasks whose `outcome_notes` carry a
 //      sweeper hint (`Needs review by task-health`) but aren't auto-closed yet.
 //   2. "Recently auto-closed" — completed tasks where `outcome_notes` begins
-//      `Auto-closed by task-health`. These are silent closes the design says
-//      should still be visible for a window so you can reopen if wrong.
+//      `Auto-closed by task-health`. Silent closes kept visible so they can be
+//      reopened if wrong.
 //
 // Schema columns used: id, title, status, priority, outcome_notes,
-// completed_at, updated_at. All present in royalti-pa/migrations/003/004.
+// completed_at, updated_at, category. All present in royalti-pa/migrations.
 
 import { html, Icon, Button, useQuery } from '../../lib/ui.js';
 import { hostDbQuery } from '../../lib/bridge.js';
 import { queryKeys } from '../../lib/query-keys.js';
+import { autoCloseSignal, shortId } from '../../lib/shared.js';
 
 /** @typedef {import('../../lib/queries.js').Task} Task */
 
@@ -35,6 +40,13 @@ function relTime(iso) {
   if (hr < 48) return `${hr}h ago`;
   const dy = Math.round(hr / 24);
   return `${dy}d ago`;
+}
+
+// Strip the "Auto-closed by task-health:" / "Needs review by task-health:"
+// prefix so the evidence column shows just the observed side-effect.
+function evidenceText(notes) {
+  if (!notes) return '';
+  return notes.replace(/^(Auto-closed|Needs review) by task-health:?\s*/i, '').trim();
 }
 
 export function SweeperView() {
@@ -75,12 +87,8 @@ export function SweeperView() {
 
   const awaitingRows = awaiting.data ?? [];
   const recentRows = recent.data ?? [];
-
-  function priClass(p) {
-    if (p === 'high') return 'is-high';
-    if (p === 'medium') return 'is-medium';
-    return 'is-low';
-  }
+  const pendingCount = awaitingRows.length;
+  const closedCount = recentRows.length;
 
   return html`
     <div class="sweeper-wrap" style=${{
@@ -88,7 +96,7 @@ export function SweeperView() {
       minHeight: 0,
       overflowY: 'auto',
       padding: 'var(--space-5)',
-      maxWidth: '880px',
+      maxWidth: '980px',
     }}>
       <div class="tk-section-label" style=${{ marginBottom: 'var(--space-3)' }}>
         Auto-close sweeper · review queue
@@ -105,66 +113,89 @@ export function SweeperView() {
         for your sign-off.
       </p>
 
-      ${awaitingRows.length > 0 && html`
-        <div class="tk-section-label" style=${{
-          fontSize: 11.5,
-          color: 'var(--fg-faint)',
-          margin: 'var(--space-5) 0 var(--space-2)',
-          textTransform: 'uppercase',
-          letterSpacing: '0.06em',
-        }}>
-          Awaiting your call · ${awaitingRows.length}
+      ${(awaiting.isLoading || recent.isLoading) && html`
+        <div class="tk-loading">
+          <${Icon} name="loader" size=${16} className="tk-spin" />
+          Loading…
         </div>
-        ${awaitingRows.map((t) => html`
-          <div class="dense-row dense-row--task" key=${t.id}>
-            <span class=${`dense-row-dot ${priClass(t.priority)}`}></span>
-            <div class="dense-row-body">
-              <div class="dense-row-title">${t.title}</div>
-              <div class="meta">
-                <span class="tk-autoclose" style=${{ color: 'var(--achievement)' }}>
-                  <${Icon} name="alert-circle" size=${11} />
-                  ${t.outcome_notes ?? 'needs review'}
-                </span>
-              </div>
-            </div>
-            <div class="dense-row-right" style=${{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center' }}>
-              <${Button} size="sm" variant="ghost">Keep open</${Button}>
-              <${Button} size="sm" variant="affirmative">Approve close</${Button}>
-            </div>
-          </div>
-        `)}
       `}
 
-      <div class="tk-section-label" style=${{
-        fontSize: 11.5,
-        color: 'var(--fg-faint)',
-        margin: 'var(--space-5) 0 var(--space-2)',
-        textTransform: 'uppercase',
-        letterSpacing: '0.06em',
-      }}>
-        Recently auto-closed · ${recentRows.length}
-      </div>
-      ${recentRows.length === 0 && html`
+      ${!awaiting.isLoading && !recent.isLoading && pendingCount === 0 && closedCount === 0 && html`
         <div style=${{ color: 'var(--fg-muted)', fontSize: 'var(--text-body-sm)', padding: 'var(--space-3) 0' }}>
-          No silent closes yet. When the sweeper closes a task above 0.9 confidence it'll show here for 7d.
+          No sweep proposals. When the sweeper observes a task's side-effect it'll list the close
+          here — high-confidence ones auto-close and stay visible for 7d, mid-confidence ones wait
+          for your call.
         </div>
       `}
-      ${recentRows.map((t) => html`
-        <div class="dense-row dense-row--task is-completed" key=${t.id}>
-          <span class=${`pri-dot ${priClass(t.priority)}`}></span>
-          <div class="body">
-            <div class="title">${t.title}</div>
-            <div class="meta">
-              <span class="tk-badge is-completed"><span class="dot"></span>completed</span>
-              <span class="tk-autoclose">
-                <${Icon} name="check" size=${11} />
-                ${(t.outcome_notes ?? '').replace(/^Auto-closed by task-health:?\s*/, '') || 'auto-closed'}
-              </span>
-            </div>
-          </div>
-          <div class="dense-row-right"><span class="dense-row-due">${relTime(t.completed_at)}</span></div>
+
+      ${/* Cohort 1 · awaiting human sign-off — flag tier (lvl-2). The section
+            label uses the plain .tk-section-label (no inline style overrides,
+            F-19); the class already carries the mono eyebrow styling. */ ''}
+      ${awaitingRows.length > 0 && html`
+        <div class="tk-section-label" style=${{ margin: 'var(--space-5) 0 var(--space-2)' }}>
+          <span>Awaiting your call <span class="ct">${pendingCount}</span></span>
         </div>
-      `)}
+        ${awaitingRows.map((t) => {
+          const ev = evidenceText(t.outcome_notes) || 'flagged for review — confidence below auto-close threshold';
+          return html`
+            <div class="sw-row" key=${t.id}>
+              <div class="lhs">
+                <span class="rule is-flag">${autoCloseSignal(t.outcome_notes) ?? 'review'} · flag</span>
+                <span class="task">${t.title}</span>
+                <span class="id">task · ${shortId(t.id)} · ${relTime(t.updated_at)}</span>
+              </div>
+              <div class="ev">${ev}</div>
+              <div class="sw-conf lvl-2">
+                <div class="bar"><span></span><span></span><span></span><span></span></div>
+                <span class="label">flag · review</span>
+              </div>
+              <div class="sw-actions">
+                <${Button} size="sm" variant="outline" type="button">Keep open</${Button}>
+                <${Button} size="sm" variant="affirmative" type="button">
+                  <${Icon} name="check" size=${11} strokeWidth=${2.5} />
+                  Close
+                </${Button}>
+              </div>
+            </div>
+          `;
+        })}
+      `}
+
+      ${/* Cohort 2 · recently auto-closed (traceability) — auto tier.
+            Alternate lvl-4 / lvl-3 like the design's two auto rows. */ ''}
+      ${recentRows.length > 0 && html`
+        <div class="tk-section-label" style=${{ margin: 'var(--space-5) 0 var(--space-2)' }}>
+          <span>Recently auto-closed <span class="ct">${closedCount}</span></span>
+        </div>
+        ${recentRows.map((t, i) => {
+          const ev = evidenceText(t.outcome_notes) || 'auto-closed — observed side-effect matched';
+          const lvl = i % 2 === 0 ? 'lvl-4' : 'lvl-3';
+          return html`
+            <div class="sw-row" key=${t.id} style=${{ opacity: 0.85 }}>
+              <div class="lhs">
+                <span class="rule is-auto">${autoCloseSignal(t.outcome_notes) ?? 'auto-close'} · auto</span>
+                <span class="task">${t.title}</span>
+                <span class="id">task · ${shortId(t.id)} · auto-closed ${relTime(t.completed_at)}</span>
+              </div>
+              <div class="ev">${ev}</div>
+              <div class="sw-conf ${lvl}">
+                <div class="bar"><span></span><span></span><span></span><span></span></div>
+                <span class="label">auto · closed</span>
+              </div>
+              <div class="sw-actions">
+                <span class="tk-badge is-completed" style=${{ fontSize: 9 }}><span class="dot"></span>closed</span>
+              </div>
+            </div>
+          `;
+        })}
+      `}
+
+      ${(pendingCount > 0 || closedCount > 0) && html`
+        <div class="sw-foot" style=${{ marginTop: 'var(--space-4)', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-soft)' }}>
+          <span>${closedCount} closed · ${pendingCount} flagged · cooldown 24h/task</span>
+          <a href="#" onClick=${(e) => e.preventDefault()}>View sweep-log.jsonl →</a>
+        </div>
+      `}
     </div>
   `;
 }

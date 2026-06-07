@@ -75,17 +75,19 @@ const PIECES_FIXTURE = [
   { id: 'C-08', title: '5 royalty myths — X thread',          content_type: 'social',     channel: 'x',           stage: 'scheduled', owner: 'social-agent',  format: '7 posts',   due_at: 'Tue 09:00',next_action: 'Scheduled — no action',     next_action_mode: 'silent'  },
 ];
 
-// Calendar fixture (2-week: Apr 28 – May 9)
+// Calendar fixture (2-week: Apr 28 – May 9, 2026). Dates are ISO YYYY-MM-DD —
+// the single key format the grid is built on (live content_calendar.publish_date
+// is also ISO). The fixture anchor week is the Monday of the earliest event.
 const CALENDAR_FIXTURE = [
-  { id: 'CAL-01', date: 'Apr 28', title: 'Splits engine deep-dive',    channel: 'blog',        day: 'Mon' },
-  { id: 'CAL-02', date: 'Apr 28', title: 'Weekly digest',              channel: 'newsletter',  day: 'Mon' },
-  { id: 'CAL-03', date: 'Apr 29', title: 'Behind the rebuild',         channel: 'social',      day: 'Tue' },
-  { id: 'CAL-04', date: 'Apr 30', title: 'Royalty calc walkthrough',   channel: 'video',       day: 'Wed' },
-  { id: 'CAL-05', date: 'May 1',  title: 'Label onboarding tips',      channel: 'blog',        day: 'Thu' },
-  { id: 'CAL-06', date: 'May 2',  title: 'Founder note',               channel: 'newsletter',  day: 'Fri' },
-  { id: 'CAL-07', date: 'May 5',  title: 'DDEX, explained',            channel: 'social',      day: 'Mon' },
-  { id: 'CAL-08', date: 'May 7',  title: 'Catalog import demo',        channel: 'video',       day: 'Wed' },
-  { id: 'CAL-09', date: 'May 8',  title: 'Q2 product update',          channel: 'blog',        day: 'Thu' },
+  { id: 'CAL-01', date: '2026-04-28', title: 'Splits engine deep-dive',    channel: 'blog' },
+  { id: 'CAL-02', date: '2026-04-28', title: 'Weekly digest',              channel: 'newsletter' },
+  { id: 'CAL-03', date: '2026-04-29', title: 'Behind the rebuild',         channel: 'social' },
+  { id: 'CAL-04', date: '2026-04-30', title: 'Royalty calc walkthrough',   channel: 'video' },
+  { id: 'CAL-05', date: '2026-05-01', title: 'Label onboarding tips',      channel: 'blog' },
+  { id: 'CAL-06', date: '2026-05-02', title: 'Founder note',               channel: 'newsletter' },
+  { id: 'CAL-07', date: '2026-05-05', title: 'DDEX, explained',            channel: 'social' },
+  { id: 'CAL-08', date: '2026-05-07', title: 'Catalog import demo',        channel: 'video' },
+  { id: 'CAL-09', date: '2026-05-08', title: 'Q2 product update',          channel: 'blog' },
 ];
 
 // Published fixture (6 rows)
@@ -98,27 +100,117 @@ const PUBLISHED_FIXTURE = [
   { id: 'P-06', title: 'Splits, explained in 4 minutes',            channel: 'video',      published_at: 'Apr 4',  views: 6000,  engagement_pct: 3.1 },
 ];
 
-// Two-week calendar grid structure (Mon–Sun × 2 weeks, Apr 28 – May 11)
-const CALENDAR_WEEKS = [
-  [
-    { day: 'Mon', date: 'Apr 28', dim: false },
-    { day: 'Tue', date: 'Apr 29', dim: false },
-    { day: 'Wed', date: 'Apr 30', dim: false },
-    { day: 'Thu', date: 'May 1',  dim: false },
-    { day: 'Fri', date: 'May 2',  dim: false },
-    { day: 'Sat', date: 'May 3',  dim: true  },
-    { day: 'Sun', date: 'May 4',  dim: true  },
-  ],
-  [
-    { day: 'Mon', date: 'May 5',  dim: false },
-    { day: 'Tue', date: 'May 6',  dim: false },
-    { day: 'Wed', date: 'May 7',  dim: false },
-    { day: 'Thu', date: 'May 8',  dim: false },
-    { day: 'Fri', date: 'May 9',  dim: false },
-    { day: 'Sat', date: 'May 10', dim: true  },
-    { day: 'Sun', date: 'May 11', dim: true  },
-  ],
-];
+// ─── Calendar date helpers ──────────────────────────────────────────────────
+// The grid is keyed on ISO YYYY-MM-DD — the same format content_calendar.publish_date
+// uses — so live pills land in the right cell. The two-week Mon–Sun grid is DERIVED
+// from the actual event dates (anchored to the Monday of the earliest event's week)
+// rather than pinned to a hard-coded fixture window, so it follows whatever the DB holds.
+
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
+/** Coerce any incoming date value (ISO `YYYY-MM-DD`, ISO datetime, or a Date) to an
+ *  ISO `YYYY-MM-DD` key. Returns '' if it can't be parsed. */
+function toISOKey(value) {
+  if (!value) return '';
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return '';
+    return value.toISOString().slice(0, 10);
+  }
+  const s = String(value).trim();
+  // Already an ISO date or ISO datetime → take the leading date portion.
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  // Anything else (e.g. "Apr 28") → try Date parsing; assume current era if undated.
+  const d = new Date(s);
+  if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10);
+  return '';
+}
+
+/** ISO `YYYY-MM-DD` → bare day-of-month number string ("28", "1") for cell labels (F-03). */
+function isoToDayNum(iso) {
+  const m = /^\d{4}-\d{2}-(\d{2})$/.exec(iso);
+  return m ? String(parseInt(m[1], 10)) : iso;
+}
+
+/** ISO `YYYY-MM-DD` → "MMM YYYY" range label component ("Apr 2026"). */
+function isoToMonthYear(iso) {
+  const m = /^(\d{4})-(\d{2})-\d{2}$/.exec(iso);
+  if (!m) return '';
+  return `${MONTH_ABBR[parseInt(m[2], 10) - 1]} ${m[1]}`;
+}
+
+/** Add `n` days to an ISO `YYYY-MM-DD` key (UTC-safe). */
+function isoAddDays(iso, n) {
+  const [y, mo, d] = iso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, mo - 1, d + n));
+  return dt.toISOString().slice(0, 10);
+}
+
+/** ISO `YYYY-MM-DD` → 0=Mon … 6=Sun (Monday-first weekday index). */
+function isoWeekdayMon(iso) {
+  const [y, mo, d] = iso.split('-').map(Number);
+  const js = new Date(Date.UTC(y, mo - 1, d)).getUTCDay(); // 0=Sun..6=Sat
+  return (js + 6) % 7; // → 0=Mon..6=Sun
+}
+
+const DOW_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/** Build a two-week (Mon–Sun × 2) grid of { day, iso, dim } cells.
+ *  Anchored to the Monday of the *densest* 14-day window across the events (so the
+ *  visible fortnight is the busiest one, matching the design's populated calendar)
+ *  — or this week if there are no events. Sat/Sun are dimmed (weekend). Keys are
+ *  ISO so live pills land in-cell. */
+function buildCalendarWeeks(events) {
+  const keys = (events ?? [])
+    .map((e) => toISOKey(e.date ?? e.publish_date))
+    .filter(Boolean)
+    .sort();
+
+  let anchor;
+  if (keys.length === 0) {
+    anchor = new Date().toISOString().slice(0, 10);
+  } else {
+    // Candidate windows: each event's Monday-of-week. Pick the one whose 14-day
+    // span (Mon..Mon+13) contains the most events. Ties → earliest window.
+    const mondayOf = (iso) => isoAddDays(iso, -isoWeekdayMon(iso));
+    const candidates = [...new Set(keys.map(mondayOf))].sort();
+    let best = candidates[0];
+    let bestCount = -1;
+    for (const start of candidates) {
+      const end = isoAddDays(start, 13);
+      const count = keys.filter((k) => k >= start && k <= end).length;
+      if (count > bestCount) { bestCount = count; best = start; }
+    }
+    anchor = best;
+  }
+
+  const start = isoAddDays(anchor, -isoWeekdayMon(anchor)); // Monday of the chosen week
+  const weeks = [];
+  for (let w = 0; w < 2; w++) {
+    const row = [];
+    for (let d = 0; d < 7; d++) {
+      const iso = isoAddDays(start, w * 7 + d);
+      row.push({ day: DOW_LABELS[d], iso, dim: d >= 5 });
+    }
+    weeks.push(row);
+  }
+  return weeks;
+}
+
+/** Normalize a raw content type/channel to one of the four legend categories so
+ *  the channel pill/badge colour resolves. content_calendar carries both a `type`
+ *  (blog_post / social_post / email_campaign / newsletter / blog / social) and a
+ *  `channel` (blog / website / email / linkedin / social) — collapse either to
+ *  blog | newsletter | social | video. */
+function normalizeChannel(raw) {
+  const s = (raw ?? '').toString().toLowerCase();
+  if (!s) return '';
+  if (s.includes('video') || s.includes('youtube')) return 'video';
+  if (s.includes('news') || s.includes('email') || s.includes('listmonk') || s.includes('broadcast')) return 'newsletter';
+  if (s.includes('blog') || s.includes('website') || s.includes('article')) return 'blog';
+  if (s.includes('social') || s.includes('linkedin') || s === 'x' || s.includes('twitter') || s.includes('instagram') || s.includes('post')) return 'social';
+  return s;
+}
 
 // ─── Query keys ───────────────────────────────────────────────────────────────
 
@@ -260,19 +352,21 @@ async function fetchPublished() {
 async function fetchCalEvents() {
   if (isStandalone()) return CALENDAR_FIXTURE;
   try {
-    // Try content_calendar first for publish-date anchored entries
+    // Try content_calendar first for publish-date anchored entries. publish_date
+    // is ISO YYYY-MM-DD; both `type` and `channel` carry channel hints — fold them
+    // through normalizeChannel so the pill colour resolves to a legend category.
     const calRows = await hostDbQuery(
-      `SELECT id, title, type AS channel, publish_date AS date
+      `SELECT id, title, type, channel, publish_date
        FROM content_calendar
        WHERE publish_date IS NOT NULL
        ORDER BY publish_date ASC
-       LIMIT 30`
+       LIMIT 60`
     );
     // Also try calendar_events for supplemental time-anchored entries
     let eventRows = [];
     try {
       eventRows = await hostDbQuery(
-        `SELECT id, title, description, start_time AS date
+        `SELECT id, title, description, start_time
          FROM calendar_events
          ORDER BY start_time ASC
          LIMIT 20`
@@ -281,7 +375,22 @@ async function fetchCalEvents() {
       // calendar_events missing
     }
 
-    const combined = [...calRows, ...eventRows];
+    const combined = [
+      ...calRows.map((r) => ({
+        id: r.id,
+        title: r.title,
+        date: toISOKey(r.publish_date),
+        // Prefer the more specific signal, then fall back; normalize to a legend bucket.
+        channel: normalizeChannel(r.channel) || normalizeChannel(r.type) || '',
+      })),
+      ...eventRows.map((r) => ({
+        id: r.id,
+        title: r.title ?? r.description ?? '(untitled)',
+        date: toISOKey(r.start_time),
+        channel: '',
+      })),
+    ].filter((e) => e.date);
+
     return combined.length > 0 ? combined : CALENDAR_FIXTURE;
   } catch {
     return CALENDAR_FIXTURE;
@@ -568,6 +677,10 @@ function PipelineList({ pieces, selectedPiece, onSelectPiece, transitions }) {
   return html`
     <div class="ip-split" style=${{ height:'100%' }}>
       <div class="ip-split-list" style=${{ overflowY:'auto' }} role="grid" aria-label="Content pipeline list">
+        <div class="split-list-head">
+          <span class="split-list-title">Content</span>
+          <span class="split-list-meta">${pieces.length} open</span>
+        </div>
         ${stagesWithExtras(grouped).map((s) => grouped[s]?.length > 0 ? html`
           <div class="split-group" key=${s}>
             <div class="split-group-head">${STAGE_LABEL[s] ?? s} · ${grouped[s].length}</div>
@@ -668,23 +781,36 @@ function PipelineKanban({ pieces, onStageChange }) {
   `;
 }
 
-/** Calendar view — two-week Mon–Sun grid */
+/** Calendar view — two-week Mon–Sun grid, ISO-keyed + data-derived */
 function CalendarView({ calEvents }) {
-  // Build a map of date → entries for quick lookup
+  // Build a map of ISO date → entries for quick lookup. Both the grid cells and
+  // the events are keyed on ISO YYYY-MM-DD so live pills land in their cell (F-01).
   const byDate = useMemo(() => {
     const map = {};
     for (const e of calEvents) {
-      const dateKey = e.date ?? e.publish_date ?? '';
+      const dateKey = toISOKey(e.date ?? e.publish_date);
+      if (!dateKey) continue;
       if (!map[dateKey]) map[dateKey] = [];
       map[dateKey].push(e);
     }
     return map;
   }, [calEvents]);
 
-  const DOW_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  // Derive the two-week window from the events themselves (anchored to the Monday
+  // of the earliest event's week), so the grid follows the live data range.
+  const weeks = useMemo(() => buildCalendarWeeks(calEvents), [calEvents]);
+
+  // Range label for the section sub-line ("Apr 2026 → May 2026" or single month).
+  const firstIso = weeks[0]?.[0]?.iso ?? '';
+  const lastIso = weeks[1]?.[6]?.iso ?? weeks[0]?.[6]?.iso ?? '';
+  const startMY = isoToMonthYear(firstIso);
+  const endMY = isoToMonthYear(lastIso);
+  const rangeLabel = startMY && endMY && startMY !== endMY ? `${startMY} – ${endMY}` : startMY;
 
   return html`
     <div class="ct-mv-wrap">
+      <div class="ct-cal-section-title">Editorial calendar · 2 weeks · Lagos time${rangeLabel ? ` · ${rangeLabel}` : ''}</div>
+
       <div class="ct-cal-legend">
         ${['blog', 'newsletter', 'social', 'video'].map((ch) => html`
           <div class="ct-cal-legend-item" key=${ch}>
@@ -694,15 +820,15 @@ function CalendarView({ calEvents }) {
         `)}
       </div>
 
-      ${CALENDAR_WEEKS.map((week, wi) => html`
+      ${weeks.map((week, wi) => html`
         <div key=${wi}>
           <div class="ct-cal-grid">
             ${DOW_LABELS.map((d) => html`<div class="ct-cal-dow" key=${d}>${d}</div>`)}
             ${week.map((cell) => {
-              const entries = byDate[cell.date] ?? [];
+              const entries = byDate[cell.iso] ?? [];
               return html`
-                <div class=${cn('ct-cal-day', cell.dim && 'dim')} key=${cell.date}>
-                  <div class="ct-cal-date">${cell.date}</div>
+                <div class=${cn('ct-cal-day', cell.dim && 'dim')} key=${cell.iso}>
+                  <div class="ct-cal-date">${isoToDayNum(cell.iso)}</div>
                   ${entries.map((e) => html`
                     <span class="ct-cal-pill" data-channel=${e.channel ?? ''} key=${e.id}>
                       ${e.title}
@@ -730,12 +856,17 @@ function PublishedView({ publishedItems }) {
       acc[ch] = (acc[ch] ?? 0) + (p.views ?? 0);
       return acc;
     }, {});
-    const topChannel = Object.entries(topCh).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'Blog';
+    const topEntry = Object.entries(topCh).sort((a, b) => b[1] - a[1])[0];
+    const topChannel = topEntry?.[0] ?? 'Blog';
+    const topChannelViews = topEntry?.[1] ?? 21500;
+    const channelCount = Object.keys(topCh).length || 4;
     return {
       count: 12, // fixture
       totalViews: totalViews || 48200,
       avgEng: avgEng.toFixed(1) || '3.8',
       topChannel: topChannel.charAt(0).toUpperCase() + topChannel.slice(1),
+      topChannelViews,
+      channelCount,
     };
   }, [publishedItems]);
 
@@ -751,19 +882,22 @@ function PublishedView({ publishedItems }) {
         <div class="ct-pub-kpi">
           <span class="ct-kpi-k">Published this month</span>
           <span class="ct-kpi-v">${kpis.count}</span>
-          <span class="ct-kpi-sub">pieces</span>
+          <span class="ct-kpi-sub">across ${kpis.channelCount} channels</span>
         </div>
         <div class="ct-pub-kpi">
           <span class="ct-kpi-k">Total views</span>
           <span class="ct-kpi-v">${fmtViews(kpis.totalViews)}</span>
+          <span class="ct-kpi-sub">vs prior period</span>
         </div>
         <div class="ct-pub-kpi">
           <span class="ct-kpi-k">Avg engagement</span>
           <span class="ct-kpi-v">${kpis.avgEng}%</span>
+          <span class="ct-kpi-sub">benchmark 2–4%</span>
         </div>
         <div class="ct-pub-kpi">
           <span class="ct-kpi-k">Top channel</span>
           <span class="ct-kpi-v">${kpis.topChannel}</span>
+          <span class="ct-kpi-sub">${fmtViews(kpis.topChannelViews)} views</span>
         </div>
       </div>
 

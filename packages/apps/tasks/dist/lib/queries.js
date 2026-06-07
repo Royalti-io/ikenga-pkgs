@@ -194,6 +194,30 @@ export function blockingTaskQuery(blockingId) {
 }
 
 /**
+ * Downstream dependents — the "Blocks" lane (D-1). Tasks that name THIS task as
+ * their `blocked_by_task_id` are waiting on it. Mirrors the upstream
+ * `blockingTaskQuery` but in the other direction. `blocked_by_task_id` is a
+ * TEXT soft-link in migration 0025 (no FK), so this is a plain WHERE scan.
+ *
+ * @param {string|null} taskId the task whose dependents we want
+ */
+export function dependentTasksQuery(taskId) {
+  return {
+    queryKey: queryKeys.tasks.dependents(taskId ?? 'none'),
+    /** @returns {Promise<Task[]>} */
+    queryFn: async () => {
+      if (!taskId) return [];
+      const rows = await hostDbQuery(
+        'SELECT id, title, status, priority FROM tasks WHERE blocked_by_task_id = ? ORDER BY created_at ASC LIMIT 25',
+        [taskId],
+      );
+      return /** @type {Task[]} */ (rows.map(normalizeTaskRow));
+    },
+    enabled: !!taskId,
+  };
+}
+
+/**
  * Write a task's status to the local ikenga.db via `host.dbExec` (write-path WP).
  * `completed_at` is set to now when moving to `completed` and cleared to NULL
  * otherwise, so a non-completed task never carries a stale completion stamp.

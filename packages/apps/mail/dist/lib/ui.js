@@ -44,6 +44,7 @@ const ICONS = {
   'edit-3': 'M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z',
   search: 'M11 17.5a6.5 6.5 0 1 0 0-13 6.5 6.5 0 0 0 0 13zM21 21l-4.35-4.35',
   'chevron-down': 'M6 9l6 6 6-6',
+  'chevron-up': 'M18 15l-6-6-6 6',
   'chevron-left': 'M15 18l-6-6 6-6',
   'chevron-right': 'M9 18l6-6-6-6',
   'arrow-left': 'M19 12H5M12 5l-7 7 7 7',

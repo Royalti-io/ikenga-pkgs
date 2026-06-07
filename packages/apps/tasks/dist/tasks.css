@@ -764,6 +764,16 @@
   border: 1px solid transparent;
 }
 .tk-btn.v-ghost:hover:not(:disabled) { background: var(--bg-raised); }
+/* Affirmative (green) — mirrors the design's .btn-affirmative (var(--live)).
+   Used for "Mark complete" / "Close" / "Approve close" so a positive, terminal
+   action reads green rather than the primary brown. */
+.tk-btn.v-affirmative {
+  background: var(--live);
+  color: var(--bg-base);
+  border: 1px solid var(--live);
+  font-weight: 600;
+}
+.tk-btn.v-affirmative:hover:not(:disabled) { filter: brightness(1.06); }
 .tk-btn:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
 
 /* Mutation error line in the detail pane footer. */
@@ -772,3 +782,136 @@
   font-size: 11px;
   color: var(--danger);
 }
+
+/* === Dependencies / blockers (detail inspector depth, D-1) =================
+   Ported verbatim from the design's #tk-depth-css block (atelier-tasks.html).
+   "Blocked by" + "Blocks" lanes; each row is upstream (is-up), downstream
+   (is-down), or resolved (is-resolved) — the arrow colour carries direction. */
+.tk-dep-lane {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  margin: var(--space-2) 0 4px;
+}
+.tk-dep-lane:first-child { margin-top: 0; }
+.tk-dep-list { display: flex; flex-direction: column; gap: 4px; }
+.tk-dep-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 6px var(--space-3);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-body-sm);
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+.tk-dep-row:hover { background: var(--bg-raised); }
+.tk-dep-row .arr { width: 13px; height: 13px; color: var(--fg-faint); flex-shrink: 0; }
+.tk-dep-row.is-up .arr       { color: var(--danger); }
+.tk-dep-row.is-down .arr     { color: var(--systemic); }
+.tk-dep-row.is-resolved .arr { color: var(--live); }
+.tk-dep-row .name {
+  color: var(--fg);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tk-dep-row.is-resolved .name { color: var(--fg-muted); }
+
+/* === Sweeper queue · 4-column confidence layout (Section C) ================
+   Ported from the design's #atelier-tasks .sw-row / .sw-conf / .lhs / .ev /
+   .sw-actions / .sw-foot block. Columns: task-id block / evidence prose /
+   4-segment confidence bar / action buttons. */
+.sw-row {
+  display: grid;
+  grid-template-columns: minmax(180px, 240px) 1fr 130px auto;
+  gap: var(--space-4);
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg-surface);
+}
+.sw-row:first-of-type { border-top: 0; }
+.sw-row:hover { background: var(--bg-raised); }
+.sw-row .lhs { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.sw-row .lhs .rule {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: var(--radius-xs);
+  width: fit-content;
+}
+.sw-row .lhs .rule.is-auto { color: var(--live); background: var(--live-soft); border: 1px solid color-mix(in srgb, var(--live) 30%, var(--border-soft)); }
+.sw-row .lhs .rule.is-flag { color: var(--achievement); background: var(--achievement-soft); border: 1px solid color-mix(in srgb, var(--achievement) 30%, var(--border-soft)); }
+.sw-row .lhs .task {
+  font-size: var(--text-body-sm);
+  font-weight: 500;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sw-row .lhs .id { font-family: var(--font-mono); font-size: 9.5px; color: var(--fg-faint); }
+.sw-row .ev {
+  font-size: var(--text-body-sm);
+  color: var(--fg-muted);
+  line-height: 1.5;
+}
+.sw-row .ev code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-soft);
+  padding: 1px 5px;
+  border-radius: var(--radius-xs);
+  color: var(--fg);
+}
+
+/* Confidence bar (4-segment) */
+.sw-conf { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+.sw-conf .bar { display: flex; gap: 2px; width: 100%; }
+.sw-conf .bar span {
+  flex: 1;
+  height: 5px;
+  border-radius: 1px;
+  background: var(--bg-sunken);
+  border: 1px solid var(--border-soft);
+}
+.sw-conf.lvl-4 .bar span { background: var(--live); border-color: var(--live); }
+.sw-conf.lvl-3 .bar span:nth-child(-n+3) { background: var(--live); border-color: var(--live); }
+.sw-conf.lvl-2 .bar span:nth-child(-n+2) { background: var(--achievement); border-color: var(--achievement); }
+.sw-conf .label { font-family: var(--font-mono); font-size: 9.5px; color: var(--fg-muted); letter-spacing: 0.04em; }
+.sw-actions { display: flex; gap: 4px; }
+
+.sw-foot {
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-sunken);
+  border-top: 1px solid var(--border-soft);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-faint);
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.sw-foot a { color: var(--fg-muted); text-decoration: none; border-bottom: 1px solid var(--border-soft); cursor: pointer; }
+.sw-foot a:hover { color: var(--fg); }
+
+/* Clickable dense rows (Done view, F-24) — the kit row is presentational by
+   default; opting a row into navigation adds the pointer + focus ring. */
+.dense-row.is-clickable { cursor: pointer; }
+.dense-row.is-clickable:focus-visible { outline: 2px solid var(--primary); outline-offset: -2px; }
