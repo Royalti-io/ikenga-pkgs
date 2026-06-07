@@ -1,0 +1,23 @@
+{
+  "id": "com.ikenga.skill-contribute",
+  "name": "Contribute",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "skill",
+  "author": { "name": "Royalti", "key": "royalti" },
+
+  "permissions": {
+    "shell.execute": ["git", "gh", "pnpm", "bun", "npx"],
+    "fs.read": [],
+    "fs.write": [],
+    "net": [],
+    "sqlite.tables": [],
+    "vault.keys": []
+  },
+  "requires": [
+    {
+      "kind": "skill",
+      "name": "skill-core"
+    }
+  ]
+}
