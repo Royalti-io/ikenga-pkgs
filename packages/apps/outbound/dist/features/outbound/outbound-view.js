@@ -423,20 +423,73 @@ async function fetchSentSequences() {
   }
 }
 
-// Reply-intelligence: CRM/tenant context for an email recipient. The `tenants`
-// table is NOT present in ikenga.db today (no CRM mirror) — query is guarded and
-// returns null, so the panel collapses to the "unknown sender" empty state rather
-// than fabricating CRM rows. Wire the join once a tenants mirror lands.
+// Relative-age label for the reply-intelligence "last touch" cell.
+function relDays(iso) {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return '—';
+  const d = Math.round((Date.now() - t) / 86_400_000);
+  if (d <= 0) return 'today';
+  if (d < 7) return `${d}d ago`;
+  if (d < 30) return `${Math.round(d / 7)}w ago`;
+  if (d < 365) return `${Math.round(d / 30)}mo ago`;
+  return `${Math.round(d / 365)}y ago`;
+}
+
+// Reply-intelligence: CRM context for an email recipient (B.5). There is no
+// dedicated `tenants`/Twenty mirror in ikenga.db, but the local `contacts` table
+// IS the CRM mirror — joined here by email, with a real open balance pulled from
+// `receivables` by customer_email. Returns null (→ "unknown sender" empty state)
+// when no contact matches, so nothing is fabricated for unknown recipients.
 async function fetchReplyIntelligence(email) {
   if (!email) return null;
   try {
     const rows = await hostDbQuery(
-      `SELECT * FROM tenants WHERE LOWER(email) = LOWER(?) LIMIT 1`,
+      `SELECT email, name, organization, contact_type, last_seen_at, interaction_count, notes
+       FROM contacts WHERE LOWER(email) = LOWER(?) LIMIT 1`,
       [email]
     );
-    return rows?.[0] ?? null;
+    const c = rows?.[0];
+    if (!c) return null;
+
+    // Real open balance + overdue flag from receivables for this email.
+    let bal = null;
+    let overdue = 0;
+    try {
+      const br = await hostDbQuery(
+        `SELECT SUM(CAST(balance_left AS REAL)) AS bal,
+                SUM(CASE WHEN invoice_status = 'overdue' THEN 1 ELSE 0 END) AS od
+         FROM receivables WHERE LOWER(customer_email) = LOWER(?)`,
+        [email]
+      );
+      bal = br?.[0]?.bal ?? null;
+      overdue = Number(br?.[0]?.od ?? 0);
+    } catch {
+      /* receivables lookup is best-effort */
+    }
+
+    // Health derived from contact recency (no stored health column).
+    const lastMs = c.last_seen_at ? Date.parse(c.last_seen_at) : NaN;
+    const ageDays = Number.isFinite(lastMs) ? (Date.now() - lastMs) / 86_400_000 : null;
+    const health = ageDays == null ? '—' : ageDays < 30 ? 'Active' : ageDays < 90 ? 'Cooling' : 'Dormant';
+    const ic = c.interaction_count == null ? null : Number(c.interaction_count);
+
+    return {
+      tenant_name: c.organization || c.name || email,
+      tenant_sub: c.contact_type || null,
+      last_touch: c.last_seen_at ? relDays(c.last_seen_at) : '—',
+      last_touch_sub: ic == null ? null : `${ic} interaction${ic === 1 ? '' : 's'}`,
+      health,
+      health_sub: ageDays == null ? null : `${Math.round(ageDays)}d since contact`,
+      catalog: '—',
+      catalog_sub: 'no catalog link',
+      open_balance: bal == null ? '—' : `$${Math.round(bal).toLocaleString()}`,
+      balance_sub: overdue > 0 ? `${overdue} overdue` : bal != null ? 'current' : null,
+      owner: '—',
+      owner_sub: null,
+      risk_flag: overdue > 0 ? 'Overdue invoice' : 'None',
+      risk_color: overdue > 0 ? 'var(--danger)' : 'var(--live)',
+    };
   } catch {
-    // tenants table absent → no CRM record available
     return null;
   }
 }
@@ -721,6 +774,54 @@ function wordCount(text) {
   return String(text).trim().split(/\s+/).filter(Boolean).length;
 }
 
+// ─── Newsletter body text metrics (B.6) ──────────────────────────────────────
+// These are computed directly from the draft body — real signals, no external
+// pipeline. The remaining cells (Claims verified, Freshness, Previously
+// featured) need a claims-verifier / sent-history join and stay honest
+// placeholders until those land.
+
+const ANTI_PATTERN_TERMS = [
+  'revolutionary', 'game-changer', 'game changer', 'synergy', 'disrupt', 'disruptive',
+  'cutting-edge', 'best-in-class', 'world-class', 'seamless', 'leverage', 'unlock',
+  'supercharge', 'unprecedented', 'paradigm', 'next-level', 'must-have', 'no-brainer',
+  'skyrocket', 'effortless', 'turnkey', 'bleeding-edge',
+];
+
+function countAntiPatterns(text) {
+  if (!text) return 0;
+  const t = String(text).toLowerCase();
+  let n = 0;
+  for (const term of ANTI_PATTERN_TERMS) {
+    const esc = term.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+    const m = t.match(new RegExp(`\\b${esc}\\b`, 'g'));
+    if (m) n += m.length;
+  }
+  return n;
+}
+
+// Distinct sections — markdown/HTML headings if present, else paragraph blocks.
+function countSections(text) {
+  if (!text) return 0;
+  const headings = (text.match(/^#{1,6}\s/gim) || []).length + (text.match(/<h[1-6][\s>]/gi) || []).length;
+  if (headings) return headings;
+  return String(text).split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean).length;
+}
+
+function countCtas(text) {
+  if (!text) return { ctas: 0, bangs: 0 };
+  const bangs = (text.match(/!/g) || []).length;
+  const links = (text.match(/https?:\/\/|\]\([^)]+\)|<a[\s>]/gi) || []).length;
+  const phrases = (text.match(/\b(read more|learn more|sign up|get started|try it|book a|claim your|subscribe|download|join now|see how|get the)\b/gi) || []).length;
+  return { ctas: links + phrases, bangs };
+}
+
+// Verifiable factual claims present in the body (percentages, $amounts, counts).
+// This counts claims to be checked — it does NOT assert verification.
+function countClaims(text) {
+  if (!text) return 0;
+  return (text.match(/\d+(\.\d+)?\s?%|\$\s?\d|\b\d+x\b|\b\d{2,}\b/gi) || []).length;
+}
+
 // Per-platform hard character caps (design social §B).
 const PLATFORM_CAPS = { linkedin: 3000, twitter: 280, x: 280, bluesky: 300, instagram: 2200 };
 
@@ -787,14 +888,24 @@ const NL_REJECT_REASONS = ['Claim unverified', 'Hype / anti-pattern', 'Off-theme
 const SOCIAL_REJECT_REASONS = ['Tone is off', 'Off-message', 'Wrong angle', "Image doesn't match", 'Missing context'];
 const SEQ_REJECT_REASONS = ['Cadence too aggressive', 'Wrong segment', 'Copy needs work', 'Timing is off', "Don't enrol · close out"];
 
-// Build the 8 newsletter quality cells from the draft row. quality_score is the
-// only metric column that exists live; word count is derived from body; the
-// remaining cells fall back to "—" with a tone class when no signal exists. Each
+// Build the 8 newsletter quality cells from the draft row (B.6). quality_score
+// is a stored column; word count, anti-patterns, section variety and CTAs are
+// computed directly from the body text (real signals). Claims, Freshness and
+// Previously-featured need a claims-verifier / sent-history join that doesn't
+// exist yet — they stay honest placeholders rather than fabricated numbers. Each
 // cell: { label, value, sub, pct, tone } (tone = 'ok' | 'warn' | 'fail').
 function newsletterQualityCells(row) {
   const score = row.quality_score;
-  const wc = wordCount(row.body);
+  const body = row.body;
+  const wc = wordCount(body);
   const wcOk = wc === 0 ? null : wc >= 350 && wc <= 500;
+  const hasBody = !!body;
+
+  const anti = countAntiPatterns(body);
+  const sections = countSections(body);
+  const { ctas, bangs } = countCtas(body);
+  const claims = countClaims(body);
+
   return [
     {
       label: 'Quality score',
@@ -810,12 +921,40 @@ function newsletterQualityCells(row) {
       pct: wc ? Math.min(100, Math.round((wc / 500) * 100)) : 0,
       tone: wcOk == null ? 'warn' : wcOk ? 'ok' : 'warn',
     },
-    { label: 'Claims verified', value: '—', sub: 'pending check', pct: 0, tone: 'warn' },
-    { label: 'Anti-patterns', value: '—', sub: 'pending check', pct: 0, tone: 'warn' },
-    { label: 'Section variety', value: '—', sub: 'pending check', pct: 0, tone: 'warn' },
-    { label: 'Freshness', value: '—', sub: 'no repeats < 60d', pct: 0, tone: 'warn' },
-    { label: 'Previously featured', value: '—', sub: 'pending check', pct: 0, tone: 'warn' },
-    { label: 'CTAs · exclamations', value: '—', sub: 'pending check', pct: 0, tone: 'warn' },
+    {
+      label: 'Claims',
+      value: hasBody ? `${claims}` : '—',
+      sub: hasBody ? 'detected · unverified' : 'no body',
+      pct: hasBody ? Math.min(100, claims * 12) : 0,
+      // Honest: we can detect claims in the text but not verify them — a
+      // verifier pipeline would flip this to ok/fail.
+      tone: 'warn',
+    },
+    {
+      label: 'Anti-patterns',
+      value: hasBody ? `${anti}` : '—',
+      sub: hasBody ? (anti === 0 ? 'none detected' : 'hype terms') : 'no body',
+      pct: hasBody ? Math.max(0, 100 - anti * 25) : 0,
+      tone: !hasBody ? 'warn' : anti === 0 ? 'ok' : anti <= 2 ? 'warn' : 'fail',
+    },
+    {
+      label: 'Section variety',
+      value: hasBody ? `${sections}` : '—',
+      sub: 'distinct sections',
+      pct: hasBody ? Math.min(100, sections * 25) : 0,
+      tone: !hasBody ? 'warn' : sections >= 3 ? 'ok' : sections >= 2 ? 'warn' : 'fail',
+    },
+    // History-dependent — needs a sent-newsletter join (newsletter_sends /
+    // outbound_sent_log) to be real. Honest placeholder until then.
+    { label: 'Freshness', value: '—', sub: 'needs sent-history join', pct: 0, tone: 'warn' },
+    { label: 'Previously featured', value: '—', sub: 'needs sent-history join', pct: 0, tone: 'warn' },
+    {
+      label: 'CTAs · exclamations',
+      value: hasBody ? `${ctas} · ${bangs}!` : '—',
+      sub: hasBody ? (bangs > 3 ? 'too many !' : 'CTAs · !') : 'no body',
+      pct: hasBody ? Math.min(100, ctas * 25) : 0,
+      tone: !hasBody ? 'warn' : bangs <= 3 && ctas >= 1 ? 'ok' : 'warn',
+    },
   ];
 }
 
@@ -973,7 +1112,7 @@ function ReplyIntelligence({ email, sequenceId, standalone }) {
     <div class="ri-panel">
       <div class="ri-panel-head">
         <span>Reply intelligence</span>
-        <span class="ob-chip seq" style=${{ marginLeft: 'auto' }}>CRM · Twenty</span>
+        <span class="ob-chip seq" style=${{ marginLeft: 'auto' }}>CRM · contacts</span>
       </div>
       <div class="ri-grid">
         ${cell('Tenant', crm.tenant_name ?? crm.name, crm.tenant_sub)}
@@ -983,7 +1122,7 @@ function ReplyIntelligence({ email, sequenceId, standalone }) {
         ${cell('Catalog', crm.catalog, crm.catalog_sub)}
         ${cell('Open balance', crm.open_balance, crm.balance_sub)}
         ${cell('Owner', crm.owner, crm.owner_sub)}
-        ${cell('Risk flag', crm.risk_flag ?? 'None', crm.risk_sub, 'var(--live)')}
+        ${cell('Risk flag', crm.risk_flag ?? 'None', crm.risk_sub, crm.risk_color ?? 'var(--live)')}
       </div>
     </div>
   `;
@@ -2167,7 +2306,11 @@ export function OutboundView({ activeFeature }) {
     placeholderData: { pa: 4, cmo: 5, cbo: 2 },
   });
 
-  // Sidebar head: total awaiting + active sequences
+  // Totals for the in-pane ob-header meta line. The design (F-14) also wanted a
+  // sidebar mode line, but host.pkg.setMenu only accepts an items array — there
+  // is no statusLine field. Decision (2026-06-07 review, E.10): DROP the sidebar
+  // mode line rather than extend the shell setMenu contract; these same totals
+  // are surfaced in-pane below (ob-header .meta), so no information is lost.
   const totalAwaiting = (counts?.email ?? 0) + (counts?.newsletter ?? 0) + (counts?.social ?? 0);
   const activeSeqCount = counts?.sequences ?? 0;
 

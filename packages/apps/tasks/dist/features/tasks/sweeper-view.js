@@ -1,12 +1,12 @@
 // Sweeper — auto-close review queue. Ports the design's SWEEPER_HTML
 // (atelier-tasks.html, Section C). The design surfaces a confidence band: ≥ 0.9
-// auto-closes silently; 0.6–0.9 waits here for human sign-off. The ikenga.db
-// schema does not yet carry a per-row confidence score (no `task_signals`
-// table), so the 4-segment confidence bar is rendered at a FIXED tier derived
-// from the cohort: recently-auto-closed rows read as high-confidence (lvl-4 /
-// lvl-3 alternating for visual texture, mirroring the design's two auto rows),
-// and awaiting/flagged rows read as the flag tier (lvl-2). Evidence prose is the
-// real `outcome_notes` text — no fabricated rows. Two cohorts:
+// auto-closes silently; 0.6–0.9 waits here for human sign-off. The 4-segment
+// confidence bar now reads a REAL per-row score from the `task_signals` table
+// (shell migration 0049) joined onto each row — `signal_source = 'derived'`, so
+// the bar is labelled as a transparent derived score, not a model output. When a
+// row has no signal yet the bar falls back to the cohort tier (auto rows lvl-4 /
+// lvl-3, flagged rows lvl-2). Evidence prose is the real `outcome_notes` text —
+// no fabricated rows. Two cohorts:
 //
 //   1. "Awaiting your call" — open tasks whose `outcome_notes` carry a
 //      sweeper hint (`Needs review by task-health`) but aren't auto-closed yet.
@@ -49,6 +49,15 @@ function evidenceText(notes) {
   return notes.replace(/^(Auto-closed|Needs review) by task-health:?\s*/i, '').trim();
 }
 
+// Map a 0..1 confidence to the 4-segment bar level. null = no signal yet.
+function confLevel(conf) {
+  if (conf == null || Number.isNaN(conf)) return null;
+  if (conf < 0.25) return 1;
+  if (conf < 0.5) return 2;
+  if (conf < 0.75) return 3;
+  return 4;
+}
+
 export function SweeperView() {
   // Two queries. Both narrow on `outcome_notes` to keep the result set bounded
   // to sweeper-flagged rows — the broader `tasks` table is already exposed by
@@ -58,11 +67,13 @@ export function SweeperView() {
     /** @returns {Promise<Task[]>} */
     queryFn: async () => {
       const rows = await hostDbQuery(
-        `SELECT id, title, status, priority, outcome_notes, due_date, updated_at, category
-         FROM tasks
-         WHERE status IN ('pending','in_progress','blocked')
-           AND outcome_notes LIKE 'Needs review by task-health%'
-         ORDER BY updated_at DESC LIMIT 50`,
+        `SELECT t.id, t.title, t.status, t.priority, t.outcome_notes, t.due_date,
+                t.updated_at, t.category, ts.confidence AS confidence
+         FROM tasks t
+         LEFT JOIN task_signals ts ON ts.task_id = t.id
+         WHERE t.status IN ('pending','in_progress','blocked')
+           AND t.outcome_notes LIKE 'Needs review by task-health%'
+         ORDER BY t.updated_at DESC LIMIT 50`,
         [],
       );
       return /** @type {Task[]} */ (rows);
@@ -74,11 +85,13 @@ export function SweeperView() {
     /** @returns {Promise<Task[]>} */
     queryFn: async () => {
       const rows = await hostDbQuery(
-        `SELECT id, title, status, priority, outcome_notes, completed_at, category
-         FROM tasks
-         WHERE status = 'completed'
-           AND outcome_notes LIKE 'Auto-closed by task-health%'
-         ORDER BY completed_at DESC LIMIT 50`,
+        `SELECT t.id, t.title, t.status, t.priority, t.outcome_notes, t.completed_at,
+                t.category, ts.confidence AS confidence
+         FROM tasks t
+         LEFT JOIN task_signals ts ON ts.task_id = t.id
+         WHERE t.status = 'completed'
+           AND t.outcome_notes LIKE 'Auto-closed by task-health%'
+         ORDER BY t.completed_at DESC LIMIT 50`,
         [],
       );
       return /** @type {Task[]} */ (rows);
@@ -137,6 +150,9 @@ export function SweeperView() {
         </div>
         ${awaitingRows.map((t) => {
           const ev = evidenceText(t.outcome_notes) || 'flagged for review — confidence below auto-close threshold';
+          const conf = t.confidence == null ? null : Number(t.confidence);
+          const lvl = confLevel(conf) ?? 2;
+          const label = conf == null ? 'flag · review' : `${conf.toFixed(2)} · derived`;
           return html`
             <div class="sw-row" key=${t.id}>
               <div class="lhs">
@@ -145,9 +161,9 @@ export function SweeperView() {
                 <span class="id">task · ${shortId(t.id)} · ${relTime(t.updated_at)}</span>
               </div>
               <div class="ev">${ev}</div>
-              <div class="sw-conf lvl-2">
+              <div class=${`sw-conf lvl-${lvl}`} title=${conf == null ? 'no signal yet' : 'derived from cohort tier + evidence — not a model score'}>
                 <div class="bar"><span></span><span></span><span></span><span></span></div>
-                <span class="label">flag · review</span>
+                <span class="label">${label}</span>
               </div>
               <div class="sw-actions">
                 <${Button} size="sm" variant="outline" type="button">Keep open</${Button}>
@@ -169,7 +185,11 @@ export function SweeperView() {
         </div>
         ${recentRows.map((t, i) => {
           const ev = evidenceText(t.outcome_notes) || 'auto-closed — observed side-effect matched';
-          const lvl = i % 2 === 0 ? 'lvl-4' : 'lvl-3';
+          const conf = t.confidence == null ? null : Number(t.confidence);
+          // Fall back to the structural auto tier (alternating lvl-4 / lvl-3)
+          // only when no derived signal exists for the row.
+          const lvl = confLevel(conf) ?? (i % 2 === 0 ? 4 : 3);
+          const label = conf == null ? 'auto · closed' : `${conf.toFixed(2)} · derived`;
           return html`
             <div class="sw-row" key=${t.id} style=${{ opacity: 0.85 }}>
               <div class="lhs">
@@ -178,9 +198,9 @@ export function SweeperView() {
                 <span class="id">task · ${shortId(t.id)} · auto-closed ${relTime(t.completed_at)}</span>
               </div>
               <div class="ev">${ev}</div>
-              <div class="sw-conf ${lvl}">
+              <div class=${`sw-conf lvl-${lvl}`} title=${conf == null ? 'no signal yet' : 'derived from cohort tier + evidence — not a model score'}>
                 <div class="bar"><span></span><span></span><span></span><span></span></div>
-                <span class="label">auto · closed</span>
+                <span class="label">${label}</span>
               </div>
               <div class="sw-actions">
                 <span class="tk-badge is-completed" style=${{ fontSize: 9 }}><span class="dot"></span>closed</span>

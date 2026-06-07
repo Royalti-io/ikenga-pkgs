@@ -28,6 +28,7 @@ import {
   fetchSnoozedCount,
   fetchDraftCount,
   fetchMessage,
+  fetchThreadCount,
   fetchReply,
   markRead,
   markUnread,
@@ -354,6 +355,14 @@ function ReaderPane({ messageId, queryClient, onBack, onPrev, onNext, position, 
     enabled: !!messageId,
   });
 
+  // Thread size for the reader-meta "Thread of N" chip (B.7). Derived from the
+  // normalized subject — only shown when the thread has more than one message.
+  const { data: threadCount } = useQuery({
+    queryKey: ['mail', 'threadCount', message?.subject ?? messageId],
+    queryFn: () => fetchThreadCount(message?.subject),
+    enabled: !!message?.subject,
+  });
+
   // Pre-fill quick-reply if Chi has drafted one and not yet sent
   useEffect(() => {
     if (chiReply?.body && !draftSent) {
@@ -477,6 +486,7 @@ function ReaderPane({ messageId, queryClient, onBack, onPrev, onNext, position, 
           <div class="reader-meta">
             <span>${formatReceivedAt(message.received_at)}</span>
             ${message.from_org ? html`<span>${message.from_org}</span>` : null}
+            ${threadCount > 1 ? html`<span>Thread of ${threadCount}</span>` : null}
             ${message.triage_category ? html`<span>${triageCategoryLabel(message.triage_category)}</span>` : null}
             ${isDealMessage(message) ? html`<span class="reader-meta-deal">Active deal</span>` : null}
           </div>

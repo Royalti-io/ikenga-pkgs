@@ -186,6 +186,42 @@ export async function fetchDraftMessage(id) {
   return row;
 }
 
+// Normalize an email subject to a thread key — strip leading Re:/Fwd:/Fw:
+// prefixes (repeatedly) and lowercase. Used to size a thread for the reader-meta
+// "Thread of N" chip (B.7). in_reply_to is populated on <10% of real rows, so
+// the normalized subject is the reliable thread signal.
+export function normalizeSubject(subject) {
+  let x = String(subject || '').trim();
+  let prev;
+  do {
+    prev = x;
+    x = x.replace(/^\s*(re|fwd|fw)\s*:\s*/i, '');
+  } while (x !== prev);
+  return x.trim().toLowerCase();
+}
+
+/**
+ * Count the messages in the same thread as `subject` (B.7). A thread = all
+ * email_messages whose normalized subject matches. A bounded LIKE narrows the
+ * candidate set; the exact normalized comparison happens in JS to avoid
+ * substring false positives. Returns >= 1.
+ *
+ * @param {string|null|undefined} subject
+ * @returns {Promise<number>}
+ */
+export async function fetchThreadCount(subject) {
+  const core = normalizeSubject(subject);
+  if (!core) return 1;
+  const like = `%${core.replace(/[\\%_]/g, '\\$&')}%`;
+  const rows = await hostDbQuery(
+    `SELECT subject FROM email_messages WHERE LOWER(subject) LIKE ? ESCAPE '\\'`,
+    [like],
+  ).catch(() => []);
+  let n = 0;
+  for (const r of rows) if (normalizeSubject(r.subject) === core) n += 1;
+  return Math.max(1, n);
+}
+
 /** Fetch Chi-drafted reply for a message. */
 export async function fetchReply(messageId) {
   const sql = `

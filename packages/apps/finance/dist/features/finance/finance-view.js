@@ -90,10 +90,12 @@ const FIXTURE_ALERTS = [
   { id: 'a3', type: 'tax',     severity: 'warn', message: 'LIRS PAYE filing overdue since Feb 2024', meta: 'recalc + remit', linked_id: null },
 ];
 
+// Normalized KPI shape (also produced by fetchOverview from real data):
+// cash/burn/ar carry { value, sub, dir }; runway carries { months, target, scenarios }.
 const FIXTURE_KPIS = {
   cash:    { value: '$48,210', sub: '+4.2% vs prior mo', dir: 'up' },
   burn:    { value: '$8,420',  sub: '−3.1% vs avg', dir: 'up' },
-  runway:  { value: '5.7 mo', sub: 'Target ≥ 12 mo', dir: 'warn', isWarn: true },
+  runway:  { months: 5.7, target: 12, scenarios: { conserv: 3.8, likely: 5.7, optim: 8.2 } },
   ar:      { value: '$6,180',  sub: '3 overdue · 1 critical', dir: 'down' },
 };
 
@@ -144,6 +146,7 @@ const PAGE_SIZE = 9;
 const QK = {
   kpis:         ['finance', 'kpis'],
   alerts:       ['finance', 'alerts'],
+  overview:     ['finance', 'overview'],
   transactions: (entity) => ['finance', 'transactions', entity],
   receivables:  ['finance', 'receivables'],
   interco:      ['finance', 'interco'],
@@ -217,6 +220,51 @@ function normMatch(status) {
   return 'na'; // 'n/a' or unknown — neutral, not an error
 }
 
+// ─── FX normalization ─────────────────────────────────────────────────────────
+// exchange_rates stores one row per month: ngn_usd = NGN per 1 USD (divide),
+// eur_usd / gbp_usd = USD per 1 unit (multiply). We load every month so a value
+// can be converted using the rate that applied in its own month (with the most
+// recent month as fallback for any gap).
+
+async function fetchFxRates() {
+  const rows = await hostDbQuery(
+    `SELECT rate_month, ngn_usd, eur_usd, gbp_usd FROM exchange_rates ORDER BY rate_month DESC`
+  ).catch(() => []);
+  const byMonth = {};
+  let latest = null;
+  for (const r of rows) {
+    const m = {
+      NGN: parseFloat(r.ngn_usd) || null,
+      EUR: parseFloat(r.eur_usd) || null,
+      GBP: parseFloat(r.gbp_usd) || null,
+    };
+    byMonth[r.rate_month] = m;
+    if (!latest) latest = m; // first row is the newest (ORDER BY DESC)
+  }
+  return { byMonth, latest: latest || { NGN: null, EUR: null, GBP: null } };
+}
+
+// Convert a native amount to USD. `month` ('YYYY-MM') selects the period rate;
+// falls back to the latest rate when that month is missing. Returns null when the
+// rate is unavailable (so callers can avoid fabricating a USD figure).
+function fxToUsd(amount, currency, fx, month) {
+  const n = parseFloat(amount);
+  if (!Number.isFinite(n)) return null;
+  const c = String(currency || 'USD').toUpperCase();
+  if (c === 'USD') return n;
+  const rates = (month && fx.byMonth[month]) || fx.latest;
+  if (c === 'NGN') return rates.NGN ? n / rates.NGN : null;
+  if (c === 'EUR') return rates.EUR ? n * rates.EUR : null;
+  if (c === 'GBP') return rates.GBP ? n * rates.GBP : null;
+  return n; // unknown currency — treat as already-USD rather than drop it
+}
+
+const MONTH_ABBR = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+function monthLabel(ym) {
+  const mi = parseInt(String(ym).slice(5, 7), 10) - 1;
+  return MONTH_ABBR[mi] || String(ym);
+}
+
 async function fetchTransactions(entity = 'all') {
   if (isStandalone()) return FIXTURE_TRANSACTIONS;
   try {
@@ -277,28 +325,166 @@ async function fetchReceivables() {
 async function fetchInterco() {
   if (isStandalone()) return FIXTURE_INTERCO;
   try {
-    const rows = await hostDbQuery(
-      `SELECT id, source_entity, destination_entity, amount, currency, amount_usd,
-              transfer_type, reconciliation_status, running_balance_usd, entry_date
-       FROM inter_company_entries
-       ORDER BY entry_date DESC, id DESC
-       LIMIT 200`
-    );
+    const [rows, fx] = await Promise.all([
+      hostDbQuery(
+        `SELECT id, source_entity, destination_entity, amount, currency, amount_usd,
+                transfer_type, reconciliation_status, running_balance_usd, entry_date
+         FROM inter_company_entries
+         ORDER BY entry_date DESC, id DESC
+         LIMIT 200`
+      ),
+      fetchFxRates(),
+    ]);
     if (!rows.length) return FIXTURE_INTERCO;
-    return rows.map((r) => {
-      const usd = parseFloat(r.amount_usd);
-      // amount_usd is frequently NULL in real data — fall back to native amount
-      // only for display sizing (not as a fabricated USD figure).
-      return {
-        ...r,
-        amount: parseFloat(r.amount) || 0,
-        currency: r.currency || 'USD',
-        amount_usd: Number.isFinite(usd) ? usd : null,
-        running_balance_usd: parseFloat(r.running_balance_usd) || 0,
-      };
-    });
+    // inter_company_entries.amount_usd / running_balance_usd are NULL in real
+    // data — normalize the native amount to USD via exchange_rates using the
+    // entry's own month, and derive a USD running balance per directed pair from
+    // the oldest entry forward.
+    const asc = rows.slice().reverse();
+    const usdById = {};
+    const runById = {};
+    const runByPair = {};
+    for (const r of asc) {
+      const month = String(r.entry_date || '').slice(0, 7);
+      const dbUsd = parseFloat(r.amount_usd);
+      const usd = Number.isFinite(dbUsd) ? dbUsd : fxToUsd(r.amount, r.currency, fx, month);
+      usdById[r.id] = usd;
+      const pair = `${r.source_entity}→${r.destination_entity}`;
+      const next = (runByPair[pair] || 0) + (usd || 0);
+      runByPair[pair] = next;
+      const dbRun = parseFloat(r.running_balance_usd);
+      runById[r.id] = Number.isFinite(dbRun) ? dbRun : (usd != null ? next : null);
+    }
+    return rows.map((r) => ({
+      ...r,
+      amount: parseFloat(r.amount) || 0,
+      currency: r.currency || 'USD',
+      amount_usd: usdById[r.id] ?? null,
+      running_balance_usd: runById[r.id] ?? null,
+    }));
   } catch {
     return FIXTURE_INTERCO;
+  }
+}
+
+async function fetchOverview() {
+  if (isStandalone()) {
+    return { kpis: FIXTURE_KPIS, cashTiles: FIXTURE_CASH, wfSeries: FIXTURE_WF };
+  }
+  try {
+    const [fx, balRows, monthRows, arRows] = await Promise.all([
+      fetchFxRates(),
+      hostDbQuery(
+        `SELECT b.entity AS entity, b.currency AS currency, b.bank AS bank,
+                lab.balance_after AS balance
+         FROM latest_account_balances lab
+         JOIN bank_accounts b ON b.id = lab.account_id`
+      ).catch(() => []),
+      hostDbQuery(
+        `SELECT substr(txn_date, 1, 7) AS ym,
+                SUM(CAST(amount_usd AS REAL)) AS net,
+                COUNT(*) AS n
+         FROM transaction_ledger
+         WHERE amount_usd IS NOT NULL AND amount_usd != '' AND txn_date <= date('now')
+         GROUP BY ym HAVING COUNT(*) >= 5
+         ORDER BY ym DESC LIMIT 6`
+      ).catch(() => []),
+      hostDbQuery(
+        `SELECT balance_left, currency, invoice_status, due_date
+         FROM receivables WHERE invoice_status != 'paid'`
+      ).catch(() => []),
+    ]);
+
+    if (!balRows.length && !monthRows.length) {
+      return { kpis: FIXTURE_KPIS, cashTiles: FIXTURE_CASH, wfSeries: FIXTURE_WF };
+    }
+
+    // ── Cash position by entity (native balances → USD at the latest rate) ──
+    const ENT_META = {
+      Royalti:  { ent: 'r', name: 'Royalti.io' },
+      Dixtrit:  { ent: 'd', name: 'Dixtrit.media' },
+      Personal: { ent: 'p', name: 'Personal' },
+    };
+    const byEnt = {};
+    let totalCash = 0;
+    for (const r of balRows) {
+      const usd = fxToUsd(r.balance, r.currency, fx) || 0;
+      totalCash += usd;
+      const key = r.entity || 'Other';
+      (byEnt[key] ||= { accounts: [], banks: new Set(), usd: 0 });
+      byEnt[key].usd += usd;
+      byEnt[key].accounts.push({ ccy: r.currency, native: parseFloat(r.balance) || 0, usd });
+      if (r.bank) byEnt[key].banks.add(r.bank);
+    }
+    const cashTiles = Object.entries(byEnt)
+      .sort((a, b) => b[1].usd - a[1].usd)
+      .map(([key, v]) => {
+        const meta = ENT_META[key] || { ent: '', name: key };
+        const top = v.accounts
+          .filter((a) => Math.abs(a.native) > 0)
+          .sort((a, b) => Math.abs(b.usd) - Math.abs(a.usd))[0];
+        const banks = [...v.banks].join(' + ');
+        const native = top
+          ? `${CCY_SYMBOL[top.ccy] || ''}${Math.round(Math.abs(top.native)).toLocaleString()} ${top.ccy}${banks ? ` · ${banks}` : ''}`
+          : `${v.accounts.length} account${v.accounts.length === 1 ? '' : 's'}${banks ? ` · ${banks}` : ''}`;
+        return { ent: meta.ent, entity: meta.name, ccy: 'USD', value: `$${Math.round(v.usd).toLocaleString()}`, native };
+      });
+
+    // ── 6-month net cash-flow series (chronological) ──
+    const months = monthRows.slice().reverse();
+    const wfSeries = months.map((m) => ({ label: monthLabel(m.ym), amount: Math.round(Number(m.net) || 0) }));
+
+    // ── Burn / runway from average monthly net ──
+    const nets = months.map((m) => Number(m.net) || 0);
+    const avgNet = nets.length ? nets.reduce((a, b) => a + b, 0) / nets.length : 0;
+    const lastNet = nets.length ? nets[nets.length - 1] : 0;
+    const lastLabel = months.length ? monthLabel(months[months.length - 1].ym) : '';
+    const burnPerMo = avgNet < 0 ? -avgNet : 0;
+    const lastBurn = lastNet < 0 ? -lastNet : 0;
+    const burnDeltaPct = burnPerMo > 0 ? ((lastBurn - burnPerMo) / burnPerMo) * 100 : 0;
+    const runwayMonths = burnPerMo > 0 ? totalCash / burnPerMo : Infinity;
+    const scen = (mult) => (burnPerMo > 0 ? totalCash / (burnPerMo * mult) : Infinity);
+
+    // ── A/R outstanding (USD) ──
+    let arOutstanding = 0;
+    let overdueCount = 0;
+    for (const r of arRows) {
+      arOutstanding += fxToUsd(r.balance_left, r.currency, fx) || 0;
+      if (r.invoice_status === 'overdue') overdueCount += 1;
+    }
+
+    const kpis = {
+      cash: {
+        value: `$${Math.round(totalCash).toLocaleString()}`,
+        sub: nets.length
+          ? `${lastNet >= 0 ? '+' : '−'}$${Math.abs(Math.round(lastNet)).toLocaleString()} net · ${lastLabel}`
+          : 'no recent activity',
+        dir: lastNet >= 0 ? 'up' : 'down',
+      },
+      burn: {
+        value: burnPerMo > 0 ? `$${Math.round(burnPerMo).toLocaleString()}` : '$0',
+        sub: burnPerMo > 0 ? `${burnDeltaPct >= 0 ? '+' : '−'}${Math.abs(burnDeltaPct).toFixed(0)}% vs 6-mo avg` : 'net positive',
+        dir: burnDeltaPct <= 0 ? 'up' : 'down', // burning less than average is good
+      },
+      runway: {
+        months: runwayMonths,
+        target: 12,
+        scenarios: { conserv: scen(1.3), likely: runwayMonths, optim: scen(0.75) },
+      },
+      ar: {
+        value: `$${Math.round(arOutstanding).toLocaleString()}`,
+        sub: `${overdueCount} overdue`,
+        dir: 'down',
+      },
+    };
+
+    return {
+      kpis,
+      cashTiles: cashTiles.length ? cashTiles : FIXTURE_CASH,
+      wfSeries: wfSeries.length ? wfSeries : FIXTURE_WF,
+    };
+  } catch {
+    return { kpis: FIXTURE_KPIS, cashTiles: FIXTURE_CASH, wfSeries: FIXTURE_WF };
   }
 }
 
@@ -433,35 +619,52 @@ function AlertStrip({ alerts }) {
   `;
 }
 
-function KpiStrip() {
-  const runwayMonths = 5.7;
-  const target = 12;
-  const isWarn = runwayMonths < target;
+function KpiStrip({ kpis }) {
+  const k = kpis || FIXTURE_KPIS;
+  const cash = k.cash || FIXTURE_KPIS.cash;
+  const burn = k.burn || FIXTURE_KPIS.burn;
+  const ar = k.ar || FIXTURE_KPIS.ar;
+  const runway = k.runway || FIXTURE_KPIS.runway;
+
+  const runwayMonths = runway.months;
+  const target = runway.target ?? 12;
+  const finite = Number.isFinite(runwayMonths);
+  const isWarn = finite && runwayMonths < target;
+  const frac = Math.max(0, Math.min(1, finite ? runwayMonths / target : 1));
+  // Arc endpoint on the semicircle: centre (100,90), r=80, sweeping the left
+  // anchor (20,90) clockwise to the right anchor (180,90). frac=0.5 → top centre.
+  const ang = Math.PI * (1 - frac);
+  const ex = (100 + 80 * Math.cos(ang)).toFixed(2);
+  const ey = (90 - 80 * Math.sin(ang)).toFixed(2);
+  const arcPath = `M 20 90 A 80 80 0 0 1 ${ex} ${ey}`;
+  const fmtMo = (x) => (Number.isFinite(x) ? x.toFixed(1) : '12+');
+  const sc = runway.scenarios || {};
 
   const sparkUp = '0,20 15,18 30,16 45,17 60,12 75,10 90,11 105,7 120,5';
   const sparkBurn = '0,8 15,10 30,12 45,9 60,11 75,14 90,12 105,15 120,17';
   const sparkDown = '0,18 15,16 30,14 45,12 60,11 75,9 90,8 105,6 120,4';
+  const dirCls = (d) => (d === 'down' ? 'is-down' : 'is-up');
 
   return html`
     <div class="fin-kpi-grid">
       <!-- Cash -->
-      <div class="fin-kpi" role="region" aria-label="Cash USD: $48,210, up 4.2%">
+      <div class="fin-kpi" role="region" aria-label=${`Cash USD: ${cash.value}, ${cash.sub}`}>
         <div class="fin-kpi-label">Cash · USD</div>
-        <div class="fin-kpi-value">${FIXTURE_KPIS.cash.value}</div>
-        <div class="fin-kpi-sub is-up">${FIXTURE_KPIS.cash.sub}</div>
-        <div class="fin-kpi-spark is-up">
+        <div class="fin-kpi-value">${cash.value}</div>
+        <div class=${`fin-kpi-sub ${dirCls(cash.dir)}`}>${cash.sub}</div>
+        <div class=${`fin-kpi-spark ${dirCls(cash.dir)}`}>
           <svg viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true">
-            <polyline points=${sparkUp} />
+            <polyline points=${cash.dir === 'down' ? sparkDown : sparkUp} />
           </svg>
         </div>
       </div>
 
       <!-- Burn -->
-      <div class="fin-kpi" role="region" aria-label="Burn per month: $8,420, down 3.1%">
+      <div class="fin-kpi" role="region" aria-label=${`Burn per month: ${burn.value}, ${burn.sub}`}>
         <div class="fin-kpi-label">Burn / mo</div>
-        <div class="fin-kpi-value">${FIXTURE_KPIS.burn.value}</div>
-        <div class="fin-kpi-sub is-up">${FIXTURE_KPIS.burn.sub}</div>
-        <div class="fin-kpi-spark is-up">
+        <div class="fin-kpi-value">${burn.value}</div>
+        <div class=${`fin-kpi-sub ${dirCls(burn.dir)}`}>${burn.sub}</div>
+        <div class=${`fin-kpi-spark ${dirCls(burn.dir)}`}>
           <svg viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true">
             <polyline points=${sparkBurn} />
           </svg>
@@ -470,40 +673,40 @@ function KpiStrip() {
 
       <!-- Runway — full semicircle gauge + scenario row -->
       <div class="fin-kpi is-gauge" role="region"
-           aria-label=${`Runway: ${runwayMonths} months, warning — target ${target} months`}>
+           aria-label=${`Runway: ${fmtMo(runwayMonths)} months${isWarn ? ', warning' : ''} — target ${target} months`}>
         <div class="fin-kpi-label">Runway</div>
         <div class=${`fin-gauge${isWarn ? ' is-warn' : ' is-good'}`}>
           <svg viewBox="0 0 200 110" preserveAspectRatio="xMidYMid meet">
-            <title>Runway: ${runwayMonths} of ${target} month target</title>
+            <title>Runway: ${fmtMo(runwayMonths)} of ${target} month target</title>
             <path class="fin-gauge-bg" d="M 20 90 A 80 80 0 0 1 180 90" fill="none" stroke-width="11" stroke-linecap="round" />
-            <path class="fin-gauge-fg" d="M 20 90 A 80 80 0 0 1 93.7 10.25" fill="none" stroke-width="11" stroke-linecap="round" />
+            <path class="fin-gauge-fg" d=${arcPath} fill="none" stroke-width="11" stroke-linecap="round" />
             <line class="fin-gauge-tick" x1="20"  y1="90" x2="14"  y2="98" />
             <line class="fin-gauge-tick" x1="100" y1="10" x2="100" y2="20" />
             <line class="fin-gauge-tick" x1="180" y1="90" x2="186" y2="98" />
             <text class="fin-axis-text" x="14"  y="106" text-anchor="start">0</text>
-            <text class="fin-axis-text" x="100" y="32"  text-anchor="middle">6</text>
-            <text class="fin-axis-text" x="186" y="106" text-anchor="end">12+</text>
+            <text class="fin-axis-text" x="100" y="32"  text-anchor="middle">${Math.round(target / 2)}</text>
+            <text class="fin-axis-text" x="186" y="106" text-anchor="end">${target}+</text>
           </svg>
           <div class="fin-gauge-center">
-            <div class="num">${runwayMonths}</div>
+            <div class="num">${fmtMo(runwayMonths)}</div>
             <div class="unit">months</div>
           </div>
         </div>
         <div class="fin-gauge-scenarios">
-          <div class="scen-bad"><div class="lbl">Conserv.</div><div class="val">3.8</div></div>
-          <div class="scen-mid"><div class="lbl">Likely</div><div class="val">5.7</div></div>
-          <div class="scen-good"><div class="lbl">Optim.</div><div class="val">8.2</div></div>
+          <div class="scen-bad"><div class="lbl">Conserv.</div><div class="val">${fmtMo(sc.conserv)}</div></div>
+          <div class="scen-mid"><div class="lbl">Likely</div><div class="val">${fmtMo(sc.likely ?? runwayMonths)}</div></div>
+          <div class="scen-good"><div class="lbl">Optim.</div><div class="val">${fmtMo(sc.optim)}</div></div>
         </div>
       </div>
 
       <!-- A/R -->
-      <div class="fin-kpi" role="region" aria-label="Accounts receivable outstanding: $6,180, 3 overdue 1 critical">
+      <div class="fin-kpi" role="region" aria-label=${`Accounts receivable outstanding: ${ar.value}, ${ar.sub}`}>
         <div class="fin-kpi-label">A/R outstanding</div>
-        <div class="fin-kpi-value">${FIXTURE_KPIS.ar.value}</div>
-        <div class="fin-kpi-sub is-down">${FIXTURE_KPIS.ar.sub}</div>
-        <div class="fin-kpi-spark is-down">
+        <div class="fin-kpi-value">${ar.value}</div>
+        <div class=${`fin-kpi-sub ${dirCls(ar.dir)}`}>${ar.sub}</div>
+        <div class=${`fin-kpi-spark ${dirCls(ar.dir)}`}>
           <svg viewBox="0 0 120 28" preserveAspectRatio="none" aria-hidden="true">
-            <polyline points=${sparkDown} />
+            <polyline points=${ar.dir === 'down' ? sparkDown : sparkUp} />
           </svg>
         </div>
       </div>
@@ -572,20 +775,22 @@ function EntityCashGrid({ tiles }) {
   `;
 }
 
-function OverviewTab({ alerts }) {
+function OverviewTab({ alerts, overview }) {
+  const ov = overview || {};
+  const tileCount = ov.cashTiles?.length ?? FIXTURE_CASH.length;
   return html`
     <div class="frame-body-flush" style=${{ overflowY: 'auto', flex: 1, paddingBottom: '16px' }}>
       ${html`<${AlertStrip} alerts=${alerts} />`}
-      ${html`<${KpiStrip} />`}
+      ${html`<${KpiStrip} kpis=${ov.kpis} />`}
       <div style=${{ height: '16px' }}></div>
-      ${html`<${CashFlowChart} series=${FIXTURE_WF} />`}
+      ${html`<${CashFlowChart} series=${ov.wfSeries} />`}
       <div style=${{ padding: '0 16px var(--space-3)' }}>
         <div class="fin-h2" style=${{ marginTop: 0 }}>
           Cash position by entity
-          <span class="fin-h2-meta">native + usd-normalized · 4 accounts</span>
+          <span class="fin-h2-meta">native + usd-normalized · ${tileCount} ${tileCount === 1 ? 'entity' : 'entities'}</span>
         </div>
       </div>
-      ${html`<${EntityCashGrid} />`}
+      ${html`<${EntityCashGrid} tiles=${ov.cashTiles} />`}
     </div>
   `;
 }
@@ -1237,6 +1442,13 @@ export function FinanceView({ activeFeature }) {
   // Queries
   const alertsQ = useQuery({ queryKey: QK.alerts, queryFn: fetchAlerts, staleTime: 30_000 });
 
+  const overviewQ = useQuery({
+    queryKey: QK.overview,
+    queryFn: fetchOverview,
+    staleTime: 30_000,
+    enabled: view === 'overview',
+  });
+
   const txnsQ = useQuery({
     queryKey: QK.transactions(entity),
     queryFn: () => fetchTransactions(entity),
@@ -1324,7 +1536,7 @@ export function FinanceView({ activeFeature }) {
       <!-- Tab panels -->
       <div id="panel-overview" role="tabpanel" aria-label="Overview"
            style=${{ display: view === 'overview' ? 'contents' : 'none' }}>
-        ${html`<${OverviewTab} alerts=${alerts} />`}
+        ${html`<${OverviewTab} alerts=${alerts} overview=${overviewQ.data} />`}
       </div>
 
       <div id="panel-transactions" role="tabpanel" aria-label="Transactions"

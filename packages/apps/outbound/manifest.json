@@ -49,7 +49,9 @@
       "outbound_email_approvals",
       "outbound_sent_log",
       "outbound_newsletter_drafts",
-      "outbound_sequence_steps"
+      "outbound_sequence_steps",
+      "contacts",
+      "receivables"
     ],
     "vault.keys": []
   },

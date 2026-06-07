@@ -185,12 +185,17 @@ function buildCalendarWeeks(events) {
   }
 
   const start = isoAddDays(anchor, -isoWeekdayMon(anchor)); // Monday of the chosen week
+  // is-today highlight (D.9 / F-12): only lights up when today actually falls in
+  // the shown fortnight. We keep the densest-window anchoring (live data spans
+  // Oct'25–Mar'26, so the grid stays on the populated weeks) rather than forcing
+  // an empty current week — today simply isn't marked when it's out of range.
+  const todayIso = new Date().toISOString().slice(0, 10);
   const weeks = [];
   for (let w = 0; w < 2; w++) {
     const row = [];
     for (let d = 0; d < 7; d++) {
       const iso = isoAddDays(start, w * 7 + d);
-      row.push({ day: DOW_LABELS[d], iso, dim: d >= 5 });
+      row.push({ day: DOW_LABELS[d], iso, dim: d >= 5, isToday: iso === todayIso });
     }
     weeks.push(row);
   }
@@ -827,8 +832,8 @@ function CalendarView({ calEvents }) {
             ${week.map((cell) => {
               const entries = byDate[cell.iso] ?? [];
               return html`
-                <div class=${cn('ct-cal-day', cell.dim && 'dim')} key=${cell.iso}>
-                  <div class="ct-cal-date">${isoToDayNum(cell.iso)}</div>
+                <div class=${cn('ct-cal-day', cell.dim && 'dim', cell.isToday && 'is-today')} key=${cell.iso} aria-current=${cell.isToday ? 'date' : undefined}>
+                  <div class="ct-cal-date">${isoToDayNum(cell.iso)}${cell.isToday ? html`<span class="ct-cal-today">today</span>` : null}</div>
                   ${entries.map((e) => html`
                     <span class="ct-cal-pill" data-channel=${e.channel ?? ''} key=${e.id}>
                       ${e.title}

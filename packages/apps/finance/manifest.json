@@ -45,6 +45,7 @@
       "receivables",
       "inter_company_entries",
       "bank_accounts",
+      "latest_account_balances",
       "exchange_rates",
       "cfo_processing_runs",
       "finance_alerts"

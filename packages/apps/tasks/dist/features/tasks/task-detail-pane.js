@@ -15,8 +15,10 @@ import {
   blockingTaskQuery,
   dependentTasksQuery,
   reassignTask,
+  rescheduleTask,
   subtasksQuery,
   taskDetailQuery,
+  taskEventsQuery,
   updateTaskStatus,
 } from '../../lib/queries.js';
 import { assigneeOptions } from '../../lib/assignees.js';
@@ -35,9 +37,87 @@ import {
 
 /** @typedef {import('../../lib/queries.js').Task} Task */
 /** @typedef {import('../../lib/queries.js').TaskStatus} TaskStatus */
+/** @typedef {import('../../lib/queries.js').TaskEvent} TaskEvent */
 
 /** @type {TaskStatus[]} */
 const STATUS_OPTIONS = ['pending', 'in_progress', 'blocked', 'completed', 'cancelled'];
+
+// ─── Activity timeline (B.4) ────────────────────────────────────────────────
+// Renders the real task_events audit table (migration 0048), with a defensive
+// fallback that derives created/completed from the task row so the timeline is
+// never empty for a row that predates the table.
+
+/** @param {string|null|undefined} iso */
+function tlWhen(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return d.toLocaleString(undefined, { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+/** Actors that aren't email addresses are agents/system (styled distinctly). */
+function isAgentActor(actor) {
+  return !!actor && !actor.includes('@');
+}
+
+/** @param {string|null|undefined} iso */
+function tlDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? String(iso) : d.toISOString().slice(0, 10);
+}
+
+/**
+ * Merge real task_events with task-row fallbacks, sorted oldest→newest.
+ * @param {TaskEvent[]|undefined} events
+ * @param {Task} task
+ */
+function buildTimeline(events, task) {
+  const items = (events || []).map((e) => ({
+    type: e.event_type,
+    when: e.created_at,
+    actor: e.actor,
+    from: e.from_value,
+    to: e.to_value,
+    detail: e.detail,
+  }));
+  const has = (type) => items.some((i) => i.type === type);
+  if (!has('created') && task.created_at) {
+    items.push({ type: 'created', when: task.created_at, actor: task.created_by ?? task.agent_source ?? null, to: task.status });
+  }
+  if (task.completed_at && !has('completed')) {
+    items.push({ type: 'completed', when: task.completed_at, actor: isAutoClosed(task) ? 'task-health' : (task.assigned_to ?? 'system'), to: 'completed' });
+  }
+  items.sort((a, b) => new Date(a.when).getTime() - new Date(b.when).getTime());
+  return items;
+}
+
+/** Map a timeline item to { cls, label } for rendering. */
+function tlDisplay(it, task) {
+  switch (it.type) {
+    case 'created':
+      return { cls: 'is-mark', label: `created${it.to && it.to !== 'pending' ? ` · ${String(it.to).replace('_', ' ')}` : ''}` };
+    case 'completed':
+      return { cls: 'is-ok', label: isAutoClosed(task) ? 'auto-closed' : 'completed' };
+    case 'reopened':
+      return { cls: '', label: 'reopened' };
+    case 'status_changed':
+      return {
+        cls: it.to === 'blocked' ? 'is-warn' : '',
+        label: `status → ${String(it.to || '').replace('_', ' ')}${it.from ? ` (was ${String(it.from).replace('_', ' ')})` : ''}`,
+      };
+    case 'rescheduled':
+      return { cls: '', label: it.to ? `rescheduled → due ${tlDate(it.to)}` : 'due date cleared' };
+    case 'assigned':
+      return { cls: '', label: `assigned to ${it.to || 'unassigned'}` };
+    case 'progress':
+      return { cls: '', label: `progress → ${it.to}%` };
+    case 'checked':
+      return { cls: '', label: 'reviewed by task-health' };
+    default:
+      return { cls: '', label: String(it.type).replace(/_/g, ' ') };
+  }
+}
 
 /**
  * @param {{ taskId: string, density?: import('../../lib/shared.js').Density, onNavigateTask?: (id: string) => void }} props
@@ -54,6 +134,9 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
   // blocker are waiting on it.
   const { data: dependentTasks } = useQuery(dependentTasksQuery(taskId));
 
+  // Activity/audit timeline (B.4) — real task_events rows.
+  const { data: taskEvents } = useQuery(taskEventsQuery(taskId));
+
   const updateStatus = useMutation({
     /** @param {TaskStatus} status */
     mutationFn: async (status) => {
@@ -61,6 +144,22 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
     },
     onSuccess: () =>
       void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all }),
+  });
+
+  // Reschedule — toggled open by the Reschedule button (was a disabled stub, F-07/C.8).
+  const [rescheduleOpen, setRescheduleOpen] = useState(false);
+  const [dueDateInput, setDueDateInput] = useState('');
+  const reschedule = useMutation({
+    /** @param {string|null} dueDate */
+    mutationFn: async (dueDate) => {
+      await rescheduleTask(taskId, dueDate);
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.detail(taskId) });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tasks.events(taskId) });
+      setRescheduleOpen(false);
+    },
   });
 
   // Reassign — toggled open by the head's Reassign button (was dead until now).
@@ -122,14 +221,11 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
           <span class="id">task · ${shortId(task.id)}</span>
           ${density === 'full' && html`
             <div class="ip-topline-actions">
-              ${/* Reschedule is a visual stub (no scheduler dialog yet) —
-                    disabled so it doesn't read as actionable (F-07). */ ''}
               <${Button}
-                variant="outline"
+                variant=${rescheduleOpen ? 'default' : 'outline'}
                 size="sm"
                 type="button"
-                disabled
-                title="Rescheduling is not wired up yet"
+                onClick=${() => { setDueDateInput(dueDate || ''); setRescheduleOpen((v) => !v); }}
               >Reschedule</${Button}>
               <${Button}
                 variant=${reassignOpen ? 'default' : 'outline'}
@@ -241,6 +337,78 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
           `}
         </div>
       </div>
+
+      ${rescheduleOpen && html`
+        <div
+          style=${{
+            display: 'flex',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 8,
+            margin: '0 var(--space-4) 8px',
+            padding: '8px 10px',
+            background: 'var(--bg-sunken)',
+            border: '1px solid var(--border-soft)',
+            borderRadius: 'var(--radius-sm)',
+          }}
+        >
+          <span
+            style=${{
+              fontFamily: 'var(--font-mono)',
+              fontSize: 10.5,
+              color: 'var(--fg-faint)',
+              letterSpacing: '0.06em',
+              textTransform: 'uppercase',
+            }}
+          >Due date</span>
+          <input
+            type="date"
+            value=${dueDateInput}
+            disabled=${reschedule.isPending}
+            onInput=${(e) => setDueDateInput(e.target.value)}
+            onKeyDown=${(e) => { if (e.key === 'Enter') reschedule.mutate(dueDateInput || null); }}
+            style=${{
+              height: 26,
+              fontSize: 11.5,
+              padding: '0 6px',
+              background: 'var(--bg-base)',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius-xs)',
+              color: 'var(--fg)',
+              fontFamily: 'inherit',
+              colorScheme: 'dark light',
+            }}
+          />
+          <${Button}
+            variant="affirmative"
+            size="sm"
+            type="button"
+            disabled=${reschedule.isPending || !dueDateInput}
+            onClick=${() => reschedule.mutate(dueDateInput || null)}
+          >Save</${Button}>
+          ${task.due_date && html`
+            <${Button}
+              variant="outline"
+              size="sm"
+              type="button"
+              disabled=${reschedule.isPending}
+              onClick=${() => reschedule.mutate(null)}
+            >Clear due</${Button}>
+          `}
+          <${Button}
+            variant="ghost"
+            size="sm"
+            type="button"
+            onClick=${() => setRescheduleOpen(false)}
+          >Cancel</${Button}>
+          ${reschedule.isPending && html`<${Icon} name="loader" size=${12} className="tk-spin" />`}
+          ${reschedule.isError && html`
+            <span style=${{ color: 'var(--danger)', fontSize: 11 }}>
+              ${(/** @type {Error} */ (reschedule.error)).message}
+            </span>
+          `}
+        </div>
+      `}
 
       <div class="ip-body">
         ${autoClosed && task.outcome_notes && html`
@@ -456,54 +624,38 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
           </div>
         `}
 
-        ${density !== 'side' && html`
-          <div>
-            <div class="tk-section-label">
-              <span>Activity</span>
-              <span class="tk-deferred-pill">deferred · audit table</span>
-            </div>
-            <div class="tk-timeline">
-              <div class="tk-tl-item is-mark">
-                <span class="when">
-                  ${new Date(task.created_at).toLocaleString(undefined, {
-                    month: '2-digit',
-                    day: '2-digit',
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </span>
-                ${task.agent_source && html`<span class="actor is-agent">${task.agent_source}</span>`}
-                created${task.assigned_to ? ` · assigned to ${task.assigned_to}` : ''}
+        ${density !== 'side' && (() => {
+          const timeline = buildTimeline(taskEvents, task);
+          return html`
+            <div>
+              <div class="tk-section-label">
+                <span>Activity</span>
+                ${timeline.length > 0 && html`<span class="ct">${timeline.length}</span>`}
               </div>
-              ${task.completed_at && html`
-                <div class="tk-tl-item is-ok">
-                  <span class="when">
-                    ${new Date(task.completed_at).toLocaleString(undefined, {
-                      month: '2-digit',
-                      day: '2-digit',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </span>
-                  <span class="actor">
-                    ${autoClosed ? 'task-health' : task.assigned_to ?? 'system'}
-                  </span>
-                  ${autoClosed ? 'auto-closed' : 'completed'}
-                </div>
-              `}
+              <div class="tk-timeline">
+                ${timeline.map((it, i) => {
+                  const d = tlDisplay(it, task);
+                  return html`
+                    <div class=${cn('tk-tl-item', d.cls)} key=${i}>
+                      <span class="when">${tlWhen(it.when)}</span>
+                      ${it.actor && html`<span class=${cn('actor', isAgentActor(it.actor) && 'is-agent')}>${it.actor}</span>`}
+                      ${d.label}
+                    </div>
+                  `;
+                })}
+              </div>
             </div>
-          </div>
-        `}
+          `;
+        })()}
       </div>
 
       ${density !== 'full' && html`
         <div class="ip-action-bar">
           <${Button}
-            variant="outline"
+            variant=${rescheduleOpen ? 'default' : 'outline'}
             size="sm"
             type="button"
-            disabled
-            title="Rescheduling is not wired up yet"
+            onClick=${() => { setDueDateInput(dueDate || ''); setRescheduleOpen((v) => !v); }}
           >Reschedule</${Button}>
           <span class="ip-action-bar-spacer"></span>
           <${Button}

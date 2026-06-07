@@ -271,11 +271,38 @@
   opacity: 0.45;
 }
 
+/* is-today (D.9) — warm ring + tinted fill; only one cell can match, and only
+ * when today falls inside the shown fortnight. */
+.ct-cal-day.is-today {
+  background: var(--tint-bg-active, color-mix(in srgb, var(--primary) 12%, var(--bg-inset, transparent)));
+  box-shadow: inset 0 0 0 1.5px var(--primary, currentColor);
+  opacity: 1;
+}
+
 .ct-cal-date {
   font-size: 0.65rem;
   font-family: var(--font-mono, monospace);
   color: var(--fg-faint, var(--fg-muted));
   margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.ct-cal-day.is-today .ct-cal-date {
+  color: var(--primary, var(--fg));
+}
+
+.ct-cal-today {
+  font-size: 0.5rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--primary, var(--fg));
+  background: color-mix(in srgb, var(--primary) 16%, transparent);
+  padding: 0 4px;
+  border-radius: 999px;
+  line-height: 1.5;
 }
 
 /* Channel-coloured calendar pills — DOMAIN LOCAL.
