@@ -656,8 +656,10 @@ const FIXTURE_EMAIL_SENT = [
 ];
 
 const FIXTURE_NL_QUEUE = [
-  { id: 'nl-1', subject: 'You can deliver from Royalti now', subject_b: null, draft_slug: 'royalti-deliver', status: 'cooling', cooling_until: '47m', quality_score: 92, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 0 },
-  { id: 'nl-2', subject: 'Schema patches that unblocked tenant 590', subject_b: 'The shape disparity that was eating royalty data', draft_slug: 'schema-patches-590', status: 'pending', cooling_until: null, quality_score: 86, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 1 },
+  { id: 'nl-1', subject: 'You can deliver from Royalti now', subject_b: null, draft_slug: 'royalti-deliver', status: 'cooling', cooling_until: '47m', quality_score: 92, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 0,
+    body: "## Delivery is live\n\nYou can now send releases to 150+ stores straight from Royalti — no third-party aggregator in the loop.\n\nWe spent the last quarter wiring DDEX delivery into the catalog you already manage. Your splits, your assets, one button.\n\n## What changed\n\nAcross 2,104 labels in the beta, median time-to-store dropped from 9 days to under 48 hours.\n\nDelivery status now streams back into the release timeline, so you see takedowns and edits without leaving the app.\n\nRead the full walkthrough in the docs, then deliver your next release and tell us how it went." },
+  { id: 'nl-2', subject: 'Schema patches that unblocked tenant 590', subject_b: 'The shape disparity that was eating royalty data', draft_slug: 'schema-patches-590', status: 'pending', cooling_until: null, quality_score: 86, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 1,
+    body: "## The bug behind the numbers\n\nTenant 590 reported royalty totals that drifted 3% from their DSP statements. The cause wasn't the math — it was the shape of the data.\n\n## What we found\n\nTwo report formats encoded the same sale type under different keys, so a JOIN silently dropped rows.\n\nWe added a normalization pass and backfilled 11 months of history. Totals now reconcile to the cent.\n\nIf you import from more than one source, run the new reconcile check and let us know what it surfaces." },
 ];
 
 const FIXTURE_NL_SENT = [
