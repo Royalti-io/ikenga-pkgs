@@ -1037,6 +1037,38 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  {
+    name: 'iyke_pa_actions_pause',
+    description:
+      "Pause a batch of drafted actions into the Ikenga approve gate for operator sign-off (ux_mode: approve). Call this INSTEAD of performing the side effect (sending an email, posting, etc.) once you have drafted the outgoing items: it writes them to the gate at /outbox/approvals where the operator edits + approves, then STOP — the operator's approval drives the real send, not you. Each draft's `payload` must be `{ item: DraftItem, meta: ApproveGateMeta }` (the draft content + batch metadata).",
+    inputSchema: {
+      type: 'object',
+      properties: {
+        batchId: { type: 'string', description: 'A unique id for this pause batch.' },
+        actionId: { type: 'string', description: 'The action id, e.g. "<pkgId>/<verb>".' },
+        drafts: {
+          type: 'array',
+          minItems: 1,
+          items: {
+            type: 'object',
+            properties: {
+              id: { type: 'string' },
+              channel: { type: 'string', description: 'smtp | resend | listmonk | buffer' },
+              scheduledAt: { type: 'string' },
+              payload: {
+                type: 'object',
+                description: '{ item: DraftItem, meta: ApproveGateMeta } — the draft + batch meta.',
+              },
+            },
+            required: ['id', 'channel', 'payload'],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ['batchId', 'actionId', 'drafts'],
+      additionalProperties: false,
+    },
+  },
 ] as const;
 
 type ToolName = (typeof TOOLS)[number]['name'];
@@ -1319,6 +1351,12 @@ async function dispatch(name: ToolName, args: Record<string, unknown>): Promise<
       return client.post('/iyke/scratchpad/delete', {
         scope: args.scope ?? null,
         name: args.name,
+      });
+    case 'iyke_pa_actions_pause':
+      return client.post('/iyke/pa-actions/pause', {
+        batchId: args.batchId,
+        actionId: args.actionId,
+        drafts: args.drafts,
       });
     case 'iyke_kv_set':
       return client.post('/iyke/kv/set', {
