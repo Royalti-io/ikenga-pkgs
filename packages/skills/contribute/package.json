@@ -1,0 +1,41 @@
+{
+  "name": "@ikenga/skill-contribute",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ikenga-contribute skill — helps external contributors file good issues, run the PR workflow, and onboard as pkg authors.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "agent-skills",
+    "skills",
+    "ikenga",
+    "contributing",
+    "open-source"
+  ],
+  "homepage": "https://ikenga.dev/docs/contributing",
+  "bugs": {
+    "url": "https://github.com/Royalti-io/ikenga-pkgs/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/skills/contribute"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "manifest.json",
+    "skills",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "echo 'no build — content-only pkg'",
+    "typecheck": "echo 'no ts — content-only pkg'"
+  }
+}

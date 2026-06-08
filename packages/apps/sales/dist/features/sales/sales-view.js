@@ -413,12 +413,7 @@ function PipelineList({ deals, selectedDeal, onSelectDeal, activities }) {
 
   return html`
     <div class="ip-split" style=${{ height:'100%' }}>
-      ${/* app-kit .ip-split-list is display:grid; grid-template-rows:1fr (single
-            scroll child). This list has a sticky head + multiple .split-group
-            blocks as direct children, so the 1fr track was eaten by the head
-            (huge gap) and groups spilled into implicit rows. Override to flex
-            column inline so the head stays sticky and groups scroll. */ ''}
-      <div class="ip-split-list" style=${{ overflowY:'auto', display:'flex', flexDirection:'column' }} role="grid" aria-label="Sales pipeline list">
+      <div class="ip-split-list" style=${{ overflowY:'auto' }} role="grid" aria-label="Sales pipeline list">
         <div class="sl-list-head">
           <span class="sl-list-title">Sales</span>
           <span class="sl-list-meta">${deals.length} open</span>

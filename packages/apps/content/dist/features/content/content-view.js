@@ -681,13 +681,7 @@ function PipelineList({ pieces, selectedPiece, onSelectPiece, transitions }) {
 
   return html`
     <div class="ip-split" style=${{ height:'100%' }}>
-      ${/* app-kit .ip-split-list is display:grid; grid-template-rows:1fr — built
-            for a SINGLE scroll child. This list has a sticky head + multiple
-            .split-group blocks as direct children, so the 1fr track was consumed
-            by the head (huge gap) and the groups spilled into implicit rows.
-            Override to a flex column inline so head stays sticky and groups
-            scroll naturally. */ ''}
-      <div class="ip-split-list" style=${{ overflowY:'auto', display:'flex', flexDirection:'column' }} role="grid" aria-label="Content pipeline list">
+      <div class="ip-split-list" style=${{ overflowY:'auto' }} role="grid" aria-label="Content pipeline list">
         <div class="split-list-head">
           <span class="split-list-title">Content</span>
           <span class="split-list-meta">${pieces.length} open</span>

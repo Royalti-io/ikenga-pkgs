@@ -668,7 +668,7 @@ export function MailView({ activeFeature }) {
   }[view] ?? `${threads.length} threads`;
 
   return html`
-    <div class="frame" data-workspace="mail" style=${{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+    <div class="frame" data-workspace="mail">
       <div class="frame-head">
         <div class="frame-title-wrap">
           <span class="frame-title-mark" aria-hidden="true">
