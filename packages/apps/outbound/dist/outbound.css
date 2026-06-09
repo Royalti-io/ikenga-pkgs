@@ -869,6 +869,93 @@
   border-color: color-mix(in srgb, var(--danger) 30%, var(--border-faint));
 }
 
+.ob-btn-sm.is-primary {
+  color: var(--tint-outbox-fg, var(--fg));
+  border-color: color-mix(in srgb, var(--tint-outbox-fg, var(--primary)) 35%, var(--border-faint));
+  background: color-mix(in srgb, var(--tint-outbox-fg, var(--primary)) 8%, var(--bg-base));
+}
+
+/* ─── 10-second undo bar (folded approve-gate, WP-04) ────────────────────────── */
+/* Replaces the primary-action row while a commit is armed: NO DB write happens
+   during the window; the row commits on countdown, or the Undo button aborts. */
+
+.ob-undo-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid color-mix(in srgb, var(--tint-outbox-fg, var(--primary)) 30%, var(--border-faint));
+  background: color-mix(in srgb, var(--tint-outbox-fg, var(--primary)) 10%, var(--bg-surface));
+}
+
+.ob-undo-bar .ob-undo-text {
+  font-size: 0.8125rem;
+  color: var(--fg);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ob-undo-bar .ob-undo-text strong {
+  font-family: var(--font-mono);
+  color: var(--tint-outbox-fg, var(--fg));
+}
+
+/* ─── Edit-in-place panel (folded approve-gate, WP-04) ───────────────────────── */
+/* Patch subject/body before approving — writes via host.paActions.update. */
+
+.ob-edit-panel {
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-faint);
+  border-bottom: 1px solid var(--border-faint);
+  padding: var(--space-3) var(--space-4);
+  display: grid;
+  gap: var(--space-2);
+}
+
+.ob-edit-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.ob-edit-field {
+  display: grid;
+  gap: 4px;
+}
+
+.ob-edit-field > span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--fg-faint);
+}
+
+.ob-edit-field input,
+.ob-edit-field textarea {
+  background: var(--bg-base);
+  border: 1px solid var(--border-faint);
+  border-radius: var(--radius-sm);
+  padding: 6px var(--space-2);
+  color: var(--fg);
+  font: inherit;
+  font-size: 0.8125rem;
+  outline: none;
+  resize: vertical;
+}
+
+.ob-edit-field input:focus,
+.ob-edit-field textarea:focus {
+  border-color: color-mix(in srgb, var(--tint-outbox-fg, var(--primary)) 45%, var(--border-faint));
+}
+
+.ob-edit-row {
+  display: flex;
+  gap: var(--space-2);
+  justify-content: flex-end;
+}
+
 /* ─── Newsletter subject card + body pane ───────────────────────────────────── */
 /* Ported from design newsletter §B (.subj-card / preview body textarea). */
 

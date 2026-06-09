@@ -14,11 +14,43 @@
         "icon": "send",
         "section": "ops",
         "route": "/pkg/com.ikenga.outbound/"
+      },
+      {
+        "id": "outbound.approvals",
+        "label": "Approvals",
+        "icon": "check-circle",
+        "section": "ops",
+        "route": "/pkg/com.ikenga.outbound/approvals"
       }
     ],
     "routes": [
       {
         "path": "/",
+        "kind": "iframe",
+        "source": "dist/index.html"
+      },
+      {
+        "path": "/email",
+        "kind": "iframe",
+        "source": "dist/index.html"
+      },
+      {
+        "path": "/newsletter",
+        "kind": "iframe",
+        "source": "dist/index.html"
+      },
+      {
+        "path": "/social",
+        "kind": "iframe",
+        "source": "dist/index.html"
+      },
+      {
+        "path": "/sequences",
+        "kind": "iframe",
+        "source": "dist/index.html"
+      },
+      {
+        "path": "/approvals",
         "kind": "iframe",
         "source": "dist/index.html"
       }
@@ -32,7 +64,8 @@
   },
 
   "capabilities": {
-    "sqlite": { "db": "ikenga.local" }
+    "sqlite": { "db": "ikenga.local" },
+    "paActions": true
   },
 
   "permissions": {
@@ -41,15 +74,7 @@
     "fs.write": [],
     "net": ["https://esm.sh"],
     "sqlite.tables": [
-      "email_sequences",
-      "outbound_sequences",
-      "fundraising_outreach",
-      "newsletter_sends",
-      "social_queue",
-      "outbound_email_approvals",
-      "outbound_sent_log",
-      "outbound_newsletter_drafts",
-      "outbound_sequence_steps",
+      "pa_action_drafts",
       "contacts",
       "receivables"
     ],

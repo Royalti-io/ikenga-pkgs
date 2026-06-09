@@ -77,6 +77,47 @@ export async function hostDbExec(sql, params = []) {
   }
 }
 
+// ── Approve-gate verbs (host.paActions*) — the folded approve-gate write path. ──
+// Strategy B (plans/outbound-pkg/01-plan.md §G-PAACTIONS): four thin verbs the
+// shell wraps over the existing, tested `pa_actions_*` Rust commands, gated by
+// the pkg declaring `capabilities.paActions === true`. The pkg never gets raw
+// write access to pa_action_drafts — commit/event/wake/normalization stay
+// shell-owned. Each verb operates on the pa_action_drafts row `id` (NOT a legacy
+// table id) and resolves only when structuredContent.ok === true.
+
+async function callPaAction(verb, args) {
+  if (!app) throw new Error(`[outbound] bridge not connected — host.paActions.${verb} unavailable`);
+  const res = await app.callServerTool({
+    name: `host.paActions.${verb}`,
+    arguments: args,
+  });
+  const sc = res?.structuredContent;
+  if (!sc || sc.ok !== true) {
+    throw new Error(sc?.error ?? res?.content?.[0]?.text ?? `host.paActions.${verb} failed`);
+  }
+  return sc;
+}
+
+/** Commit an approved draft → worker sends it for real. */
+export async function hostPaActionsCommit(draftId) {
+  return callPaAction('commit', { draftId });
+}
+
+/** Reject a draft (will not send). */
+export async function hostPaActionsReject(draftId) {
+  return callPaAction('reject', { draftId });
+}
+
+/** Retry a failed draft (failed → committed; clears claim/error + wakes worker). */
+export async function hostPaActionsRetry(draftId) {
+  return callPaAction('retry', { draftId });
+}
+
+/** Edit-in-place: patch a draft's subject/body (writes edited_json, awaiting→edited). */
+export async function hostPaActionsUpdate(draftId, patch) {
+  return callPaAction('update', { draftId, patch });
+}
+
 /** Seed a user turn into the shell's active Claude session. */
 export async function hostSendToActiveSession(prompt, source = 'com.ikenga.outbound') {
   if (!app) throw new Error('bridge not connected');

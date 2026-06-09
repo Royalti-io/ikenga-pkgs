@@ -25,18 +25,22 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useCallback,
   useQuery,
   useMutation,
   useQueryClient,
 } from '../../lib/ui.js';
 import {
   hostDbQuery,
-  hostDbExec,
   setMenu,
   isStandalone,
   publishIykeState,
   hostNavigate,
   hostSendToActiveSession,
+  hostPaActionsCommit,
+  hostPaActionsReject,
+  hostPaActionsRetry,
+  hostPaActionsUpdate,
 } from '../../lib/bridge.js';
 import {
   QUEUE_STATUSES,
@@ -96,6 +100,47 @@ const AGENT_ITEMS = [
   { id: 'f:cmo', label: 'CMO', section: 'By agent' },
   { id: 'f:cbo', label: 'CBO', section: 'By agent' },
 ];
+
+// ─── Initial channel/view resolution (deep-link, WP-07) ─────────────────────────
+// The shell deep-links /outbox/{email,newsletter,social,sequences,approvals} into
+// this pkg and pre-seeds usePkgMenuStore activeFeature as 'v:<view>' (F9). The
+// iframe is also mounted at the matching sub-route (pathname '/email' etc.). We
+// honour BOTH: the pre-seeded activeFeature wins, the pathname is the fallback.
+// 'approvals' is the cross-channel folded approve-gate; the channels map 1:1 to
+// the per-channel Approval queue. Returns { channel, view } where view is one of
+// 'queue' | 'approvals' (deep-links only ever land on a queue/approvals surface).
+
+function viewFromToken(token) {
+  if (!token) return null;
+  // 'approvals' → cross-channel; a channel name → that channel's queue.
+  if (token === 'approvals') return { channel: 'newsletter', view: 'approvals' };
+  if (CHANNELS.includes(token)) return { channel: token, view: 'queue' };
+  return null;
+}
+
+function parseInitialTarget(activeFeature) {
+  // 1. Pre-seeded activeFeature: 'ch:<channel>' or 'v:<view>'.
+  if (typeof activeFeature === 'string') {
+    if (activeFeature.startsWith('ch:')) {
+      const r = viewFromToken(activeFeature.slice(3));
+      if (r) return r;
+    }
+    if (activeFeature.startsWith('v:')) {
+      const r = viewFromToken(activeFeature.slice(2));
+      if (r) return r;
+    }
+  }
+  // 2. Pathname fallback: the last segment of /pkg/com.ikenga.outbound/<seg>.
+  try {
+    const segs = (window.location?.pathname || '').split('/').filter(Boolean);
+    const last = segs[segs.length - 1];
+    const r = viewFromToken(last);
+    if (r) return r;
+  } catch {
+    /* no window/location in some embeds — fall through to default */
+  }
+  return null;
+}
 
 // ─── Menu builder ───────────────────────────────────────────────────────────────
 
@@ -370,80 +415,136 @@ async function fetchSocialSent() {
   return m.length ? m : FIXTURE_SOCIAL_SENT;
 }
 
-// ── Approval mutations — DEFERRED to the folded approve-gate (WP-04/05). ───────
-// The read-only slice performs ZERO live writes. These still target the legacy
-// tables, which is a no-op on pa_action_drafts-sourced row ids (the ids never
-// match), so the queue is a pure monitor here. WP-04 rewires approve/reject/retry
-// through the new host.paActions* verbs (Strategy B) against pa_action_drafts.
-async function approveEmailDraft(id, src) {
-  const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-  if (src === 'cold') {
-    await hostDbExec(
-      `UPDATE fundraising_outreach SET status='approved', approved_by='operator', approved_at=? WHERE id=?`,
-      [now, id]
-    );
-  } else {
-    await hostDbExec(
-      `UPDATE outbound_email_approvals SET status='approved', approved_by='operator', approved_at=? WHERE id=?`,
-      [now, id]
-    );
+// ── Approval mutations — the FOLDED approve-gate write path (WP-04, G-PAACTIONS) ──
+// SINGLE SOURCE: every channel's approve/reject/retry/edit operates on the
+// pa_action_drafts row `id` via the new host.paActions* verbs (Strategy B —
+// thin shell wrappers over the tested pa_actions_* Rust commands). The legacy
+// `src` branching is GONE: ids are now pa_action_drafts ids, identical across
+// channels, so there is one commit path. Approve uses a 10s LOCAL undo window
+// (no DB write during the window — see useUndoCommit); these fns fire only after
+// the timer elapses (commit) or immediately (reject/retry/edit).
+//
+//   approve → host.paActions.commit  (status → committed → worker sends)
+//   reject  → host.paActions.reject  (will not send)
+//   retry   → host.paActions.retry   (failed → committed; clears claim/error + wakes)
+//   edit    → host.paActions.update  ({subject,body} → edited_json, awaiting→edited)
+//
+// NOTE: reject reason text is captured in the pkg UI for the writer-agent training
+// set, but the shell pa_actions_reject verb takes only the draftId (it does not
+// persist a free-text reason on the row) — the reason is surfaced to chat/handoff,
+// not written to pa_action_drafts. So the channel-specific reject fns ignore the
+// reason for the write and just call the verb.
+
+async function approveDraft(id) {
+  // Defense-in-depth (review G-01): only commit a row that is still awaiting/edited.
+  // pa_actions_commit has no status guard, so committing an already committed/sending/
+  // sent row would flip it back to 'committed' and the worker could DOUBLE-SEND. This
+  // also closes the 10s-undo-window race (if the row changed while the timer ran).
+  const rows = await hostDbQuery('SELECT status FROM pa_action_drafts WHERE id = ?', [id]);
+  const st = rows?.[0]?.status;
+  if (st !== 'awaiting' && st !== 'edited') {
+    throw new Error(`cannot approve: draft is '${st ?? 'missing'}' (only awaiting/edited can be sent)`);
   }
+  await hostPaActionsCommit(id);
 }
 
-async function rejectEmailDraft(id, src, reason = null) {
-  if (src === 'cold') {
-    await hostDbExec(`UPDATE fundraising_outreach SET status='rejected' WHERE id=?`, [id]);
-  } else {
-    await hostDbExec(
-      `UPDATE outbound_email_approvals SET status='rejected', rejected_reason=? WHERE id=?`,
-      [reason, id]
+async function rejectDraft(id, _reason = null) {
+  await hostPaActionsReject(id);
+}
+
+async function retryDraft(id) {
+  await hostPaActionsRetry(id);
+}
+
+async function updateDraft(id, patch) {
+  await hostPaActionsUpdate(id, patch);
+}
+
+// ── 10-second undo before commit (WP-04) ──────────────────────────────────────
+// Ported from shell/src/shell/atelier/surfaces/approve-gate-panel.tsx:177-197.
+// Approve ARMS a countdown (default 10s); NO DB write happens during the window.
+// When the counter reaches 0 it calls `onCommit(id)` (→ host.paActions.commit).
+// `cancel()` clears the timer so commit never fires. Pure-React, zero host
+// involvement during the window. One armed draft at a time (matches the single-
+// detail approve UX); arming a new one replaces the prior pending undo.
+//
+// Returns { armed, secondsLeft, arm, cancel, isArmed }:
+//   armed       — the draft id currently counting down (or null)
+//   secondsLeft — remaining whole seconds for the armed draft
+//   arm(id, ms) — start the countdown for `id` (ms defaults to 10000)
+//   cancel()    — abort the pending commit
+//   isArmed(id) — convenience predicate for per-row rendering
+function useUndoCommit(onCommit) {
+  const [undo, setUndo] = useState(null); // { draftId, secondsLeft } | null
+
+  const arm = useCallback((draftId, undoMs = 10000) => {
+    setUndo({ draftId, secondsLeft: Math.round((undoMs ?? 10000) / 1000) });
+  }, []);
+
+  const cancel = useCallback(() => setUndo(null), []);
+
+  // Drive the countdown; commit (onCommit + clear) at 0. Mirrors approve-gate.
+  useEffect(() => {
+    if (!undo) return;
+    if (undo.secondsLeft <= 0) {
+      onCommit(undo.draftId);
+      setUndo(null);
+      return;
+    }
+    const t = setTimeout(
+      () => setUndo((u) => (u ? { ...u, secondsLeft: u.secondsLeft - 1 } : null)),
+      1000
     );
-  }
+    return () => clearTimeout(t);
+  }, [undo, onCommit]);
+
+  return {
+    armed: undo?.draftId ?? null,
+    secondsLeft: undo?.secondsLeft ?? 0,
+    arm,
+    cancel,
+    isArmed: (id) => undo?.draftId === id,
+  };
 }
 
-async function approveNewsletterDraft(id) {
-  const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-  await hostDbExec(
-    `UPDATE outbound_newsletter_drafts SET status='approved', approved_by='operator', approved_at=? WHERE id=?`,
-    [now, id]
-  );
+// Inline undo banner — shown while a commit is armed. Cancel aborts the send.
+function UndoBar({ secondsLeft, onCancel, label = 'Sending' }) {
+  return html`
+    <div class="ob-undo-bar" role="status">
+      <span class="ob-undo-text">
+        ${label} in <strong>${secondsLeft}s</strong> — change your mind?
+      </span>
+      <button class="ob-btn-sm" onClick=${onCancel}>Undo</button>
+    </div>
+  `;
 }
 
-async function rejectNewsletterDraft(id, reason = null) {
-  await hostDbExec(
-    `UPDATE outbound_newsletter_drafts SET status='rejected', rejected_reason=? WHERE id=?`,
-    [reason, id]
-  );
-}
-
-async function approveSocialPost(id) {
-  const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-  await hostDbExec(
-    `UPDATE social_queue SET status='approved', approved_at=?, approved_by='operator' WHERE id=?`,
-    [now, id]
-  );
-}
-
-async function rejectSocialPost(id, reason = null) {
-  // social_queue has no rejected_reason column — record the reason in `error`
-  // (the row's free-text status field) so the writer-agent dataset still captures it.
-  await hostDbExec(
-    `UPDATE social_queue SET status='rejected', error=? WHERE id=?`,
-    [reason, id]
-  );
-}
-
-async function rejectSequence(id, reason = null) {
-  // email_sequences may lack a rejected_reason column; try it, fall back to
-  // status-only so a missing column never throws the reject path.
-  try {
-    await hostDbExec(
-      `UPDATE email_sequences SET status='rejected', rejected_reason=? WHERE id=?`,
-      [reason, id]
-    );
-  } catch {
-    await hostDbExec(`UPDATE email_sequences SET status='rejected' WHERE id=?`, [id]);
-  }
+// Edit-in-place panel — patch subject/body, writes via host.paActions.update.
+// onSave(patch) receives { subject, body } and resolves to advance edited→.
+function EditPanel({ subject, body, onSave, onCancel, pending }) {
+  const [subj, setSubj] = useState(subject ?? '');
+  const [bod, setBod] = useState(body ?? '');
+  return html`
+    <div class="ob-edit-panel">
+      <span class="ob-edit-label">Edit before approving</span>
+      <label class="ob-edit-field">
+        <span>Subject</span>
+        <input type="text" value=${subj} onInput=${(e) => setSubj(e.target.value)} />
+      </label>
+      <label class="ob-edit-field">
+        <span>Body</span>
+        <textarea rows="6" value=${bod} onInput=${(e) => setBod(e.target.value)}></textarea>
+      </label>
+      <div class="ob-edit-row">
+        <button class="ob-btn-sm" onClick=${onCancel}>Cancel</button>
+        <button
+          class="ob-btn-sm is-primary"
+          disabled=${pending}
+          onClick=${() => onSave({ subject: subj, body: bod })}
+        >${pending ? 'Saving…' : 'Save edit'}</button>
+      </div>
+    </div>
+  `;
 }
 
 // Fan-out siblings: pa_action_drafts rows sharing the selected post's batch_id
@@ -956,6 +1057,7 @@ function ReplyIntelligence({ email, sequenceId, standalone }) {
 function EmailQueueView({ standalone }) {
   const [selected, setSelected] = useState(null);
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['email', 'queue'],
@@ -965,13 +1067,23 @@ function EmailQueueView({ standalone }) {
   });
 
   const qc = useQueryClient();
-  const approveMut = useMutation({
-    mutationFn: ({ id, src }) => approveEmailDraft(id, src),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['email'] }); qc.invalidateQueries({ queryKey: ['counts'] }); },
+  const invalidate = () => { qc.invalidateQueries({ queryKey: ['email'] }); qc.invalidateQueries({ queryKey: ['counts'] }); };
+  const commitMut = useMutation({
+    mutationFn: ({ id }) => approveDraft(id),
+    onSuccess: invalidate,
   });
+  const undo = useUndoCommit((id) => commitMut.mutate({ id }));
   const rejectMut = useMutation({
-    mutationFn: ({ id, src, reason }) => rejectEmailDraft(id, src, reason),
-    onSuccess: () => { setRejectOpen(false); qc.invalidateQueries({ queryKey: ['email'] }); qc.invalidateQueries({ queryKey: ['counts'] }); },
+    mutationFn: ({ id, reason }) => rejectDraft(id, reason),
+    onSuccess: () => { setRejectOpen(false); invalidate(); },
+  });
+  const retryMut = useMutation({
+    mutationFn: ({ id }) => retryDraft(id),
+    onSuccess: invalidate,
+  });
+  const editMut = useMutation({
+    mutationFn: ({ id, patch }) => updateDraft(id, patch),
+    onSuccess: () => { setEditOpen(false); invalidate(); },
   });
 
   if (isLoading) return html`<${StateDisplay} state="loading" message="Loading email queue…" />`;
@@ -980,8 +1092,10 @@ function EmailQueueView({ standalone }) {
 
   const rows = data ?? [];
   const sel = selected ?? rows[0];
+  const isFailed = sel?.status === 'failed';
+  const isArmed = sel ? undo.isArmed(sel.id) : false;
 
-  const pick = (row) => { setSelected(row); setRejectOpen(false); };
+  const pick = (row) => { setSelected(row); setRejectOpen(false); setEditOpen(false); };
 
   const sendToChat = () => {
     if (!sel) return;
@@ -1044,31 +1158,65 @@ function EmailQueueView({ standalone }) {
               ` : null}
             </div>
 
+            ${sel.error_text ? html`
+              <div class="ob-chip overdue" style=${{ display: 'inline-flex', margin: '0 1rem' }}>
+                Last attempt failed · ${sel.error_text}
+              </div>
+            ` : null}
+
+            ${editOpen ? html`
+              <${EditPanel}
+                subject=${sel.subject}
+                body=${sel.body}
+                pending=${editMut.isPending}
+                onCancel=${() => setEditOpen(false)}
+                onSave=${(patch) => editMut.mutate({ id: sel.id, patch })}
+              />
+            ` : null}
+
             ${rejectOpen ? html`
               <${RejectPanel}
                 canned=${EMAIL_REJECT_REASONS}
                 pending=${rejectMut.isPending}
                 placeholder="Optional · why? (feeds the writer-agent training set)"
                 onCancel=${() => setRejectOpen(false)}
-                onConfirm=${(reason) => rejectMut.mutate({ id: sel.id, src: sel.src, reason })}
+                onConfirm=${(reason) => rejectMut.mutate({ id: sel.id, reason })}
               />
             ` : null}
 
-            <div class="ob-actions">
-              <div class="ob-actions-primary">
-                <button
-                  class="btn"
-                  style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
-                  onClick=${() => approveMut.mutate({ id: sel.id, src: sel.src })}
-                  disabled=${approveMut.isPending}
-                >
-                  ${approveMut.isPending ? 'Approving…' : 'Approve & Send'}
-                </button>
-                <button class="btn btn-ghost" onClick=${() => setRejectOpen((o) => !o)}>
-                  Reject
-                </button>
+            ${isArmed ? html`
+              <${UndoBar} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} />
+            ` : html`
+              <div class="ob-actions">
+                <div class="ob-actions-primary">
+                  ${isFailed ? html`
+                    <button
+                      class="btn"
+                      style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                      onClick=${() => retryMut.mutate({ id: sel.id })}
+                      disabled=${retryMut.isPending}
+                    >
+                      ${retryMut.isPending ? 'Retrying…' : 'Retry send'}
+                    </button>
+                  ` : html`
+                    <button
+                      class="btn"
+                      style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                      onClick=${() => undo.arm(sel.id)}
+                      disabled=${commitMut.isPending}
+                    >
+                      ${commitMut.isPending ? 'Sending…' : 'Approve & Send'}
+                    </button>
+                  `}
+                  <button class="btn btn-ghost" onClick=${() => setEditOpen((o) => !o)}>
+                    Edit
+                  </button>
+                  <button class="btn btn-ghost" onClick=${() => setRejectOpen((o) => !o)}>
+                    Reject
+                  </button>
+                </div>
               </div>
-            </div>
+            `}
             <div class="ob-actions-secondary">
               <button class="ob-btn-sm" onClick=${sendToChat}>⌘ Send to chat</button>
               <span class="ob-act-spacer"></span>
@@ -1179,13 +1327,15 @@ function NewsletterQueueView({ standalone }) {
   });
 
   const qc = useQueryClient();
-  const approveMut = useMutation({
-    mutationFn: ({ id }) => approveNewsletterDraft(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['newsletter'] }); qc.invalidateQueries({ queryKey: ['counts'] }); },
+  const invalidate = () => { qc.invalidateQueries({ queryKey: ['newsletter'] }); qc.invalidateQueries({ queryKey: ['counts'] }); };
+  const commitMut = useMutation({
+    mutationFn: ({ id }) => approveDraft(id),
+    onSuccess: invalidate,
   });
+  const undo = useUndoCommit((id) => commitMut.mutate({ id }));
   const rejectMut = useMutation({
-    mutationFn: ({ id, reason }) => rejectNewsletterDraft(id, reason),
-    onSuccess: () => { setRejectOpen(false); qc.invalidateQueries({ queryKey: ['newsletter'] }); qc.invalidateQueries({ queryKey: ['counts'] }); },
+    mutationFn: ({ id, reason }) => rejectDraft(id, reason),
+    onSuccess: () => { setRejectOpen(false); invalidate(); },
   });
 
   if (isLoading) return html`<${StateDisplay} state="loading" message="Loading newsletter queue…" />`;
@@ -1199,6 +1349,7 @@ function NewsletterQueueView({ standalone }) {
   const sel = selected ?? pending[0] ?? cooling[0] ?? approved[0] ?? null;
 
   const isCooling = sel?.status === 'cooling';
+  const isArmed = sel ? undo.isArmed(sel.id) : false;
   const pick = (row) => { setSelected(row); setAbChoice(null); setRejectOpen(false); };
   const qualityCells = sel ? newsletterQualityCells(sel) : [];
 
@@ -1326,22 +1477,26 @@ function NewsletterQueueView({ standalone }) {
               />
             ` : null}
 
-            <div class="ob-actions">
-              <div class="ob-actions-primary">
-                <button
-                  class="btn"
-                  disabled=${isCooling || approveMut.isPending}
-                  style=${isCooling ? { opacity: 0.5, cursor: 'not-allowed' } : { background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
-                  onClick=${() => !isCooling && approveMut.mutate({ id: sel.id })}
-                  title=${isCooling ? `Cooling — send blocked for ${sel.cooling_until}` : 'Approve & Schedule'}
-                >
-                  ${approveMut.isPending ? 'Approving…' : isCooling ? `Cooling ${sel.cooling_until}` : 'Approve & Schedule'}
-                </button>
-                <button class="btn btn-ghost" onClick=${() => setRejectOpen((o) => !o)}>
-                  Reject…
-                </button>
+            ${isArmed ? html`
+              <${UndoBar} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} label="Scheduling" />
+            ` : html`
+              <div class="ob-actions">
+                <div class="ob-actions-primary">
+                  <button
+                    class="btn"
+                    disabled=${isCooling || commitMut.isPending}
+                    style=${isCooling ? { opacity: 0.5, cursor: 'not-allowed' } : { background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                    onClick=${() => !isCooling && undo.arm(sel.id)}
+                    title=${isCooling ? `Cooling — send blocked for ${sel.cooling_until}` : 'Approve & Schedule'}
+                  >
+                    ${commitMut.isPending ? 'Scheduling…' : isCooling ? `Cooling ${sel.cooling_until}` : 'Approve & Schedule'}
+                  </button>
+                  <button class="btn btn-ghost" onClick=${() => setRejectOpen((o) => !o)}>
+                    Reject…
+                  </button>
+                </div>
               </div>
-            </div>
+            `}
 
             <!-- Secondary action footer (design §B): Back · Send-to-chat · Skip month · meta -->
             <div class="ob-actions-secondary">
@@ -1471,10 +1626,17 @@ function SequenceStepRail({ sequence, standalone }) {
   const seqId = sequence?.id;
   const [rejectOpen, setRejectOpen] = useState(false);
   const qc = useQueryClient();
-  const rejectMut = useMutation({
-    mutationFn: ({ id, reason }) => rejectSequence(id, reason),
-    onSuccess: () => { setRejectOpen(false); qc.invalidateQueries({ queryKey: ['sequences'] }); qc.invalidateQueries({ queryKey: ['counts'] }); },
+  const invalidate = () => { qc.invalidateQueries({ queryKey: ['sequences'] }); qc.invalidateQueries({ queryKey: ['counts'] }); };
+  const commitMut = useMutation({
+    mutationFn: ({ id }) => approveDraft(id),
+    onSuccess: invalidate,
   });
+  const undo = useUndoCommit((id) => commitMut.mutate({ id }));
+  const rejectMut = useMutation({
+    mutationFn: ({ id, reason }) => rejectDraft(id, reason),
+    onSuccess: () => { setRejectOpen(false); invalidate(); },
+  });
+  const isArmed = undo.isArmed(sequence?.id);
   const { data: steps, isLoading } = useQuery({
     queryKey: ['sequences', 'steps', seqId],
     queryFn: () => fetchSequenceSteps(seqId),
@@ -1532,15 +1694,24 @@ function SequenceStepRail({ sequence, standalone }) {
               onConfirm=${(reason) => rejectMut.mutate({ id: sequence.id, reason })}
             />
           ` : null}
-          <div class="sq-footer">
-            <span class="ob-chip seq">enrol on approve</span>
-            <span class="ob-chip seq">step 1 fires immediately</span>
-            <div class="actions">
-              <button class="ob-btn-sm is-danger" onClick=${() => setRejectOpen((o) => !o)}>Reject</button>
-              <button class="ob-btn-sm">⌘ Send to chat</button>
-              <button class="btn" style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}>Approve & activate</button>
+          ${isArmed ? html`
+            <${UndoBar} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} label="Activating" />
+          ` : html`
+            <div class="sq-footer">
+              <span class="ob-chip seq">enrol on approve</span>
+              <span class="ob-chip seq">step 1 fires immediately</span>
+              <div class="actions">
+                <button class="ob-btn-sm is-danger" onClick=${() => setRejectOpen((o) => !o)}>Reject</button>
+                <button class="ob-btn-sm">⌘ Send to chat</button>
+                <button
+                  class="btn"
+                  style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                  disabled=${commitMut.isPending}
+                  onClick=${() => undo.arm(sequence.id)}
+                >${commitMut.isPending ? 'Activating…' : 'Approve & activate'}</button>
+              </div>
             </div>
-          </div>
+          `}
         `}
     </div>
   `;
@@ -1813,7 +1984,7 @@ function SequencesSentView({ standalone }) {
 // LinkedIn / X / Bluesky previews on the right with per-platform char caps; fan-out
 // rows + reject below. Body is editable locally (preview-only mock — no write-back
 // since social_queue stores one platform per row).
-function SocialEditor({ post, standalone, onApprove, approvePending, onReject, rejectPending }) {
+function SocialEditor({ post, standalone, onApprove, approvePending, onReject, rejectPending, armed, undoSecondsLeft, onCancelUndo }) {
   const [body, setBody] = useState(post?.content ?? '');
   const [rejectOpen, setRejectOpen] = useState(false);
 
@@ -1924,20 +2095,24 @@ function SocialEditor({ post, standalone, onApprove, approvePending, onReject, r
         />
       ` : null}
 
-      <div class="ob-actions">
-        <div class="ob-actions-primary">
-          <button
-            class="btn"
-            style=${anyBlocked ? { opacity: 0.55, cursor: 'not-allowed' } : { background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
-            disabled=${anyBlocked || approvePending}
-            title=${anyBlocked ? 'Resolve over-cap platforms first' : 'Approve & schedule'}
-            onClick=${() => !anyBlocked && onApprove()}
-          >
-            ${approvePending ? 'Approving…' : 'Approve & Schedule'}
-          </button>
-          <button class="btn btn-ghost" onClick=${() => setRejectOpen((o) => !o)}>Reject…</button>
+      ${armed ? html`
+        <${UndoBar} secondsLeft=${undoSecondsLeft} onCancel=${onCancelUndo} label="Scheduling" />
+      ` : html`
+        <div class="ob-actions">
+          <div class="ob-actions-primary">
+            <button
+              class="btn"
+              style=${anyBlocked ? { opacity: 0.55, cursor: 'not-allowed' } : { background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+              disabled=${anyBlocked || approvePending}
+              title=${anyBlocked ? 'Resolve over-cap platforms first' : 'Approve & schedule'}
+              onClick=${() => !anyBlocked && onApprove()}
+            >
+              ${approvePending ? 'Scheduling…' : 'Approve & Schedule'}
+            </button>
+            <button class="btn btn-ghost" onClick=${() => setRejectOpen((o) => !o)}>Reject…</button>
+          </div>
         </div>
-      </div>
+      `}
       <div class="ob-actions-secondary">
         <button
           class="ob-btn-sm"
@@ -1960,13 +2135,15 @@ function SocialQueueView({ standalone }) {
   });
 
   const qc = useQueryClient();
-  const approveMut = useMutation({
-    mutationFn: ({ id }) => approveSocialPost(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['social'] }); qc.invalidateQueries({ queryKey: ['counts'] }); },
+  const invalidate = () => { qc.invalidateQueries({ queryKey: ['social'] }); qc.invalidateQueries({ queryKey: ['counts'] }); };
+  const commitMut = useMutation({
+    mutationFn: ({ id }) => approveDraft(id),
+    onSuccess: invalidate,
   });
+  const undo = useUndoCommit((id) => commitMut.mutate({ id }));
   const rejectMut = useMutation({
-    mutationFn: ({ id, reason }) => rejectSocialPost(id, reason),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['social'] }); qc.invalidateQueries({ queryKey: ['counts'] }); },
+    mutationFn: ({ id, reason }) => rejectDraft(id, reason),
+    onSuccess: invalidate,
   });
 
   if (isLoading) return html`<${StateDisplay} state="loading" message="Loading social queue…" />`;
@@ -1975,6 +2152,7 @@ function SocialQueueView({ standalone }) {
 
   const rows = data ?? [];
   const sel = selected ?? rows[0];
+  const isArmed = sel ? undo.isArmed(sel.id) : false;
 
   return html`
     <div class="nl-split">
@@ -1997,10 +2175,13 @@ function SocialQueueView({ standalone }) {
           <${SocialEditor}
             post=${sel}
             standalone=${standalone}
-            onApprove=${() => approveMut.mutate({ id: sel.id })}
-            approvePending=${approveMut.isPending}
+            onApprove=${() => undo.arm(sel.id)}
+            approvePending=${commitMut.isPending}
             onReject=${(reason) => rejectMut.mutate({ id: sel.id, reason })}
             rejectPending=${rejectMut.isPending}
+            armed=${isArmed}
+            undoSecondsLeft=${undo.secondsLeft}
+            onCancelUndo=${undo.cancel}
           />
         ` : html`<${StateDisplay} state="empty" message="Select a post to review" />`}
       </div>
@@ -2073,9 +2254,218 @@ function SocialSentView({ standalone }) {
   `;
 }
 
+// ─── Cross-channel Approvals view (the folded approve-gate, WP-07) ──────────────
+// Mirrors the shell approve-gate: every awaiting/edited/committed/failed row
+// ACROSS ALL channels, each tagged with its derived content type, with the same
+// approve/reject/retry/edit + 10s undo actions. Single source: pa_action_drafts.
+
+const CT_LABEL = { email: 'Email', newsletter: 'Newsletter', social: 'Social', sequences: 'Sequence' };
+
+// One row → a unified approval-row view-model (channel-agnostic).
+function mapApprovalRow(row) {
+  const { item, meta, edited } = parseDraft(row);
+  const ct = deriveContentType(item);
+  return {
+    id: row.id,
+    ct,
+    ct_label: CT_LABEL[ct] ?? ct,
+    status: row.status, // raw lifecycle status (awaiting/edited/committed/sending/failed)
+    channel: row.channel ?? item.channel ?? null, // provider
+    subject: edited.subject ?? item.subject ?? '(no subject)',
+    body: edited.body ?? item.body ?? '',
+    recipient: item.recipient ?? item.recipientEmail ?? null,
+    drafted_by: String(meta.agent || 'pa').toLowerCase(),
+    scheduled_for: item.scheduledLabel || row.scheduled_at || null,
+    error_text: row.error_text || null,
+    attempts: row.attempts ?? 0,
+    batch_id: row.batch_id || null,
+  };
+}
+
+// All in-flight approval rows across every channel (newest first).
+async function fetchAllApprovals() {
+  const rows = await loadDrafts(QUEUE_STATUSES);
+  return (rows || []).map(mapApprovalRow);
+}
+
+const APPROVAL_REJECT_REASONS = ['Wrong recipient', 'Tone is off', 'Misses context', 'Already handled', "Don't send · close out"];
+
+function CrossChannelApprovalsView({ standalone }) {
+  const [selected, setSelected] = useState(null);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [ctFilter, setCtFilter] = useState('all'); // all | email | newsletter | social | sequences
+
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ['approvals', 'all'],
+    queryFn: fetchAllApprovals,
+    enabled: !standalone,
+    refetchInterval: 30_000,
+    placeholderData: [],
+  });
+
+  const qc = useQueryClient();
+  // Invalidate EVERY channel + counts so any view downstream repaints.
+  const invalidate = () => {
+    for (const k of ['approvals', 'email', 'newsletter', 'sequences', 'social', 'counts']) {
+      qc.invalidateQueries({ queryKey: [k] });
+    }
+  };
+  const commitMut = useMutation({ mutationFn: ({ id }) => approveDraft(id), onSuccess: invalidate });
+  const undo = useUndoCommit((id) => commitMut.mutate({ id }));
+  const rejectMut = useMutation({
+    mutationFn: ({ id, reason }) => rejectDraft(id, reason),
+    onSuccess: () => { setRejectOpen(false); invalidate(); },
+  });
+  const retryMut = useMutation({ mutationFn: ({ id }) => retryDraft(id), onSuccess: invalidate });
+  const editMut = useMutation({
+    mutationFn: ({ id, patch }) => updateDraft(id, patch),
+    onSuccess: () => { setEditOpen(false); invalidate(); },
+  });
+
+  if (isLoading) return html`<${StateDisplay} state="loading" message="Loading approvals…" />`;
+  if (isError) return html`<${StateDisplay} state="error" message="Couldn't load approvals" onRetry=${refetch} />`;
+
+  const all = data ?? [];
+  const rows = ctFilter === 'all' ? all : all.filter((r) => r.ct === ctFilter);
+  if (!all.length) return html`<${StateDisplay} state="empty" message="Nothing awaiting approval across any channel" />`;
+
+  const sel = (selected && rows.find((r) => r.id === selected.id)) ?? rows[0] ?? null;
+  const isFailed = sel?.status === 'failed';
+  const isArmed = sel ? undo.isArmed(sel.id) : false;
+  const pick = (row) => { setSelected(row); setRejectOpen(false); setEditOpen(false); };
+
+  // Per-content-type counts for the filter strip.
+  const ctCounts = all.reduce((acc, r) => { acc[r.ct] = (acc[r.ct] ?? 0) + 1; return acc; }, {});
+
+  const sendToChat = () => {
+    if (!sel) return;
+    hostSendToActiveSession(
+      `Help me review this outbound ${sel.ct_label} before I approve it.\n\nSubject: ${sel.subject}\nTo: ${sel.recipient ?? 'segment'}\nDrafted by: ${sel.drafted_by ?? 'agent'}`,
+    ).catch(() => {});
+  };
+
+  return html`
+    <div style=${{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div class="nl-sent-toolbar">
+        <button class=${cn('ob-filter-chip', { 'is-on': ctFilter === 'all' })} onClick=${() => setCtFilter('all')}>All · ${all.length}</button>
+        ${CHANNELS.map((ct) => html`
+          <button
+            key=${ct}
+            class=${cn('ob-filter-chip', { 'is-on': ctFilter === ct })}
+            onClick=${() => setCtFilter(ct)}
+          >${CT_LABEL[ct]}${ctCounts[ct] ? ` · ${ctCounts[ct]}` : ''}</button>
+        `)}
+      </div>
+      <div class="nl-split" style=${{ flex: 1, minHeight: 0 }}>
+        <div class="nl-master">
+          ${rows.length ? rows.map(row => html`
+            <div
+              key=${row.id}
+              class=${cn('nl-row', { 'is-on': sel?.id === row.id })}
+              onClick=${() => pick(row)}
+            >
+              <div class="nl-row-head">
+                <span class="ob-chip seq">${row.ct_label}</span>
+                ${row.channel ? html`<${ChannelChip} channel=${row.channel} />` : null}
+                ${row.status === 'failed' ? html`<span class="ob-chip overdue">failed</span>` : null}
+              </div>
+              <div class="nl-row-subj">${row.subject}</div>
+              <div class="nl-row-pre">${row.recipient || '—'} · ${row.drafted_by}</div>
+            </div>
+          `) : html`<${StateDisplay} state="empty" message="No items for this filter" />`}
+        </div>
+        <div class="nl-detail">
+          ${sel ? html`
+            <div class="ob-detail-wrap">
+              <div class="ip-head">
+                <div class="ip-meta-row">
+                  <span class="ob-chip seq">${sel.ct_label}</span>
+                  ${sel.channel ? html`<${ChannelChip} channel=${sel.channel} />` : null}
+                  <span style=${{ fontSize: '0.75rem', color: 'var(--fg-muted)' }}>${sel.recipient || '—'}</span>
+                </div>
+                <h2 style=${{ fontSize: '0.9rem', fontWeight: 600, margin: '0.5rem 0 0', color: 'var(--fg)' }}>${sel.subject}</h2>
+              </div>
+
+              <div class="ip-body" style=${{ flex: 1, padding: '1rem', color: 'var(--fg-muted)', fontSize: '0.8125rem' }}>
+                ${sel.body ? html`
+                  <p style=${{ margin: 0, color: 'var(--fg)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>${sel.body}</p>
+                ` : html`<p style=${{ margin: 0 }}>(no body)</p>`}
+                <p style=${{ marginTop: '1rem', color: 'var(--fg-muted)' }}>
+                  Drafted by <strong style=${{ color: 'var(--fg)' }}>${sel.drafted_by ?? 'agent'}</strong>
+                  ${sel.scheduled_for ? html` · scheduled <strong style=${{ color: 'var(--fg)' }}>${sel.scheduled_for}</strong>` : ''}
+                </p>
+              </div>
+
+              ${sel.error_text ? html`
+                <div class="ob-chip overdue" style=${{ display: 'inline-flex', margin: '0 1rem' }}>
+                  Last attempt failed · ${sel.error_text}
+                </div>
+              ` : null}
+
+              ${editOpen ? html`
+                <${EditPanel}
+                  subject=${sel.subject}
+                  body=${sel.body}
+                  pending=${editMut.isPending}
+                  onCancel=${() => setEditOpen(false)}
+                  onSave=${(patch) => editMut.mutate({ id: sel.id, patch })}
+                />
+              ` : null}
+
+              ${rejectOpen ? html`
+                <${RejectPanel}
+                  canned=${APPROVAL_REJECT_REASONS}
+                  pending=${rejectMut.isPending}
+                  placeholder="Optional · why? (feeds the writer-agent training set)"
+                  onCancel=${() => setRejectOpen(false)}
+                  onConfirm=${(reason) => rejectMut.mutate({ id: sel.id, reason })}
+                />
+              ` : null}
+
+              ${isArmed ? html`
+                <${UndoBar} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} />
+              ` : html`
+                <div class="ob-actions">
+                  <div class="ob-actions-primary">
+                    ${isFailed ? html`
+                      <button
+                        class="btn"
+                        style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                        onClick=${() => retryMut.mutate({ id: sel.id })}
+                        disabled=${retryMut.isPending}
+                      >${retryMut.isPending ? 'Retrying…' : 'Retry send'}</button>
+                    ` : html`
+                      <button
+                        class="btn"
+                        style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                        onClick=${() => undo.arm(sel.id)}
+                        disabled=${commitMut.isPending}
+                      >${commitMut.isPending ? 'Sending…' : 'Approve & Send'}</button>
+                    `}
+                    <button class="btn btn-ghost" onClick=${() => setEditOpen((o) => !o)}>Edit</button>
+                    <button class="btn btn-ghost" onClick=${() => setRejectOpen((o) => !o)}>Reject</button>
+                  </div>
+                </div>
+              `}
+              <div class="ob-actions-secondary">
+                <button class="ob-btn-sm" onClick=${sendToChat}>⌘ Send to chat</button>
+                <span class="ob-act-spacer"></span>
+                <span class="ob-act-meta">${sel.status}${sel.attempts ? ` · ${sel.attempts} attempt${sel.attempts === 1 ? '' : 's'}` : ''}</span>
+              </div>
+            </div>
+          ` : html`<${StateDisplay} state="empty" message="Select an item to review" />`}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 // ─── View dispatcher ────────────────────────────────────────────────────────────
 
 function ViewBody({ channel, view, standalone }) {
+  // Cross-channel Approvals is a top-level view independent of channel.
+  if (view === 'approvals') return html`<${CrossChannelApprovalsView} standalone=${standalone} />`;
   if (channel === 'email') {
     if (view === 'queue') return html`<${EmailQueueView} standalone=${standalone} />`;
     if (view === 'schedule') return html`<${EmailScheduleView} standalone=${standalone} />`;
@@ -2102,18 +2492,16 @@ function ViewBody({ channel, view, standalone }) {
 // ─── Main OutboundView ──────────────────────────────────────────────────────────
 
 export function OutboundView({ activeFeature }) {
-  // Initialise channel from activeFeature directly (lazy init) so the first paint
-  // already reflects the sidebar selection — closes the mount race where the
-  // useEffect relay below lands a frame after the initial render (F-01).
-  const [channel, setChannel] = useState(() => {
-    if (typeof activeFeature === 'string' && activeFeature.startsWith('ch:')) {
-      const ch = activeFeature.slice(3);
-      if (CHANNELS.includes(ch)) return ch;
-    }
-    return 'newsletter';
-  });
-  const [view, setView] = useState('queue');
+  // Initialise channel + view from the deep-link target (pre-seeded activeFeature
+  // 'v:<view>' OR the mounted sub-route pathname) directly (lazy init) so the
+  // first paint already reflects the deep-link / sidebar selection — closes the
+  // mount race where the useEffect relay below lands a frame after the initial
+  // render (F-01, WP-07).
+  const initial = parseInitialTarget(activeFeature);
+  const [channel, setChannel] = useState(() => initial?.channel ?? 'newsletter');
+  const [view, setView] = useState(() => initial?.view ?? 'queue');
   const standalone = isStandalone();
+  const isApprovals = view === 'approvals';
 
   // Channel counts query (for sidebar badges)
   const { data: counts } = useQuery({
@@ -2153,12 +2541,24 @@ export function OutboundView({ activeFeature }) {
   // that never existed (wave-2 live-verify finding: channel switching dead).
   useEffect(() => {
     if (!activeFeature) return;
+    // Sidebar channel clicks → 'ch:<channel>' (Channels group).
     if (activeFeature.startsWith('ch:')) {
       const newChannel = activeFeature.slice(3);
       if (CHANNELS.includes(newChannel)) {
         setChannel(newChannel);
         setView('queue'); // reset to queue on channel switch
       }
+      return;
+    }
+    // Deep-link re-emits → 'v:<view>' ('v:approvals' = cross-channel gate;
+    // 'v:<channel>' = that channel's queue).
+    if (activeFeature.startsWith('v:')) {
+      const target = viewFromToken(activeFeature.slice(2));
+      if (target) {
+        setChannel(target.channel);
+        setView(target.view);
+      }
+      return;
     }
     // Filter clicks (f:pa/f:cmo/f:cbo) — no state change needed in pkg
     // (the shell menu already handles the is-on visual)
@@ -2186,23 +2586,31 @@ export function OutboundView({ activeFeature }) {
       <div class="ob-header">
         <h1 style=${{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
           <span style=${{ display: 'inline-flex', color: 'var(--tint-outbox-fg, var(--tint-fg-active, var(--fg)))' }}>
-            <${Icon} name="send" size=${16} />
+            <${Icon} name=${isApprovals ? 'check-circle' : 'send'} size=${16} />
           </span>
-          <span>Outbox · ${meta.label}</span>
+          <span>${isApprovals ? 'Outbox · Approvals' : `Outbox · ${meta.label}`}</span>
         </h1>
-        <p class="sub">${meta.subtitle}</p>
+        <p class="sub">${isApprovals ? 'Cross-channel approve-gate · every channel' : meta.subtitle}</p>
         <p class="meta">${totalAwaiting} awaiting · ${activeSeqCount} sequences active</p>
       </div>
 
-      <!-- Inner-tab strip: Approval queue / Schedule / Sent -->
+      <!-- Inner-tab strip: Approvals (cross-channel) + per-channel Approval queue / Schedule / Sent -->
       <div class="nl-inner-tabs">
+        <button
+          key="approvals"
+          class=${cn({ 'is-on': isApprovals })}
+          onClick=${() => setView('approvals')}
+        >
+          Approvals
+          ${totalAwaiting + activeSeqCount > 0 ? html`<span class="nl-tab-count">${totalAwaiting + activeSeqCount}</span>` : null}
+        </button>
         ${meta.views.map(v => {
           const label = meta.viewLabels[v];
           const cnt = v === 'queue' ? (counts?.[channel] ?? 0) : 0;
           return html`
             <button
               key=${v}
-              class=${cn({ 'is-on': view === v })}
+              class=${cn({ 'is-on': !isApprovals && view === v })}
               onClick=${() => setView(v)}
             >
               ${label}
