@@ -13,7 +13,9 @@
 //   - .ob-chip.* (domain-local channel identity + status chips)
 //
 // Design reference: plans/atelier/designs/atelier-outbound*.html (locked R10/R12/R13)
-// Data: ikenga.db via host.dbQuery (real tables) + 0044_outbound_domain.sql tables
+// Data: SINGLE SOURCE — pa_action_drafts (approve-gate + mutation-worker seam) via
+//       host.dbQuery, mapped per content type by dist/lib/derive.js (G-DERIVE).
+//       plans/outbound-pkg/01-plan.md.
 
 import {
   html,
@@ -36,6 +38,21 @@ import {
   hostNavigate,
   hostSendToActiveSession,
 } from '../../lib/bridge.js';
+import {
+  QUEUE_STATUSES,
+  SENT_STATUSES,
+  SCHEDULE_STATUSES,
+  deriveContentType,
+  parseDraft,
+  countByContentType,
+  mapEmailQueue,
+  mapEmailSent,
+  mapNewsletterQueue,
+  mapNewsletterSent,
+  mapSocialQueue,
+  mapSocialSent,
+  mapSequenceQueue,
+} from '../../lib/derive.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -122,305 +139,146 @@ function buildOutboundMenu(channel, view, counts = {}, agents = {}) {
   return [...channelItems, ...agentItems];
 }
 
-// ─── Queries ───────────────────────────────────────────────────────────────────
+// ─── Queries — single source: pa_action_drafts (approve-gate + worker seam) ──
+// All channel surfaces derive from ONE table via dist/lib/derive.js. `channel` is
+// the provider; deriveContentType() splits email/newsletter/social/sequences.
+// host.dbQuery reads are NOT table-scoped, so no manifest change is needed here.
+
+const SEL_COLS = `id, batch_id, action_id, status, channel, payload_json, edited_json,
+  scheduled_at, created_at, committed_at, sent_at, attempts, error_text, external_id, delivery_status`;
+
+async function loadDrafts(statuses, { limit = 300 } = {}) {
+  const ph = statuses.map(() => '?').join(',');
+  try {
+    return await hostDbQuery(
+      `SELECT ${SEL_COLS} FROM pa_action_drafts WHERE status IN (${ph})
+       ORDER BY COALESCE(sent_at, scheduled_at, created_at) DESC LIMIT ${limit}`,
+      statuses
+    );
+  } catch {
+    return [];
+  }
+}
+
+// Filter loaded rows to one content type + map to the renderer's view shape.
+function pick(rows, ct, mapper) {
+  const out = [];
+  for (const r of rows || []) {
+    if (deriveContentType(parseDraft(r).item) === ct) out.push(mapper(r));
+  }
+  return out;
+}
+const hasSchedule = (r) => !!r.scheduled_at;
 
 async function fetchChannelCounts() {
-  // Returns queue counts from the new + existing tables.
-  // Real tables: outbound_email_approvals, fundraising_outreach (email),
-  //              outbound_newsletter_drafts (newsletter),
-  //              outbound_sequences (sequences — active status),
-  //              social_queue (social — pending/in_review).
-  // Falls back to 0 on error so the pane renders even before the migration.
-  const results = { email: 0, newsletter: 0, sequences: 0, social: 0 };
-
-  try {
-    // Email: outbound_email_approvals pending + fundraising_outreach pending
-    const emailRows = await hostDbQuery(
-      `SELECT (SELECT COUNT(*) FROM outbound_email_approvals WHERE status = 'pending') +
-              (SELECT COUNT(*) FROM fundraising_outreach WHERE status = 'pending') AS cnt`
-    );
-    results.email = emailRows?.[0]?.cnt ?? 0;
-  } catch { /* table may not exist yet — use 0 */ }
-
-  try {
-    // Newsletter: outbound_newsletter_drafts pending
-    const nlRows = await hostDbQuery(
-      `SELECT COUNT(*) AS cnt FROM outbound_newsletter_drafts WHERE status = 'pending'`
-    );
-    results.newsletter = nlRows?.[0]?.cnt ?? 0;
-  } catch { /* table may not exist yet — use 0 */ }
-
-  try {
-    // Sequences: outbound_sequences active (per-recipient chains in flight)
-    const seqRows = await hostDbQuery(
-      `SELECT COUNT(*) AS cnt FROM outbound_sequences WHERE status = 'active'`
-    );
-    results.sequences = seqRows?.[0]?.cnt ?? 0;
-  } catch { /* table may not exist yet — use 0 */ }
-
-  try {
-    // Social: social_queue items pending review / in-review
-    const socRows = await hostDbQuery(
-      `SELECT COUNT(*) AS cnt FROM social_queue WHERE status IN ('pending','in_review')`
-    );
-    results.social = socRows?.[0]?.cnt ?? 0;
-  } catch { /* social_queue may be empty */ }
-
-  return results;
+  return countByContentType(await loadDrafts(QUEUE_STATUSES));
 }
 
 async function fetchAgentCounts(channel) {
-  // Returns by-agent queue counts for the current channel.
-  // drafted_by values: 'pa', 'cmo', 'cbo' (or agent id strings).
   const results = { pa: 0, cmo: 0, cbo: 0 };
-  try {
-    let sql;
-    if (channel === 'email') {
-      sql = `SELECT COALESCE(LOWER(drafted_by),'pa') AS agent, COUNT(*) AS cnt
-             FROM outbound_email_approvals WHERE status = 'pending'
-             GROUP BY drafted_by`;
-    } else if (channel === 'newsletter') {
-      sql = `SELECT COALESCE(LOWER(drafted_by),'cmo') AS agent, COUNT(*) AS cnt
-             FROM outbound_newsletter_drafts WHERE status = 'pending'
-             GROUP BY drafted_by`;
-    } else {
-      return results;
-    }
-    const rows = await hostDbQuery(sql);
-    for (const row of rows ?? []) {
-      const key = String(row.agent ?? '').toLowerCase();
-      if (key in results) results[key] = row.cnt ?? 0;
-    }
-  } catch { /* table not yet migrated — use fixture defaults */ }
+  for (const r of await loadDrafts(QUEUE_STATUSES)) {
+    const { item, meta } = parseDraft(r);
+    if (deriveContentType(item) !== channel) continue;
+    const key = String(meta.agent || 'pa').toLowerCase();
+    if (key in results) results[key] += 1;
+  }
   return results;
 }
 
-// ─── Email channel queries ───────────────────────────────────────────────────────
-
+// ── Email ────────────────────────────────────────────────────────────────────
 async function fetchEmailQueue() {
-  // Approval queue: outbound_email_approvals + fundraising_outreach (cold)
-  const rows = [];
-
-  try {
-    const approval = await hostDbQuery(
-      `SELECT id, subject, body, recipient_email, recipient_name, channel,
-              status, ux_mode, drafted_by, sequence_id, scheduled_for, is_overdue,
-              'approval' AS src
-       FROM outbound_email_approvals
-       WHERE status = 'pending'
-       ORDER BY is_overdue DESC, scheduled_for ASC
-       LIMIT 50`
-    );
-    rows.push(...(approval ?? []));
-  } catch { /* not yet migrated */ }
-
-  try {
-    const cold = await hostDbQuery(
-      `SELECT id, subject, '' AS recipient_email, '' AS recipient_name,
-              channel, status, 'approve' AS ux_mode, drafted_by,
-              NULL AS scheduled_for, 0 AS is_overdue, 'cold' AS src,
-              deal_id
-       FROM fundraising_outreach
-       WHERE status = 'pending'
-       ORDER BY id DESC
-       LIMIT 20`
-    );
-    rows.push(...(cold ?? []));
-  } catch { /* table may be empty */ }
-
-  // Fallback fixture if no real data
-  if (rows.length === 0) {
-    return FIXTURE_EMAIL_QUEUE;
-  }
-  return rows;
+  const m = pick(await loadDrafts(QUEUE_STATUSES), 'email', mapEmailQueue);
+  return m.length ? m : FIXTURE_EMAIL_QUEUE;
 }
 
 async function fetchEmailSchedule() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, subject, recipient_email, recipient_name, channel,
-              status, scheduled_for, ux_mode
-       FROM outbound_email_approvals
-       WHERE status IN ('scheduled','approved') AND ux_mode = 'silent'
-       ORDER BY scheduled_for ASC
-       LIMIT 30`
-    );
-    return rows?.length ? rows : FIXTURE_EMAIL_SCHEDULE;
-  } catch {
-    return FIXTURE_EMAIL_SCHEDULE;
-  }
+  const rows = (await loadDrafts(SCHEDULE_STATUSES)).filter(hasSchedule);
+  const m = pick(rows, 'email', mapEmailQueue);
+  return m.length ? m : FIXTURE_EMAIL_SCHEDULE;
 }
 
 async function fetchEmailSent() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, subject, recipient_email, channel,
-              delivery_system, sent_at, open_rate, click_rate
-       FROM outbound_sent_log
-       WHERE channel = 'email'
-       ORDER BY sent_at DESC
-       LIMIT 50`
-    );
-    return rows?.length ? rows : FIXTURE_EMAIL_SENT;
-  } catch {
-    return FIXTURE_EMAIL_SENT;
-  }
+  const m = pick(await loadDrafts(SENT_STATUSES), 'email', mapEmailSent);
+  return m.length ? m : FIXTURE_EMAIL_SENT;
 }
 
-// ─── Newsletter queries ─────────────────────────────────────────────────────────
-
+// ── Newsletter ────────────────────────────────────────────────────────────────
 async function fetchNewsletterQueue() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, subject, subject_b, draft_slug, edition, status,
-              cooling_until, quality_score, recipient_count,
-              delivery_system, drafted_by, has_ab, body
-       FROM outbound_newsletter_drafts
-       WHERE status IN ('pending','cooling','approved')
-       ORDER BY CASE status WHEN 'cooling' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
-                quality_score DESC
-       LIMIT 20`
-    );
-    return rows?.length ? rows : FIXTURE_NL_QUEUE;
-  } catch {
-    return FIXTURE_NL_QUEUE;
-  }
+  const m = pick(await loadDrafts(QUEUE_STATUSES), 'newsletter', mapNewsletterQueue);
+  return m.length ? m : FIXTURE_NL_QUEUE;
 }
 
 async function fetchNewsletterSent() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, draft_slug, edition, subject, delivery_system,
-              sent_at, recipient_count, open_rate, click_rate
-       FROM newsletter_sends
-       ORDER BY sent_at DESC
-       LIMIT 30`
-    );
-    return rows?.length ? rows : FIXTURE_NL_SENT;
-  } catch {
-    return FIXTURE_NL_SENT;
-  }
+  const m = pick(await loadDrafts(SENT_STATUSES), 'newsletter', mapNewsletterSent);
+  return m.length ? m : FIXTURE_NL_SENT;
 }
 
-// ─── Sequences queries ──────────────────────────────────────────────────────────
+// ── Sequences (flat first slice; cohort grid + funnel are Phase 2) ─────────────
+// A "sequence" = pa_action_drafts rows whose item.sequence is set, grouped by name.
+function seqGroups(rows) {
+  const groups = new Map();
+  for (const r of rows || []) {
+    const { item } = parseDraft(r);
+    if (deriveContentType(item) !== 'sequences') continue;
+    const name = (item.sequence && item.sequence.name) || item.subject || '(sequence)';
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push({ r, item });
+  }
+  return groups;
+}
 
 async function fetchSequenceDefs() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, name, slug, segment, total_steps,
-              delivery_system, status
-       FROM email_sequences
-       ORDER BY name ASC`
-    );
-    return rows?.length ? rows : FIXTURE_SEQ_DEFS;
-  } catch {
-    return FIXTURE_SEQ_DEFS;
+  const defs = [];
+  for (const [name, members] of seqGroups(await loadDrafts([...QUEUE_STATUSES, ...SENT_STATUSES]))) {
+    const { r, item } = members[0];
+    const seq = item.sequence || {};
+    defs.push({ id: r.batch_id || r.id, name, slug: r.batch_id || null, segment: item.recipient || null,
+                total_steps: seq.total ?? null, delivery_system: r.channel, status: 'active' });
   }
+  return defs.length ? defs : FIXTURE_SEQ_DEFS;
 }
 
 async function fetchActiveSequences() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT os.id, os.sequence_id, os.contact_email, os.segment,
-              os.current_step, os.total_steps, os.next_send_date,
-              os.status, os.sent_count,
-              es.name AS sequence_name, es.slug AS sequence_slug,
-              es.delivery_system
-       FROM outbound_sequences os
-       LEFT JOIN email_sequences es ON es.id = os.sequence_id
-       WHERE os.status = 'active'
-       ORDER BY os.next_send_date ASC
-       LIMIT 50`
-    );
-    return rows?.length ? rows : FIXTURE_ACTIVE_SEQS;
-  } catch {
-    return FIXTURE_ACTIVE_SEQS;
+  const out = [];
+  for (const r of await loadDrafts(QUEUE_STATUSES)) {
+    const { item } = parseDraft(r);
+    if (deriveContentType(item) !== 'sequences') continue;
+    const seq = item.sequence || {};
+    out.push({ id: r.id, sequence_id: r.batch_id || r.id, contact_email: item.recipientEmail || item.recipient || 'batch',
+               segment: item.recipient || null, current_step: seq.step ?? 1, total_steps: seq.total ?? null,
+               next_send_date: r.scheduled_at || null, status: 'active', sent_count: seq.recipients ?? 0,
+               sequence_name: seq.name || item.subject, sequence_slug: r.batch_id || null, delivery_system: r.channel });
   }
+  return out.length ? out : FIXTURE_ACTIVE_SEQS;
 }
 
-// Sequences awaiting approval — defs whose status is 'pending'/'draft'/'in_review'.
-// The step-rail master/detail reads these. Falls back to active defs as a stand-in
-// when no review queue exists yet (so the rail renders rather than empty-stating).
 async function fetchSequenceQueue() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, name, slug, description, segment, total_steps,
-              delivery_system, status, created_by, created_at
-       FROM email_sequences
-       WHERE status IN ('pending','draft','in_review','review')
-       ORDER BY created_at DESC
-       LIMIT 30`
-    );
-    return rows?.length ? rows : FIXTURE_SEQ_QUEUE;
-  } catch {
-    return FIXTURE_SEQ_QUEUE;
-  }
+  const m = pick(await loadDrafts(QUEUE_STATUSES), 'sequences', mapSequenceQueue);
+  return m.length ? m : FIXTURE_SEQ_QUEUE;
 }
 
-// Step definitions for one sequence (the vertical step-rail in the detail pane).
-// outbound_sequence_steps may be empty (0 rows live) → caller falls back to a
-// graceful empty state rather than fabricating steps.
+// Per-step rail + per-recipient cohort are Phase 2 (steps/recipients aren't modeled
+// as distinct rows yet) — return empty so the renderer empty-states honestly.
 async function fetchSequenceSteps(sequenceId) {
-  if (!sequenceId) return [];
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, sequence_id, step_number, subject, body,
-              delay_value, delay_unit, channel, status
-       FROM outbound_sequence_steps
-       WHERE sequence_id = ?
-       ORDER BY step_number ASC`,
-      [sequenceId]
-    );
-    return rows ?? [];
-  } catch {
-    return [];
-  }
+  return sequenceId ? [] : [];
 }
 
-// Per-recipient rows for one running sequence (the cohort grid in the Active view).
-// Derives tile state from status + current_step + last_reply_at.
 async function fetchSequenceRecipients(sequenceId) {
-  if (!sequenceId) return [];
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, contact_email, segment, current_step, total_steps,
-              status, sent_count, last_reply_at, pause_reason, next_send_date
-       FROM outbound_sequences
-       WHERE sequence_id = ?
-       ORDER BY current_step DESC, id ASC
-       LIMIT 200`,
-      [sequenceId]
-    );
-    return rows ?? [];
-  } catch {
-    return [];
-  }
+  return sequenceId ? [] : [];
 }
 
-// Completed/closed sequence cohorts for the Sent funnel view.
 async function fetchSentSequences() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT os.sequence_id,
-              es.name AS sequence_name, es.slug AS sequence_slug,
-              es.total_steps,
-              COUNT(*) AS enrolled,
-              SUM(CASE WHEN os.status = 'completed' THEN 1 ELSE 0 END) AS completed,
-              SUM(CASE WHEN os.last_reply_at IS NOT NULL THEN 1 ELSE 0 END) AS replied,
-              SUM(CASE WHEN os.status = 'bounced' THEN 1 ELSE 0 END) AS bounced,
-              SUM(os.sent_count) AS sent_total,
-              MAX(os.updated_at) AS closed_at
-       FROM outbound_sequences os
-       LEFT JOIN email_sequences es ON es.id = os.sequence_id
-       WHERE os.status IN ('completed','bounced','stopped')
-       GROUP BY os.sequence_id
-       ORDER BY closed_at DESC
-       LIMIT 30`
-    );
-    return rows?.length ? rows : FIXTURE_SENT_SEQS;
-  } catch {
-    return FIXTURE_SENT_SEQS;
+  const out = [];
+  for (const [name, members] of seqGroups(await loadDrafts(SENT_STATUSES))) {
+    const { r, item } = members[0];
+    const seq = item.sequence || {};
+    const enrolled = members.length;
+    const bounced = members.filter((m) => m.r.delivery_status === 'bounced').length;
+    out.push({ sequence_id: r.batch_id || r.id, sequence_name: name, sequence_slug: r.batch_id || null,
+               total_steps: seq.total ?? null, enrolled, completed: enrolled, replied: 0, bounced,
+               sent_total: enrolled, closed_at: r.sent_at || null });
   }
+  return out.length ? out : FIXTURE_SENT_SEQS;
 }
 
 // Relative-age label for the reply-intelligence "last touch" cell.
@@ -497,55 +355,26 @@ async function fetchReplyIntelligence(email) {
 // ─── Social queries ─────────────────────────────────────────────────────────────
 
 async function fetchSocialQueue() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, platform, account, content, status,
-              scheduled_for, approved_at, approved_by, source, slug, title
-       FROM social_queue
-       WHERE status IN ('pending','in_review')
-       ORDER BY scheduled_for ASC
-       LIMIT 30`
-    );
-    return rows?.length ? rows : FIXTURE_SOCIAL_QUEUE;
-  } catch {
-    return FIXTURE_SOCIAL_QUEUE;
-  }
+  const m = pick(await loadDrafts(QUEUE_STATUSES), 'social', mapSocialQueue);
+  return m.length ? m : FIXTURE_SOCIAL_QUEUE;
 }
 
 async function fetchSocialSchedule() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, platform, account, content, status,
-              scheduled_for, approved_at, source
-       FROM social_queue
-       WHERE status IN ('scheduled','approved')
-       ORDER BY scheduled_for ASC
-       LIMIT 30`
-    );
-    return rows?.length ? rows : FIXTURE_SOCIAL_SCHEDULE;
-  } catch {
-    return FIXTURE_SOCIAL_SCHEDULE;
-  }
+  const rows = (await loadDrafts(SCHEDULE_STATUSES)).filter(hasSchedule);
+  const m = pick(rows, 'social', mapSocialQueue);
+  return m.length ? m : FIXTURE_SOCIAL_SCHEDULE;
 }
 
 async function fetchSocialSent() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, platform, account, content, status,
-              scheduled_for, posted_at, source
-       FROM social_queue
-       WHERE status = 'posted'
-       ORDER BY posted_at DESC
-       LIMIT 30`
-    );
-    return rows?.length ? rows : FIXTURE_SOCIAL_SENT;
-  } catch {
-    return FIXTURE_SOCIAL_SENT;
-  }
+  const m = pick(await loadDrafts(SENT_STATUSES), 'social', mapSocialSent);
+  return m.length ? m : FIXTURE_SOCIAL_SENT;
 }
 
-// ─── Approval mutations ────────────────────────────────────────────────────────
-
+// ── Approval mutations — DEFERRED to the folded approve-gate (WP-04/05). ───────
+// The read-only slice performs ZERO live writes. These still target the legacy
+// tables, which is a no-op on pa_action_drafts-sourced row ids (the ids never
+// match), so the queue is a pure monitor here. WP-04 rewires approve/reject/retry
+// through the new host.paActions* verbs (Strategy B) against pa_action_drafts.
 async function approveEmailDraft(id, src) {
   const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
   if (src === 'cold') {
@@ -617,20 +446,16 @@ async function rejectSequence(id, reason = null) {
   }
 }
 
-// Fan-out siblings: rows sharing the selected post's `slug` (one approved post
-// fans out to N platform rows). social_queue has no group_id, so slug is the
-// natural grouping key. Returns [] when slug is null (one-off post).
+// Fan-out siblings: pa_action_drafts rows sharing the selected post's batch_id
+// (one approved social post fans out to N provider rows). batch_id is the group key.
 async function fetchSocialFanout(slug) {
   if (!slug) return [];
   try {
     const rows = await hostDbQuery(
-      `SELECT id, platform, content, status, scheduled_for, error
-       FROM social_queue
-       WHERE slug = ?
-       ORDER BY platform ASC`,
+      `SELECT ${SEL_COLS} FROM pa_action_drafts WHERE batch_id = ? ORDER BY channel ASC`,
       [slug]
     );
-    return rows ?? [];
+    return (rows || []).map(mapSocialSent);
   } catch {
     return [];
   }
@@ -1534,27 +1359,28 @@ function NewsletterQueueView({ standalone }) {
 }
 
 function NewsletterScheduleView({ standalone }) {
-  // Scheduled newsletter sends — from outbound_newsletter_drafts whose status is
-  // 'approved' (about to go out) plus any cooling drafts with a cooling_until.
+  // Scheduled newsletter sends — single source: pa_action_drafts rows whose
+  // derived content type is 'newsletter' and that carry a future scheduled_at.
   const { data } = useQuery({
     queryKey: ['newsletter', 'schedule'],
     queryFn: async () => {
-      try {
-        const rows = await hostDbQuery(
-          `SELECT id, subject, edition, status, cooling_until, recipient_count
-           FROM outbound_newsletter_drafts
-           WHERE status IN ('approved','cooling','pending')
-           ORDER BY cooling_until ASC
-           LIMIT 30`
-        );
-        if (rows?.length) {
-          return rows.map((r) => ({
-            ...r,
-            scheduled_for: r.cooling_until,
-            kind: r.status === 'cooling' ? 'cooling' : (r.edition || '').toLowerCase().includes('investor') ? 'investor' : 'scheduled',
-          }));
-        }
-      } catch { /* table empty */ }
+      const scheduled = (await loadDrafts(SCHEDULE_STATUSES)).filter(hasSchedule);
+      const nl = [];
+      for (const r of scheduled) {
+        const { item } = parseDraft(r);
+        if (deriveContentType(item) !== 'newsletter') continue;
+        nl.push({
+          id: r.id,
+          subject: item.subject ?? '(no subject)',
+          edition: null,
+          status: r.status,
+          cooling_until: null,
+          recipient_count: item.recipients ?? null,
+          scheduled_for: r.scheduled_at,
+          kind: 'scheduled',
+        });
+      }
+      if (nl.length) return nl;
       // No live scheduled rows → anchor fixtures to the current week so pills land.
       const wk = startOfWeekMon(new Date());
       const at = (offset, h) => { const d = new Date(wk); d.setDate(wk.getDate() + offset); d.setHours(h, 0, 0, 0); return d.toISOString(); };
