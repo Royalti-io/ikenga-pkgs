@@ -900,6 +900,73 @@
   color: var(--tint-outbox-fg, var(--fg));
 }
 
+/* ─── Floating undo banner (C-3) ─────────────────────────────────────────────── */
+/* Pinned to the bottom of the pane so an armed send stays cancellable no matter
+   which row the operator selects (the invariant the per-row banner could not hold
+   across selection changes). Out of flow → does not disturb the master/detail
+   flex layout. */
+
+.ob-undo-bar.ob-undo-floating {
+  position: fixed;
+  left: 50%;
+  bottom: var(--space-4);
+  transform: translateX(-50%);
+  z-index: 60;
+  max-width: min(560px, calc(100% - 2 * var(--space-4)));
+  border: 1px solid color-mix(in srgb, var(--tint-outbox-fg, var(--primary)) 40%, var(--border-faint));
+  border-radius: var(--radius-md, 8px);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.28);
+}
+
+/* ─── Approve-gate three-way footer affordances (C-2 / C-5 / F-7) ────────────── */
+
+/* Disabled status chip shown instead of an Approve button when a row is no longer
+   approvable (committed/sending/etc.). */
+.ob-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--border-faint);
+  background: var(--bg-alt);
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+  cursor: default;
+  user-select: none;
+}
+
+/* Inline commit-refusal error surfaced near the action footer (C-5). */
+.ob-commit-error.atelier-state.is-error.ob-commit-error {
+  margin: var(--space-2) var(--space-4) 0;
+  padding: var(--space-2) var(--space-3);
+  font-size: 0.78rem;
+  text-align: left;
+  align-items: flex-start;
+  min-height: 0;
+}
+
+/* Before-click consequence line above the Approve button (F-7). */
+.ob-consequence {
+  display: block;
+  padding: var(--space-2) var(--space-4) 0;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-muted);
+  letter-spacing: 0.03em;
+}
+
+/* Danger styling for Reject buttons (F-12) — recolours regardless of .btn base. */
+.ob-actions .btn.is-danger {
+  color: var(--danger);
+}
+.ob-actions .btn.is-danger:hover {
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border-faint));
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
 /* ─── Edit-in-place panel (folded approve-gate, WP-04) ───────────────────────── */
 /* Patch subject/body before approving — writes via host.paActions.update. */
 

@@ -66,6 +66,11 @@ eq(deriveContentType({ channel: 'resend', kind: 'newsletter' }), 'newsletter', '
 eq(deriveContentType({ channel: 'smtp', kind: 'sequence' }), 'sequences', 'kind:sequence → sequences');
 eq(deriveContentType(null), 'email', 'null item → email (safe default)');
 
+// D-4: an unknown/typo `kind` must NOT short-circuit — fall through to heuristic.
+eq(deriveContentType({ channel: 'resend', kind: 'bogus' }), 'email', 'bogus kind falls through to heuristic (resend → email)');
+eq(deriveContentType({ channel: 'buffer', kind: 'bogus' }), 'social', 'bogus kind falls through to heuristic (buffer → social)');
+eq(deriveContentType({ channel: 'resend', kind: 'newsletter' }), 'newsletter', 'valid kind:newsletter still wins over heuristic');
+
 // ── parseDraft tolerance ─────────────────────────────────────────────────────
 eq(parseDraft({ payload_json: 'not json' }).item, {}, 'bad JSON → empty item');
 eq(parseDraft({ payload_json: JSON.stringify({ subject: 'bare' }) }).item.subject, 'bare', 'bare item payload accepted');
@@ -103,6 +108,31 @@ eq(designStatus(row({ status: 'awaiting' }), 'email'), 'pending', 'awaiting → 
   eq(m.platform, 'linkedin', 'social: platform parsed from recipient');
   eq(m.slug, 'grp7', 'social: batch_id = fan-out slug');
   ok(m.content === 'Post body', 'social: content from body');
+}
+
+// D-1 + D-9: platformOf via mapSocialQueue — instagram derive, fast-path, '· x'.
+{
+  const m = mapSocialQueue(row({ channel: 'buffer', item: { recipient: 'instagram · royalti-io', body: 'IG post', channel: 'buffer' } }));
+  eq(m.platform, 'instagram', 'social: instagram derived from recipient (no item.platform)');
+}
+{
+  const m = mapSocialQueue(row({ channel: 'buffer', item: { platform: 'x', recipient: 'whatever', body: 'p', channel: 'buffer' } }));
+  eq(m.platform, 'x', 'social: item.platform fast-path returns x');
+}
+{
+  const m = mapSocialQueue(row({ channel: 'buffer', item: { recipient: 'Royalti · x', body: 'p', channel: 'buffer' } }));
+  eq(m.platform, 'x', 'social: "· x" recipient → x (design key, not twitter)');
+}
+{
+  const m = mapSocialQueue(row({ channel: 'buffer', item: { recipient: 'on Twitter today', body: 'p', channel: 'buffer' } }));
+  eq(m.platform, 'x', 'social: twitter recipient → x');
+}
+
+// raw_status (C-2): the pa_action_drafts lifecycle status rides on queue mappers.
+{
+  const m = mapEmailQueue(row({ status: 'committed', item: { recipient: 'V', recipientEmail: 'v@a.b', subject: 'S', channel: 'resend' } }));
+  eq(m.raw_status, 'committed', 'email queue: raw_status carries lifecycle status');
+  ok(m.status !== m.raw_status, 'email queue: raw_status is distinct from design status');
 }
 {
   const m = mapNewsletterQueue(row({ channel: 'listmonk', item: { subject: 'Edition', channel: 'listmonk', recipients: 2104 } }));

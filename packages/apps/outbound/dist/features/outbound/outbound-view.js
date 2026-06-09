@@ -437,9 +437,11 @@ async function fetchSocialSent() {
 
 async function approveDraft(id) {
   // Defense-in-depth (review G-01): only commit a row that is still awaiting/edited.
-  // pa_actions_commit has no status guard, so committing an already committed/sending/
-  // sent row would flip it back to 'committed' and the worker could DOUBLE-SEND. This
-  // also closes the 10s-undo-window race (if the row changed while the timer ran).
+  // pa_actions_commit guards on its SELECT (status IN awaiting/edited) but the UPDATE
+  // has no status predicate — this FE pre-check closes the TOCTOU window before the
+  // verb round-trip. Committing an already committed/sending/sent row would otherwise
+  // flip it back to 'committed' and the worker could DOUBLE-SEND. This also closes the
+  // 10s-undo-window race (if the row changed while the timer ran).
   const rows = await hostDbQuery('SELECT status FROM pa_action_drafts WHERE id = ?', [id]);
   const st = rows?.[0]?.status;
   if (st !== 'awaiting' && st !== 'edited') {
@@ -519,6 +521,69 @@ function UndoBar({ secondsLeft, onCancel, label = 'Sending' }) {
   `;
 }
 
+// C-2: only an awaiting/edited draft can be approved (the verb's SELECT guard).
+// committed/sending/sent rows render a disabled status chip instead of Approve.
+const isApprovable = (r) => !!r && (r.raw_status === 'awaiting' || r.raw_status === 'edited');
+
+// C-2: disabled status chip shown in the action footer when a row is NOT
+// approvable (already committed/sending/etc.) and NOT failed.
+const RAW_STATUS_LABEL = {
+  committed: 'Queued to send',
+  sending: 'Sending…',
+  sent: 'Sent',
+  rejected: 'Rejected',
+};
+function StatusChip({ rawStatus }) {
+  const label = RAW_STATUS_LABEL[rawStatus] ?? (rawStatus ? `Status · ${rawStatus}` : 'Not approvable');
+  return html`
+    <div class="ob-status-chip" role="status" aria-disabled="true" title=${label}>
+      ${label}
+    </div>
+  `;
+}
+
+// C-5: inline error chip surfaced near the action footer when a commit is refused
+// (e.g. "Already committed — nothing sent.").
+function CommitError({ message }) {
+  if (!message) return null;
+  return html`
+    <div class="atelier-state is-error ob-commit-error" role="alert">${message}</div>
+  `;
+}
+
+// F-7: before-click consequence line populated from the selected draft, shown
+// ABOVE the Approve button so the operator sees the effect before committing.
+function ConsequenceLine({ recipient, channel, scheduled }) {
+  const when = scheduled || 'now';
+  const parts = [
+    `→ sends to ${recipient || 'segment'}`,
+    channel || 'channel',
+    when,
+    'undo 10s',
+  ];
+  return html`
+    <div class="ob-consequence ob-act-meta">${parts.join(' · ')}</div>
+  `;
+}
+
+// C-3: FLOATING undo banner — rendered at the view root keyed on the ARMED
+// draftId (not the selected row), so an armed send stays cancellable no matter
+// which row the operator selects. Arming a new draft replaces the prior pending
+// one (single-armed invariant lives in useUndoCommit); the timer is cleaned up
+// on unmount there too.
+function FloatingUndoBar({ armed, secondsLeft, onCancel, subject, label = 'Sending' }) {
+  if (!armed) return null;
+  const what = subject ? `“${subject}”` : 'draft';
+  return html`
+    <div class="ob-undo-bar ob-undo-floating" role="status">
+      <span class="ob-undo-text">
+        ${label} ${what} in <strong>${secondsLeft}s</strong> — change your mind?
+      </span>
+      <button class="ob-btn-sm" onClick=${onCancel}>Undo</button>
+    </div>
+  `;
+}
+
 // Edit-in-place panel — patch subject/body, writes via host.paActions.update.
 // onSave(patch) receives { subject, body } and resolves to advance edited→.
 function EditPanel({ subject, body, onSave, onCancel, pending }) {
@@ -565,10 +630,10 @@ async function fetchSocialFanout(slug) {
 // ─── Fixture data (fallback until real rows exist) ──────────────────────────────
 
 const FIXTURE_EMAIL_QUEUE = [
-  { id: 'eq-1', subject: 'Re: Royalti onboarding · file processing', recipient_name: 'Valentim de Carvalho', recipient_email: 'valentim@example.com', channel: 'smtp', status: 'pending', ux_mode: 'approve', is_overdue: 1, src: 'approval', scheduled_for: null, drafted_by: 'cmo' },
-  { id: 'eq-2', subject: 'Welcome — your Royalti tenant is ready', recipient_name: '{{first_name}}', recipient_email: '', channel: 'resend', status: 'pending', ux_mode: 'approve', is_overdue: 0, src: 'approval', scheduled_for: 'Today 14:30', drafted_by: 'pa' },
-  { id: 'eq-3', subject: 'Q2 product roundup · for label admins', recipient_name: 'label admins segment', recipient_email: '', channel: 'listmonk', status: 'pending', ux_mode: 'approve', is_overdue: 0, src: 'approval', scheduled_for: 'Today 16:00', drafted_by: 'cmo' },
-  { id: 'eq-4', subject: 'Quick check-in · still using Royalti?', recipient_name: 'no-catalog signups', recipient_email: '', channel: 'listmonk', status: 'pending', ux_mode: 'approve', is_overdue: 0, src: 'approval', scheduled_for: 'Mon 09:00', drafted_by: 'pa' },
+  { id: 'eq-1', subject: 'Re: Royalti onboarding · file processing', recipient_name: 'Valentim de Carvalho', recipient_email: 'valentim@example.com', channel: 'smtp', status: 'pending', raw_status: 'awaiting', ux_mode: 'approve', is_overdue: 1, src: 'approval', scheduled_for: null, drafted_by: 'cmo' },
+  { id: 'eq-2', subject: 'Welcome — your Royalti tenant is ready', recipient_name: '{{first_name}}', recipient_email: '', channel: 'resend', status: 'pending', raw_status: 'awaiting', ux_mode: 'approve', is_overdue: 0, src: 'approval', scheduled_for: 'Today 14:30', drafted_by: 'pa' },
+  { id: 'eq-3', subject: 'Q2 product roundup · for label admins', recipient_name: 'label admins segment', recipient_email: '', channel: 'listmonk', status: 'pending', raw_status: 'awaiting', ux_mode: 'approve', is_overdue: 0, src: 'approval', scheduled_for: 'Today 16:00', drafted_by: 'cmo' },
+  { id: 'eq-4', subject: 'Quick check-in · still using Royalti?', recipient_name: 'no-catalog signups', recipient_email: '', channel: 'listmonk', status: 'pending', raw_status: 'awaiting', ux_mode: 'approve', is_overdue: 0, src: 'approval', scheduled_for: 'Mon 09:00', drafted_by: 'pa' },
 ];
 
 const FIXTURE_EMAIL_SCHEDULE = [
@@ -582,8 +647,8 @@ const FIXTURE_EMAIL_SENT = [
 ];
 
 const FIXTURE_NL_QUEUE = [
-  { id: 'nl-1', subject: 'You can deliver from Royalti now', subject_b: null, draft_slug: 'royalti-deliver', status: 'cooling', cooling_until: '47m', quality_score: 92, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 0 },
-  { id: 'nl-2', subject: 'Schema patches that unblocked tenant 590', subject_b: 'The shape disparity that was eating royalty data', draft_slug: 'schema-patches-590', status: 'pending', cooling_until: null, quality_score: 86, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 1 },
+  { id: 'nl-1', subject: 'You can deliver from Royalti now', subject_b: null, draft_slug: 'royalti-deliver', status: 'cooling', raw_status: 'awaiting', cooling_until: '47m', quality_score: 92, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 0 },
+  { id: 'nl-2', subject: 'Schema patches that unblocked tenant 590', subject_b: 'The shape disparity that was eating royalty data', draft_slug: 'schema-patches-590', status: 'pending', raw_status: 'awaiting', cooling_until: null, quality_score: 86, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 1 },
 ];
 
 const FIXTURE_NL_SENT = [
@@ -606,8 +671,8 @@ const FIXTURE_ACTIVE_SEQS = [
 ];
 
 const FIXTURE_SEQ_QUEUE = [
-  { id: 'seq-q1', name: 'distributor-q3', slug: 'distributor-q3', description: 'Cold outbound to 14 distributor leads sourced from Q1 trade-show contacts. 4 steps over 21 days.', segment: 'distributor-leads-q1', total_steps: 4, delivery_system: 'resend', status: 'in_review', created_by: 'vp-sales-agent', created_at: '2026-04-28' },
-  { id: 'seq-q2', name: 'label-onboarding-v3', slug: 'label-onboarding-v3', description: 'Replaces v2. New labels get 5 emails over 14 days walking them from signup → first statement ingested.', segment: 'new-labels', total_steps: 5, delivery_system: 'listmonk', status: 'in_review', created_by: 'pa', created_at: '2026-04-27' },
+  { id: 'seq-q1', name: 'distributor-q3', slug: 'distributor-q3', description: 'Cold outbound to 14 distributor leads sourced from Q1 trade-show contacts. 4 steps over 21 days.', segment: 'distributor-leads-q1', total_steps: 4, delivery_system: 'resend', status: 'in_review', raw_status: 'awaiting', created_by: 'vp-sales-agent', created_at: '2026-04-28' },
+  { id: 'seq-q2', name: 'label-onboarding-v3', slug: 'label-onboarding-v3', description: 'Replaces v2. New labels get 5 emails over 14 days walking them from signup → first statement ingested.', segment: 'new-labels', total_steps: 5, delivery_system: 'listmonk', status: 'in_review', raw_status: 'awaiting', created_by: 'pa', created_at: '2026-04-27' },
 ];
 
 const FIXTURE_SEQ_STEPS = [
@@ -640,8 +705,8 @@ const FIXTURE_SEQ_RECIPIENTS = [
 ];
 
 const FIXTURE_SOCIAL_QUEUE = [
-  { id: 'sq-1', platform: 'linkedin', account: 'Royalti', content: 'Royalti.io is now live for music labels — handle your full royalty pipeline from one workspace.', status: 'in_review', scheduled_for: '2026-06-07 09:00', source: 'C-07' },
-  { id: 'sq-2', platform: 'twitter', account: 'royalti_io', content: 'Thread 1/7: The royalty data problem nobody talks about. \n\nMusic labels spend 40+ hours per month reconciling statements from distributors. Here\'s how we fixed it.', status: 'pending', scheduled_for: '2026-06-10 09:00', source: 'C-08' },
+  { id: 'sq-1', platform: 'linkedin', account: 'Royalti', content: 'Royalti.io is now live for music labels — handle your full royalty pipeline from one workspace.', status: 'in_review', raw_status: 'awaiting', scheduled_for: '2026-06-07 09:00', source: 'C-07', title: 'Royalti.io is now live' },
+  { id: 'sq-2', platform: 'twitter', account: 'royalti_io', content: 'Thread 1/7: The royalty data problem nobody talks about. \n\nMusic labels spend 40+ hours per month reconciling statements from distributors. Here\'s how we fixed it.', status: 'pending', raw_status: 'awaiting', scheduled_for: '2026-06-10 09:00', source: 'C-08', title: 'Royalty data thread' },
 ];
 
 const FIXTURE_SOCIAL_SCHEDULE = [
@@ -1038,7 +1103,7 @@ function ReplyIntelligence({ email, sequenceId, standalone }) {
     <div class="ri-panel">
       <div class="ri-panel-head">
         <span>Reply intelligence</span>
-        <span class="ob-chip seq" style=${{ marginLeft: 'auto' }}>CRM · contacts</span>
+        <span class="ob-chip seq" style=${{ marginLeft: 'auto' }}>CRM · Twenty</span>
       </div>
       <div class="ri-grid">
         ${cell('Tenant', crm.tenant_name ?? crm.name, crm.tenant_sub)}
@@ -1058,6 +1123,7 @@ function EmailQueueView({ standalone }) {
   const [selected, setSelected] = useState(null);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [commitError, setCommitError] = useState(null);
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['email', 'queue'],
@@ -1070,9 +1136,10 @@ function EmailQueueView({ standalone }) {
   const invalidate = () => { qc.invalidateQueries({ queryKey: ['email'] }); qc.invalidateQueries({ queryKey: ['counts'] }); };
   const commitMut = useMutation({
     mutationFn: ({ id }) => approveDraft(id),
-    onSuccess: invalidate,
+    onSuccess: () => { setCommitError(null); invalidate(); },
+    onError: (e) => { const m = String(e?.message ?? e); console.error('[outbound] commit refused:', m); setCommitError(m); },
   });
-  const undo = useUndoCommit((id) => commitMut.mutate({ id }));
+  const undo = useUndoCommit((id) => { setCommitError(null); commitMut.mutate({ id }); });
   const rejectMut = useMutation({
     mutationFn: ({ id, reason }) => rejectDraft(id, reason),
     onSuccess: () => { setRejectOpen(false); invalidate(); },
@@ -1092,8 +1159,9 @@ function EmailQueueView({ standalone }) {
 
   const rows = data ?? [];
   const sel = selected ?? rows[0];
-  const isFailed = sel?.status === 'failed';
-  const isArmed = sel ? undo.isArmed(sel.id) : false;
+  const isFailed = sel?.raw_status === 'failed';
+  const canApprove = isApprovable(sel);
+  const armedRow = undo.armed ? rows.find((r) => r.id === undo.armed) : null;
 
   const pick = (row) => { setSelected(row); setRejectOpen(false); setEditOpen(false); };
 
@@ -1105,6 +1173,7 @@ function EmailQueueView({ standalone }) {
   };
 
   return html`
+    <${FloatingUndoBar} armed=${undo.armed} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} subject=${armedRow?.subject ?? sel?.subject} />
     <div class="nl-split">
       <div class="nl-master">
         ${rows.map(row => html`
@@ -1184,39 +1253,45 @@ function EmailQueueView({ standalone }) {
               />
             ` : null}
 
-            ${isArmed ? html`
-              <${UndoBar} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} />
-            ` : html`
-              <div class="ob-actions">
-                <div class="ob-actions-primary">
-                  ${isFailed ? html`
-                    <button
-                      class="btn"
-                      style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
-                      onClick=${() => retryMut.mutate({ id: sel.id })}
-                      disabled=${retryMut.isPending}
-                    >
-                      ${retryMut.isPending ? 'Retrying…' : 'Retry send'}
-                    </button>
-                  ` : html`
-                    <button
-                      class="btn"
-                      style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
-                      onClick=${() => undo.arm(sel.id)}
-                      disabled=${commitMut.isPending}
-                    >
-                      ${commitMut.isPending ? 'Sending…' : 'Approve & Send'}
-                    </button>
-                  `}
-                  <button class="btn btn-ghost" onClick=${() => setEditOpen((o) => !o)}>
-                    Edit
+            <${CommitError} message=${commitError} />
+            ${canApprove ? html`
+              <${ConsequenceLine}
+                recipient=${sel.recipient_name || sel.recipient_email}
+                channel=${sel.channel}
+                scheduled=${sel.scheduled_for}
+              />
+            ` : null}
+            <div class="ob-actions">
+              <div class="ob-actions-primary">
+                ${isFailed ? html`
+                  <button
+                    class="btn"
+                    style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                    onClick=${() => retryMut.mutate({ id: sel.id })}
+                    disabled=${retryMut.isPending}
+                  >
+                    ${retryMut.isPending ? 'Retrying…' : 'Retry send'}
                   </button>
-                  <button class="btn btn-ghost" onClick=${() => setRejectOpen((o) => !o)}>
-                    Reject
+                ` : canApprove ? html`
+                  <button
+                    class="btn"
+                    style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                    onClick=${() => undo.arm(sel.id)}
+                    disabled=${commitMut.isPending || undo.isArmed(sel.id)}
+                  >
+                    ${commitMut.isPending ? 'Sending…' : undo.isArmed(sel.id) ? 'Sending…' : 'Approve & schedule'}
                   </button>
-                </div>
+                ` : html`
+                  <${StatusChip} rawStatus=${sel.raw_status} />
+                `}
+                <button class="btn btn-ghost" onClick=${() => setEditOpen((o) => !o)}>
+                  Edit
+                </button>
+                <button class="btn btn-ghost is-danger" onClick=${() => setRejectOpen((o) => !o)}>
+                  Reject
+                </button>
               </div>
-            `}
+            </div>
             <div class="ob-actions-secondary">
               <button class="ob-btn-sm" onClick=${sendToChat}>⌘ Send to chat</button>
               <span class="ob-act-spacer"></span>
@@ -1318,6 +1393,7 @@ function NewsletterQueueView({ standalone }) {
   const [selected, setSelected] = useState(null);
   const [abChoice, setAbChoice] = useState(null);
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [commitError, setCommitError] = useState(null);
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['newsletter', 'queue'],
@@ -1330,9 +1406,10 @@ function NewsletterQueueView({ standalone }) {
   const invalidate = () => { qc.invalidateQueries({ queryKey: ['newsletter'] }); qc.invalidateQueries({ queryKey: ['counts'] }); };
   const commitMut = useMutation({
     mutationFn: ({ id }) => approveDraft(id),
-    onSuccess: invalidate,
+    onSuccess: () => { setCommitError(null); invalidate(); },
+    onError: (e) => { const m = String(e?.message ?? e); console.error('[outbound] commit refused:', m); setCommitError(m); },
   });
-  const undo = useUndoCommit((id) => commitMut.mutate({ id }));
+  const undo = useUndoCommit((id) => { setCommitError(null); commitMut.mutate({ id }); });
   const rejectMut = useMutation({
     mutationFn: ({ id, reason }) => rejectDraft(id, reason),
     onSuccess: () => { setRejectOpen(false); invalidate(); },
@@ -1349,7 +1426,8 @@ function NewsletterQueueView({ standalone }) {
   const sel = selected ?? pending[0] ?? cooling[0] ?? approved[0] ?? null;
 
   const isCooling = sel?.status === 'cooling';
-  const isArmed = sel ? undo.isArmed(sel.id) : false;
+  const canApprove = isApprovable(sel) && !isCooling;
+  const armedRow = undo.armed ? rows.find((r) => r.id === undo.armed) : null;
   const pick = (row) => { setSelected(row); setAbChoice(null); setRejectOpen(false); };
   const qualityCells = sel ? newsletterQualityCells(sel) : [];
 
@@ -1364,6 +1442,7 @@ function NewsletterQueueView({ standalone }) {
   const altLen = (sel?.subject_b ?? '').length;
 
   return html`
+    <${FloatingUndoBar} armed=${undo.armed} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} subject=${armedRow?.subject ?? sel?.subject} label="Scheduling" />
     <div class="nl-split">
       <div class="nl-master">
         ${cooling.length ? html`
@@ -1477,26 +1556,41 @@ function NewsletterQueueView({ standalone }) {
               />
             ` : null}
 
-            ${isArmed ? html`
-              <${UndoBar} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} label="Scheduling" />
-            ` : html`
-              <div class="ob-actions">
-                <div class="ob-actions-primary">
+            <${CommitError} message=${commitError} />
+            ${canApprove ? html`
+              <${ConsequenceLine}
+                recipient=${sel.recipient_count ? `${sel.recipient_count.toLocaleString()} recipients` : 'segment'}
+                channel=${sel.delivery_system ?? 'listmonk'}
+                scheduled=${sel.scheduled_for}
+              />
+            ` : null}
+            <div class="ob-actions">
+              <div class="ob-actions-primary">
+                ${sel.raw_status === 'failed' ? html`
                   <button
                     class="btn"
-                    disabled=${isCooling || commitMut.isPending}
+                    style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                    disabled=${commitMut.isPending}
+                    onClick=${() => undo.arm(sel.id)}
+                  >Retry send</button>
+                ` : isApprovable(sel) ? html`
+                  <button
+                    class="btn"
+                    disabled=${isCooling || commitMut.isPending || undo.isArmed(sel.id)}
                     style=${isCooling ? { opacity: 0.5, cursor: 'not-allowed' } : { background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
                     onClick=${() => !isCooling && undo.arm(sel.id)}
                     title=${isCooling ? `Cooling — send blocked for ${sel.cooling_until}` : 'Approve & Schedule'}
                   >
-                    ${commitMut.isPending ? 'Scheduling…' : isCooling ? `Cooling ${sel.cooling_until}` : 'Approve & Schedule'}
+                    ${commitMut.isPending || undo.isArmed(sel.id) ? 'Scheduling…' : isCooling ? `Cooling ${sel.cooling_until}` : 'Approve & Schedule'}
                   </button>
-                  <button class="btn btn-ghost" onClick=${() => setRejectOpen((o) => !o)}>
-                    Reject…
-                  </button>
-                </div>
+                ` : html`
+                  <${StatusChip} rawStatus=${sel.raw_status} />
+                `}
+                <button class="btn btn-ghost is-danger" onClick=${() => setRejectOpen((o) => !o)}>
+                  Reject…
+                </button>
               </div>
-            `}
+            </div>
 
             <!-- Secondary action footer (design §B): Back · Send-to-chat · Skip month · meta -->
             <div class="ob-actions-secondary">
@@ -1625,18 +1719,20 @@ function NewsletterSentView({ standalone }) {
 function SequenceStepRail({ sequence, standalone }) {
   const seqId = sequence?.id;
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [commitError, setCommitError] = useState(null);
   const qc = useQueryClient();
   const invalidate = () => { qc.invalidateQueries({ queryKey: ['sequences'] }); qc.invalidateQueries({ queryKey: ['counts'] }); };
   const commitMut = useMutation({
     mutationFn: ({ id }) => approveDraft(id),
-    onSuccess: invalidate,
+    onSuccess: () => { setCommitError(null); invalidate(); },
+    onError: (e) => { const m = String(e?.message ?? e); console.error('[outbound] commit refused:', m); setCommitError(m); },
   });
-  const undo = useUndoCommit((id) => commitMut.mutate({ id }));
+  const undo = useUndoCommit((id) => { setCommitError(null); commitMut.mutate({ id }); });
   const rejectMut = useMutation({
     mutationFn: ({ id, reason }) => rejectDraft(id, reason),
     onSuccess: () => { setRejectOpen(false); invalidate(); },
   });
-  const isArmed = undo.isArmed(sequence?.id);
+  const canApprove = isApprovable(sequence);
   const { data: steps, isLoading } = useQuery({
     queryKey: ['sequences', 'steps', seqId],
     queryFn: () => fetchSequenceSteps(seqId),
@@ -1694,24 +1790,40 @@ function SequenceStepRail({ sequence, standalone }) {
               onConfirm=${(reason) => rejectMut.mutate({ id: sequence.id, reason })}
             />
           ` : null}
-          ${isArmed ? html`
-            <${UndoBar} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} label="Activating" />
-          ` : html`
-            <div class="sq-footer">
-              <span class="ob-chip seq">enrol on approve</span>
-              <span class="ob-chip seq">step 1 fires immediately</span>
-              <div class="actions">
-                <button class="ob-btn-sm is-danger" onClick=${() => setRejectOpen((o) => !o)}>Reject</button>
-                <button class="ob-btn-sm">⌘ Send to chat</button>
+          <${FloatingUndoBar} armed=${undo.armed} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} subject=${sequence?.name ?? sequence?.slug} label="Activating" />
+          <${CommitError} message=${commitError} />
+          ${canApprove ? html`
+            <${ConsequenceLine}
+              recipient=${sequence?.segment || 'enrolled recipients'}
+              channel=${sequence?.delivery_system}
+              scheduled="now"
+            />
+          ` : null}
+          <div class="sq-footer">
+            <span class="ob-chip seq">enrol on approve</span>
+            <span class="ob-chip seq">step 1 fires immediately</span>
+            <div class="actions">
+              <button class="ob-btn-sm is-danger" onClick=${() => setRejectOpen((o) => !o)}>Reject</button>
+              <button class="ob-btn-sm">⌘ Send to chat</button>
+              ${sequence?.raw_status === 'failed' ? html`
                 <button
                   class="btn"
                   style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
                   disabled=${commitMut.isPending}
                   onClick=${() => undo.arm(sequence.id)}
-                >${commitMut.isPending ? 'Activating…' : 'Approve & activate'}</button>
-              </div>
+                >Retry send</button>
+              ` : canApprove ? html`
+                <button
+                  class="btn"
+                  style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                  disabled=${commitMut.isPending || undo.isArmed(sequence.id)}
+                  onClick=${() => undo.arm(sequence.id)}
+                >${commitMut.isPending || undo.isArmed(sequence.id) ? 'Activating…' : 'Approve & activate'}</button>
+              ` : html`
+                <${StatusChip} rawStatus=${sequence?.raw_status} />
+              `}
             </div>
-          `}
+          </div>
         `}
     </div>
   `;
@@ -1984,7 +2096,8 @@ function SequencesSentView({ standalone }) {
 // LinkedIn / X / Bluesky previews on the right with per-platform char caps; fan-out
 // rows + reject below. Body is editable locally (preview-only mock — no write-back
 // since social_queue stores one platform per row).
-function SocialEditor({ post, standalone, onApprove, approvePending, onReject, rejectPending, armed, undoSecondsLeft, onCancelUndo }) {
+function SocialEditor({ post, standalone, onApprove, approvePending, onReject, rejectPending, onRetry, rawStatus, commitError, armed, undoSecondsLeft, onCancelUndo }) {
+  const canApprove = isApprovable({ raw_status: rawStatus });
   const [body, setBody] = useState(post?.content ?? '');
   const [rejectOpen, setRejectOpen] = useState(false);
 
@@ -2095,11 +2208,24 @@ function SocialEditor({ post, standalone, onApprove, approvePending, onReject, r
         />
       ` : null}
 
-      ${armed ? html`
-        <${UndoBar} secondsLeft=${undoSecondsLeft} onCancel=${onCancelUndo} label="Scheduling" />
-      ` : html`
-        <div class="ob-actions">
-          <div class="ob-actions-primary">
+      <${CommitError} message=${commitError} />
+      ${canApprove ? html`
+        <${ConsequenceLine}
+          recipient=${post?.account || 'social accounts'}
+          channel=${'LinkedIn · X · Bluesky'}
+          scheduled=${post?.scheduled_for}
+        />
+      ` : null}
+      <div class="ob-actions">
+        <div class="ob-actions-primary">
+          ${rawStatus === 'failed' ? html`
+            <button
+              class="btn"
+              style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+              disabled=${approvePending}
+              onClick=${() => onRetry()}
+            >Retry send</button>
+          ` : canApprove ? html`
             <button
               class="btn"
               style=${anyBlocked ? { opacity: 0.55, cursor: 'not-allowed' } : { background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
@@ -2109,10 +2235,13 @@ function SocialEditor({ post, standalone, onApprove, approvePending, onReject, r
             >
               ${approvePending ? 'Scheduling…' : 'Approve & Schedule'}
             </button>
-            <button class="btn btn-ghost" onClick=${() => setRejectOpen((o) => !o)}>Reject…</button>
-          </div>
+          ` : html`
+            <${StatusChip} rawStatus=${rawStatus} />
+          `}
+          <button class="btn btn-ghost is-danger" onClick=${() => setRejectOpen((o) => !o)}>Reject…</button>
         </div>
-      `}
+      </div>
+      <${FloatingUndoBar} armed=${armed} secondsLeft=${undoSecondsLeft} onCancel=${onCancelUndo} subject=${post?.title ?? post?.content} label="Scheduling" />
       <div class="ob-actions-secondary">
         <button
           class="ob-btn-sm"
@@ -2126,6 +2255,7 @@ function SocialEditor({ post, standalone, onApprove, approvePending, onReject, r
 
 function SocialQueueView({ standalone }) {
   const [selected, setSelected] = useState(null);
+  const [commitError, setCommitError] = useState(null);
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['social', 'queue'],
@@ -2138,9 +2268,10 @@ function SocialQueueView({ standalone }) {
   const invalidate = () => { qc.invalidateQueries({ queryKey: ['social'] }); qc.invalidateQueries({ queryKey: ['counts'] }); };
   const commitMut = useMutation({
     mutationFn: ({ id }) => approveDraft(id),
-    onSuccess: invalidate,
+    onSuccess: () => { setCommitError(null); invalidate(); },
+    onError: (e) => { const m = String(e?.message ?? e); console.error('[outbound] commit refused:', m); setCommitError(m); },
   });
-  const undo = useUndoCommit((id) => commitMut.mutate({ id }));
+  const undo = useUndoCommit((id) => { setCommitError(null); commitMut.mutate({ id }); });
   const rejectMut = useMutation({
     mutationFn: ({ id, reason }) => rejectDraft(id, reason),
     onSuccess: invalidate,
@@ -2153,8 +2284,10 @@ function SocialQueueView({ standalone }) {
   const rows = data ?? [];
   const sel = selected ?? rows[0];
   const isArmed = sel ? undo.isArmed(sel.id) : false;
+  const armedRow = undo.armed ? rows.find((r) => r.id === undo.armed) : null;
 
   return html`
+    <${FloatingUndoBar} armed=${undo.armed} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} subject=${armedRow?.title ?? armedRow?.content ?? sel?.title} label="Scheduling" />
     <div class="nl-split">
       <div class="nl-master">
         ${rows.map(row => html`
@@ -2176,9 +2309,12 @@ function SocialQueueView({ standalone }) {
             post=${sel}
             standalone=${standalone}
             onApprove=${() => undo.arm(sel.id)}
-            approvePending=${commitMut.isPending}
+            approvePending=${commitMut.isPending || isArmed}
             onReject=${(reason) => rejectMut.mutate({ id: sel.id, reason })}
             rejectPending=${rejectMut.isPending}
+            onRetry=${() => undo.arm(sel.id)}
+            rawStatus=${sel.raw_status}
+            commitError=${commitError}
             armed=${isArmed}
             undoSecondsLeft=${undo.secondsLeft}
             onCancelUndo=${undo.cancel}
@@ -2270,6 +2406,7 @@ function mapApprovalRow(row) {
     ct,
     ct_label: CT_LABEL[ct] ?? ct,
     status: row.status, // raw lifecycle status (awaiting/edited/committed/sending/failed)
+    raw_status: row.status, // alias matching the per-channel mappers (C-2 gate)
     channel: row.channel ?? item.channel ?? null, // provider
     subject: edited.subject ?? item.subject ?? '(no subject)',
     body: edited.body ?? item.body ?? '',
@@ -2294,6 +2431,7 @@ function CrossChannelApprovalsView({ standalone }) {
   const [selected, setSelected] = useState(null);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
+  const [commitError, setCommitError] = useState(null);
   const [ctFilter, setCtFilter] = useState('all'); // all | email | newsletter | social | sequences
 
   const { data, isLoading, isError, refetch } = useQuery({
@@ -2311,8 +2449,12 @@ function CrossChannelApprovalsView({ standalone }) {
       qc.invalidateQueries({ queryKey: [k] });
     }
   };
-  const commitMut = useMutation({ mutationFn: ({ id }) => approveDraft(id), onSuccess: invalidate });
-  const undo = useUndoCommit((id) => commitMut.mutate({ id }));
+  const commitMut = useMutation({
+    mutationFn: ({ id }) => approveDraft(id),
+    onSuccess: () => { setCommitError(null); invalidate(); },
+    onError: (e) => { const m = String(e?.message ?? e); console.error('[outbound] commit refused:', m); setCommitError(m); },
+  });
+  const undo = useUndoCommit((id) => { setCommitError(null); commitMut.mutate({ id }); });
   const rejectMut = useMutation({
     mutationFn: ({ id, reason }) => rejectDraft(id, reason),
     onSuccess: () => { setRejectOpen(false); invalidate(); },
@@ -2331,8 +2473,9 @@ function CrossChannelApprovalsView({ standalone }) {
   if (!all.length) return html`<${StateDisplay} state="empty" message="Nothing awaiting approval across any channel" />`;
 
   const sel = (selected && rows.find((r) => r.id === selected.id)) ?? rows[0] ?? null;
-  const isFailed = sel?.status === 'failed';
-  const isArmed = sel ? undo.isArmed(sel.id) : false;
+  const isFailed = sel?.raw_status === 'failed';
+  const canApprove = isApprovable(sel);
+  const armedRow = undo.armed ? all.find((r) => r.id === undo.armed) : null;
   const pick = (row) => { setSelected(row); setRejectOpen(false); setEditOpen(false); };
 
   // Per-content-type counts for the filter strip.
@@ -2346,6 +2489,7 @@ function CrossChannelApprovalsView({ standalone }) {
   };
 
   return html`
+    <${FloatingUndoBar} armed=${undo.armed} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} subject=${armedRow?.subject ?? sel?.subject} />
     <div style=${{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div class="nl-sent-toolbar">
         <button class=${cn('ob-filter-chip', { 'is-on': ctFilter === 'all' })} onClick=${() => setCtFilter('all')}>All · ${all.length}</button>
@@ -2423,31 +2567,37 @@ function CrossChannelApprovalsView({ standalone }) {
                 />
               ` : null}
 
-              ${isArmed ? html`
-                <${UndoBar} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} />
-              ` : html`
-                <div class="ob-actions">
-                  <div class="ob-actions-primary">
-                    ${isFailed ? html`
-                      <button
-                        class="btn"
-                        style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
-                        onClick=${() => retryMut.mutate({ id: sel.id })}
-                        disabled=${retryMut.isPending}
-                      >${retryMut.isPending ? 'Retrying…' : 'Retry send'}</button>
-                    ` : html`
-                      <button
-                        class="btn"
-                        style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
-                        onClick=${() => undo.arm(sel.id)}
-                        disabled=${commitMut.isPending}
-                      >${commitMut.isPending ? 'Sending…' : 'Approve & Send'}</button>
-                    `}
-                    <button class="btn btn-ghost" onClick=${() => setEditOpen((o) => !o)}>Edit</button>
-                    <button class="btn btn-ghost" onClick=${() => setRejectOpen((o) => !o)}>Reject</button>
-                  </div>
+              <${CommitError} message=${commitError} />
+              ${canApprove ? html`
+                <${ConsequenceLine}
+                  recipient=${sel.recipient}
+                  channel=${sel.channel ?? sel.ct_label}
+                  scheduled=${sel.scheduled_for}
+                />
+              ` : null}
+              <div class="ob-actions">
+                <div class="ob-actions-primary">
+                  ${isFailed ? html`
+                    <button
+                      class="btn"
+                      style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                      onClick=${() => retryMut.mutate({ id: sel.id })}
+                      disabled=${retryMut.isPending}
+                    >${retryMut.isPending ? 'Retrying…' : 'Retry send'}</button>
+                  ` : canApprove ? html`
+                    <button
+                      class="btn"
+                      style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                      onClick=${() => undo.arm(sel.id)}
+                      disabled=${commitMut.isPending || undo.isArmed(sel.id)}
+                    >${commitMut.isPending || undo.isArmed(sel.id) ? 'Sending…' : 'Approve & schedule'}</button>
+                  ` : html`
+                    <${StatusChip} rawStatus=${sel.raw_status} />
+                  `}
+                  <button class="btn btn-ghost" onClick=${() => setEditOpen((o) => !o)}>Edit</button>
+                  <button class="btn btn-ghost is-danger" onClick=${() => setRejectOpen((o) => !o)}>Reject</button>
                 </div>
-              `}
+              </div>
               <div class="ob-actions-secondary">
                 <button class="ob-btn-sm" onClick=${sendToChat}>⌘ Send to chat</button>
                 <span class="ob-act-spacer"></span>

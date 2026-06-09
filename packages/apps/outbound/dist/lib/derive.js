@@ -27,7 +27,10 @@ export const SCHEDULE_STATUSES = ['committed', 'awaiting', 'edited'];
 // to 'email' — see 03 §F3.
 export function deriveContentType(item) {
   if (!item) return 'email';
-  if (item.kind) return item.kind === 'sequence' ? 'sequences' : item.kind;
+  // Only honour `kind` when it is one of the four valid stamps; an unknown/typo
+  // kind falls through to the heuristic chain rather than returning a bogus type.
+  if (item.kind && ['email', 'newsletter', 'social', 'sequence'].includes(item.kind))
+    return item.kind === 'sequence' ? 'sequences' : item.kind;
   if (item.channel === 'buffer') return 'social';
   if (item.sequence != null) return 'sequences';
   if (item.channel === 'listmonk') return 'newsletter';
@@ -79,10 +82,14 @@ function agentOf(meta) {
 // Buffer DraftItems carry the platform inside `recipient` ("LinkedIn · …").
 // Best-effort parse for the social Platform column (fan-out is Phase 2).
 function platformOf(item) {
+  // Fast-path: the backfill stamps item.platform on every social row.
+  if (item.platform) return item.platform;
   const r = `${item.recipient || ''} ${item.fromProvider || ''}`.toLowerCase();
   if (r.includes('linkedin') || /\bli\b/.test(r)) return 'linkedin';
   if (r.includes('bluesky') || r.includes('bsky') || /\bbs\b/.test(r)) return 'bluesky';
-  if (r.includes('twitter') || /\b[x]\b/.test(r) || r.includes('· x')) return 'twitter';
+  // Return 'x' (the design key), not 'twitter'; broadened to catch '· x' / bare x.
+  if (r.includes('twitter') || r.includes('· x') || /\bx\b/.test(r)) return 'x';
+  if (r.includes('instagram') || /\big\b/.test(r)) return 'instagram';
   return 'linkedin';
 }
 
@@ -140,6 +147,7 @@ export function mapEmailQueue(row) {
     recipient_email: b.item.recipientEmail ?? null,
     channel: b.channel,
     status: designStatus(row, b.ct),
+    raw_status: row.status, // pa_action_drafts lifecycle (awaiting/edited/committed/sending/failed)
     ux_mode: 'approve',
     drafted_by: b.drafted_by,
     sequence_id: b.item.sequence ? b.item.sequence.name : null,
@@ -177,6 +185,7 @@ export function mapNewsletterQueue(row) {
     draft_slug: b.item.section ?? null,
     edition: null,
     status: designStatus(row, b.ct),
+    raw_status: row.status, // pa_action_drafts lifecycle (awaiting/edited/committed/sending/failed)
     cooling_until: null, // cooling is Phase 2
     quality_score: null, // scorecard is Phase 2
     recipient_count: b.item.recipients ?? b.item.sequence?.recipients ?? null,
@@ -212,6 +221,7 @@ export function mapSocialQueue(row) {
     account: b.item.senderAddress || b.item.fromProvider || 'Buffer',
     content: b.body || b.subject,
     status: designStatus(row, b.ct),
+    raw_status: row.status, // pa_action_drafts lifecycle (awaiting/edited/committed/sending/failed)
     scheduled_for: b.scheduled_for,
     approved_at: row.committed_at || null,
     source: b.meta.actionName || null,
@@ -251,6 +261,7 @@ export function mapSequenceQueue(row) {
     total_steps: seq.total ?? null,
     delivery_system: b.channel,
     status: designStatus(row, b.ct),
+    raw_status: row.status, // pa_action_drafts lifecycle (awaiting/edited/committed/sending/failed)
     created_by: b.drafted_by,
     created_at: row.created_at || null,
   };
