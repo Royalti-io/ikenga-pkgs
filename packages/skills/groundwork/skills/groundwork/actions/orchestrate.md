@@ -24,14 +24,16 @@
    - **Intra-isolation matrix**: for parallel WPs sharing an isolation axis (e.g. same repo), the disjoint scopes (`software`: dir paths; `general`: stakeholder scopes).
    - **Mock contracts**: for cross-boundary WPs where the upstream isn't done yet, the agreed frozen interface so downstream can start.
    - **Per-WP briefs**: one self-contained brief per `WP-NN`, following the brief template.
+   - **Model tier per WP**: stamp each `WP-NN` with a `tier` (`opus` / `sonnet` / `haiku`) by task weight (see [`../lib/schemas.md` §"Model tiers"](../lib/schemas.md)). Heuristic default — architecture/novel → `opus`, routine build → `sonnet`, mechanical → `haiku`; user-overridable via `--field tier=<t>`.
    - **Worktree-vs-branch recommendation**: based on parallel WP count and isolation axis.
 4. **Cite locked designs**: each `WP-NN` whose phase has a locked `D-NN` cites the design path in its brief.
 5. **Write `09-orchestration.md`** — this is the one file `orchestrate` rewrites whole; the convention is "delete and re-author." Hand-written sections live above an explicit `<!-- groundwork:auto:start orchestration -->` fence and are preserved.
 6. **Update `.groundwork.json`**:
    - Bump `docs["09-orchestration.md"]`.
    - Set `orchestrate.last_run` to now.
-   - For each `WP-NN`, refresh `wave`, `depends_on`, `gate` in the ID registry.
-7. **Print next steps** — typically "open the board (`groundwork refresh-board`) and start running WPs," or "kick off Wave 0 first."
+   - For each `WP-NN`, refresh `wave`, `depends_on`, `gate`, `tier` in the ID registry.
+7. **Emit the runnable Workflow** *(opt-in, only when `--emit-workflow` is passed)* — see §"Emitting a runnable Workflow" below. Default (no flag): skip; `09-orchestration.md` is the terminal deliverable exactly as today.
+8. **Print next steps** — typically "open the board (`groundwork refresh-board`) and start running WPs," or "kick off Wave 0 first."
 
 ---
 
@@ -188,6 +190,46 @@ The contract this enforces:
 - On each WP completion the orchestrator sets the Task `completed` **and** ticks the `05` checkbox, so the live view and the durable SoT stay in lockstep.
 
 So the generated `09` always carries the kickoff Task-mirror instruction in its `## Tracking protocol` section; the orchestrator agent executes it.
+
+---
+
+## Emitting a runnable Workflow (`--emit-workflow`)
+
+**Opt-in.** Without the flag, orchestrate behaves exactly as today — prose `09` only. With `--emit-workflow`, after `09-orchestration.md` is written, also generate its **executable twin**: `artifact/orchestrate.workflow.js`, a Workflow script that fans out the build wave-by-wave instead of leaving execution to an improvising orchestrator agent.
+
+This is worth it because the wave plan orchestrate already computes maps almost 1:1 onto Workflow primitives — **waves → `parallel()` fan-out**, **freeze gates → barriers with adversarial sign-off**, **the worktree-vs-branch recommendation → `isolation:'worktree'`**, **per-WP DoD → a `WP_REPORT_SCHEMA`-validated return**. The prose `09` stays the human-readable source of truth; the `.workflow.js` is the runnable form of the same data.
+
+### How it's generated
+
+1. Read the model with `python3 <skill>/scripts/groundwork_state.py board-data --plan <plan> --with-briefs` — emits each `WP-NN` with `id / title / wave / deps / gate / tier` **plus** its `brief` (parsed from the `09` §WP-NN section just written).
+2. Group WPs by `wave`, attach each wave's owning `gate` (from the freeze-gates table), in wave order → the `WAVES` array.
+3. Fill the template `profiles/_shared/templates/artifact/orchestrate.workflow.js`:
+   - `{{plan_title}}`, `{{slug}}` → string literals.
+   - `{{meta_phases}}` → one phase per wave, e.g. `[{title:'Wave 0 · G-CONTRACT'},{title:'Wave 1'}]` (must stay a **pure literal** — `meta` allows no variables).
+   - `{{waves_json}}` → the `WAVES` array as a JSON literal (`[{title, gate|null, wps:[{id,title,tier,brief}]}]`).
+4. Write `artifact/orchestrate.workflow.js`; register it in `.groundwork.json.docs` (whole-file hash; regenerated, never hand-edited).
+
+### The no-filesystem invariant (why the script returns instead of writes)
+
+Workflow scripts have **no filesystem / `Date` / `Math.random`** access. So the emitted script:
+
+- **Inlines each brief as a string constant at emit time** (that's why `board-data --with-briefs` lifts them now, not at run time).
+- **Does the fan-out execution + per-gate adversarial verification, then `return`s the WP reports.** It does **not** tick `05` checkboxes, mirror Tasks, commit, or merge.
+- **The orchestrator session reconciles afterward** from the returned reports: tick `05`, mirror/close Tasks, commit `chore({plan_slug}): WP-NN done`, merge in wave order. This preserves the skill's "only the orchestrator writes `05`" invariant and keeps the human in the loop at every freeze gate (a failed gate `return`s `{halted, failed, …}` and the run stops). See [`../lib/state.md` §"Workflow execution invariants"](../lib/state.md).
+
+### Emit + offer to run
+
+After writing the file, **offer to run it** (don't auto-run — Workflow is heavyweight, explicit-opt-in, and billed):
+
+> Wrote `artifact/orchestrate.workflow.js` (N waves, M work packages). Run it now? It'll fan out each wave, verify every freeze gate, and report back — I'll then reconcile `05`/Tasks/merges. (`/workflows` shows live progress.)
+
+On yes, the **calling session** invokes `Workflow({ scriptPath: "<plan>/artifact/orchestrate.workflow.js" })`, then reconciles from the returned `results`. On no, the user can run it themselves anytime. Either way `09-orchestration.md` remains the readable handoff and the single-orchestrator-agent path (`agents/orchestrator.md`) is still available as the no-Workflow fallback.
+
+### Edge cases (emit)
+
+- **Cycle / missing gate** — already refused at the matrix-derivation step; emit never runs on an invalid DAG.
+- **A WP is read-only / analysis (no file writes)** — drop `isolation:'worktree'` for that agent at emit time (worktrees cost ~200–500ms + disk; only worth it for parallel mutating WPs).
+- **No `--emit-workflow`** — no script written, `.groundwork.json.docs` unchanged for that path. Re-running with the flag later is idempotent (hash-diff on the whole file).
 
 ---
 

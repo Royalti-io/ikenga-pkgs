@@ -75,9 +75,17 @@ Return a single JSON envelope:
 
 ---
 
-## Agent type
+## Return schema
+
+The envelope above is the canonical `RESEARCH_SYNTHESIS_SCHEMA` in [`../lib/schemas.md`](../lib/schemas.md); a single `--sweep` finder returns the narrower `RESEARCHER_SCHEMA`.
+
+- **Single-agent path (default)** — the schema is a *prose* contract; the `research` action parses the agent's final message.
+- **`--sweep` path** — the same schema is passed to `agent(prompt, {schema})`, so the Workflow runtime enforces it at the tool layer and retries on mismatch. No prose parsing.
+
+---
+
+## Agent type & model
 
 - For most invocations: `general-purpose` (needs web tools + read tools).
 - For internal-only passes that are read-only over a known codebase: `Explore` is faster.
-
-The `research` action picks based on `{scope}`.
+- **Model**: `sonnet` (routine research). The `research` action picks the subagent type based on `{scope}` and passes `model: 'sonnet'` (Workflow path) or sets it on the `Agent` call (single-agent path), per [`../lib/schemas.md` §"Model tiers"](../lib/schemas.md).

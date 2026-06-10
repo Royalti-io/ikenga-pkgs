@@ -43,46 +43,46 @@
   <!-- ─── Mock data for standalone/preview rendering before refresh-board runs ─── -->
   <script type="application/json" id="board-mock-data">
   {
-    "plan":  { "title": "Studio P1 — orchestration board", "profile": "software", "goal": "Ship com.ikenga.studio Phase 1" },
+    "plan":  { "title": "Example plan — orchestration board", "profile": "software", "goal": "Ship Phase 1 of the example feature" },
     "gates": [
-      { "id": "G-CANVAS",  "wp": "WP-01",  "label": "Canvas extracted",       "status": "pending" },
-      { "id": "G-SCHEMA",  "wp": "WP-02",  "label": "Schema frozen",          "status": "passed"  },
-      { "id": "G-ADAPTER", "wp": "WP-05a", "label": "Adapter trait frozen",   "status": "pending" }
+      { "id": "G-SCHEMA",  "wp": "WP-02",  "label": "Data schema frozen",     "status": "passed"  },
+      { "id": "G-API",     "wp": "WP-05a", "label": "API contract frozen",    "status": "pending" },
+      { "id": "G-CORE",    "wp": "WP-01",  "label": "Core module extracted",  "status": "pending" }
     ],
     "wps": [
-      { "id": "WP-01",  "title": "Canvas extraction",        "repo": "contract",     "wave": 0, "deps": [],                                          "status": "in_progress", "gate": "G-CANVAS",  "brief": "Read 09-orchestration.md §WP-01. Lift the pan/zoom Canvas primitive out of shell/home into @ikenga/contract/canvas. DoD: pnpm typecheck green in contract/ + shell/." },
-      { "id": "WP-02",  "title": "Schema (Zod SoT)",         "repo": "ikenga-pkgs",  "wave": 0, "deps": [],                                          "status": "done",        "gate": "G-SCHEMA",  "brief": "Land the Zod schema as packages/apps/studio/shared/schema.ts. Start from plans/studio/drafts/schema.ts. DoD: schema_version z.literal(1); round-trip preserves unknown keys." },
-      { "id": "WP-05a", "title": "RendererAdapter trait",    "repo": "ikenga-pkgs",  "wave": 1, "deps": ["G-SCHEMA"],                                "status": "queued",      "gate": "G-ADAPTER", "brief": "Land renderers/types.ts only — the trait + RenderOptions + RenderContext. DoD: compiles standalone, matches 01-plan §Renderer-adapter contract verbatim." },
-      { "id": "WP-03",  "title": "Project sidecar core",     "repo": "ikenga-pkgs",  "wave": 1, "deps": ["G-SCHEMA"],                                "status": "queued",                           "brief": "Long-lived Bun sidecar: FS watcher, render queue, SQLite, JSON-RPC over stdio. See 09 §WP-03." },
-      { "id": "WP-04",  "title": "Per-folder trust gate",    "repo": "shell",        "wave": 1, "deps": [],                                          "status": "queued",                           "brief": "Tauri command + trust-UI reuse. See 09 §WP-04." },
-      { "id": "WP-09",  "title": "Skill bundle",             "repo": "ikenga-pkgs",  "wave": 1, "deps": ["G-SCHEMA"],                                "status": "queued",                           "brief": "All P1 skills incl. studio-beat-detect. See 09 §WP-09." },
-      { "id": "WP-10",  "title": "Block library (~30)",      "repo": "ikenga-pkgs",  "wave": 1, "deps": ["G-SCHEMA"],                                "status": "queued",                           "brief": "~30 blocks across kinds. See 09 §WP-10." },
-      { "id": "WP-12",  "title": "Shell renderer removal",   "repo": "shell",        "wave": 1, "deps": [],                                          "status": "queued",                           "brief": "Remove the read-only storyboard renderer; lift four reusable patterns as reference. See 09 §WP-12." },
-      { "id": "WP-05",  "title": "HyperFrames adapter",      "repo": "ikenga-pkgs",  "wave": 2, "deps": ["WP-03", "G-ADAPTER"],                      "status": "blocked",                          "brief": "Implement RendererAdapter for HF. See 09 §WP-05." },
-      { "id": "WP-05b", "title": "Excalidraw adapter",       "repo": "ikenga-pkgs",  "wave": 2, "deps": ["WP-03", "G-ADAPTER"],                      "status": "blocked",                          "brief": "Static + animated Excalidraw renderer. See 09 §WP-05b." },
-      { "id": "WP-06",  "title": "MCP server",               "repo": "ikenga-pkgs",  "wave": 2, "deps": ["WP-03"],                                   "status": "blocked",                          "brief": "Long-lived MCP server, thin JSON-RPC client over the sidecar. See 09 §WP-06." },
-      { "id": "WP-07c", "title": "Exporter",                 "repo": "ikenga-pkgs",  "wave": 2, "deps": ["WP-03"],                                   "status": "blocked",                          "brief": "FFmpeg concat module. See 09 §WP-07c." },
-      { "id": "WP-07",  "title": "Studio iframe (5 views)",  "repo": "ikenga-pkgs",  "wave": 3, "deps": ["G-CANVAS", "G-SCHEMA", "mock MCP"],        "status": "blocked",                          "brief": "One Vite bundle, Pattern C. See 09 §WP-07." },
-      { "id": "WP-08",  "title": "Manifest",                 "repo": "ikenga-pkgs",  "wave": 4, "deps": ["G-SCHEMA"],                                "status": "queued",                           "brief": "Author manifest.json per plan. See 09 §WP-08." },
-      { "id": "WP-11",  "title": "Smoke fixture",            "repo": "ikenga-pkgs",  "wave": 4, "deps": ["WP-02", "WP-05"],                          "status": "blocked",                          "brief": "Runnable smoke project at pkgs/test-studio/sample/. See 09 §WP-11." },
-      { "id": "WP-13",  "title": "Verification",             "repo": "ikenga-pkgs",  "wave": 4, "deps": ["all"],                                     "status": "blocked",                          "brief": "Full §13 verification sweep. Orchestrator runs." }
+      { "id": "WP-01",  "title": "Core module extraction",   "repo": "core", "wave": 0, "deps": [],                                  "status": "in_progress", "gate": "G-CORE",   "brief": "Read 09-orchestration.md §WP-01. Lift the shared primitive out of the entry module into the core package. DoD: typecheck green across all consumers." },
+      { "id": "WP-02",  "title": "Data schema",              "repo": "core", "wave": 0, "deps": [],                                  "status": "done",        "gate": "G-SCHEMA", "brief": "Land the validated schema as the single source of truth. Start from drafts/schema.ts. DoD: versioned; round-trip preserves unknown keys." },
+      { "id": "WP-05a", "title": "API contract types",       "repo": "api",  "wave": 1, "deps": ["G-SCHEMA"],                        "status": "queued",      "gate": "G-API",    "brief": "Land the contract types only — request/response shapes + options. DoD: compiles standalone, matches 01-plan §API contract verbatim." },
+      { "id": "WP-03",  "title": "Service layer",            "repo": "api",  "wave": 1, "deps": ["G-SCHEMA"],                        "status": "queued",                          "brief": "Long-lived service: store, queue, RPC over the transport. See 09 §WP-03." },
+      { "id": "WP-04",  "title": "Auth gate",                "repo": "api",  "wave": 1, "deps": [],                                  "status": "queued",                          "brief": "Per-request auth check + UI reuse. See 09 §WP-04." },
+      { "id": "WP-09",  "title": "Config bundle",            "repo": "core", "wave": 1, "deps": ["G-SCHEMA"],                        "status": "queued",                          "brief": "All Phase-1 config + presets. See 09 §WP-09." },
+      { "id": "WP-10",  "title": "Component library (~30)",  "repo": "web",  "wave": 1, "deps": ["G-SCHEMA"],                        "status": "queued",                          "brief": "~30 components across kinds. See 09 §WP-10." },
+      { "id": "WP-12",  "title": "Legacy view removal",      "repo": "web",  "wave": 1, "deps": [],                                  "status": "queued",                          "brief": "Remove the read-only legacy view; lift reusable patterns as reference. See 09 §WP-12." },
+      { "id": "WP-05",  "title": "Primary API handler",      "repo": "api",  "wave": 2, "deps": ["WP-03", "G-API"],                  "status": "blocked",                         "brief": "Implement the primary handler against the contract. See 09 §WP-05." },
+      { "id": "WP-05b", "title": "Secondary API handler",    "repo": "api",  "wave": 2, "deps": ["WP-03", "G-API"],                  "status": "blocked",                         "brief": "Static + streaming handler variant. See 09 §WP-05b." },
+      { "id": "WP-06",  "title": "Background worker",         "repo": "api",  "wave": 2, "deps": ["WP-03"],                           "status": "blocked",                         "brief": "Long-lived worker, thin RPC client over the service. See 09 §WP-06." },
+      { "id": "WP-07c", "title": "Exporter",                 "repo": "api",  "wave": 2, "deps": ["WP-03"],                           "status": "blocked",                         "brief": "Batch export module. See 09 §WP-07c." },
+      { "id": "WP-07",  "title": "Web UI (5 views)",         "repo": "web",  "wave": 3, "deps": ["G-CORE", "G-SCHEMA", "mock API"],  "status": "blocked",                         "brief": "One bundle, the locked layout pattern. See 09 §WP-07." },
+      { "id": "WP-08",  "title": "Packaging",                "repo": "core", "wave": 4, "deps": ["G-SCHEMA"],                        "status": "queued",                          "brief": "Author the package manifest per plan. See 09 §WP-08." },
+      { "id": "WP-11",  "title": "Smoke fixture",            "repo": "web",  "wave": 4, "deps": ["WP-02", "WP-05"],                  "status": "blocked",                         "brief": "Runnable smoke project under fixtures/. See 09 §WP-11." },
+      { "id": "WP-13",  "title": "Verification",             "repo": "core", "wave": 4, "deps": ["all"],                             "status": "blocked",                         "brief": "Full §13 verification sweep. Orchestrator runs." }
     ],
     "waves": [
       { "n": 0, "label": "Wave 0 · Gates",                "sub": "sequential" },
       { "n": 1, "label": "Wave 1 · Post-schema fan-out",  "sub": "parallel"   },
-      { "n": 2, "label": "Wave 2 · Post-sidecar",         "sub": "parallel"   },
-      { "n": 3, "label": "Wave 3 · Post-MCP + canvas",    "sub": "iframe"     },
+      { "n": 2, "label": "Wave 2 · Post-service",         "sub": "parallel"   },
+      { "n": 3, "label": "Wave 3 · Post-API + UI",        "sub": "iframe"     },
       { "n": 4, "label": "Wave 4 · Close-out",            "sub": "sequential" }
     ],
     "decisions": [
-      { "round": 7, "n": 6, "note": "Aspect ratio + capability matrix + cost fields + beat-map + save contract + passthrough" },
-      { "round": 6, "n": 5, "note": "Excalidraw P1 renderer; Excalimate P2 peer sidecar" },
-      { "round": 5, "n": 2, "note": "Pattern C locked; Monaco→CodeMirror parallel" }
+      { "round": 7, "n": 6, "note": "Capability matrix + cost fields + save contract + unknown-key passthrough locked" },
+      { "round": 6, "n": 5, "note": "Primary handler in P1; secondary variant deferred to P2" },
+      { "round": 5, "n": 2, "note": "Layout pattern locked; component-library swap runs in parallel" }
     ],
     "coverage": [
       { "phase": "P1", "designs": 1, "of": 1, "ok": true  },
-      { "phase": "P2", "designs": 1, "of": 5, "ok": false },
-      { "phase": "P3", "designs": 0, "of": 4, "ok": false }
+      { "phase": "P2", "designs": 1, "of": 3, "ok": false },
+      { "phase": "P3", "designs": 0, "of": 2, "ok": false }
     ],
     "research": { "external_stamped": "2026-05-20", "internal_stamped": "2026-05-20" }
   }
@@ -1061,11 +1061,13 @@
     const DATA = LIVE || MOCK;
     const USING_MOCK = !LIVE;
 
-    /* Repo tint mapping — three roles from the canonical token surface */
+    /* Repo/scope tint mapping — three roles from the canonical token surface.
+       Keys are the `repo` values used in board-data; unknown repos render
+       untinted (the `|| ''` fallback at each call site). */
     const REPO_TAG_CLASS = {
-      contract:      'tag-system',   // verdigris — systemic
-      shell:         'tag-tint',     // primary
-      'ikenga-pkgs': 'tag-deal',     // achievement
+      core: 'tag-system',   // verdigris — systemic
+      api:  'tag-tint',     // primary
+      web:  'tag-deal',     // achievement
     };
 
     const STATUS_LABEL = {
@@ -1073,7 +1075,7 @@
     };
     const FILTERS = ['all', 'in_progress', 'blocked', 'queued', 'done'];
 
-    /* Lucide-style minimal icons (inline path; matches studio/artifact pattern) */
+    /* Lucide-style minimal icons (inline path; matches the artifact pattern) */
     const Icon = ({ name, size = 12 }) => {
       const paths = {
         check:    'M20 6 9 17l-5-5',

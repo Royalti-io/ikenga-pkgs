@@ -11,16 +11,16 @@
        profiles/_shared/templates/artifact/index.html; the spec-state fence
        below is the only region an action writes (via `refresh-living-spec`).
 
-       Tab layout (universal across every groundwork plan):
+       This spec is ABOUT THE PLAN, not about the groundwork tool. Tab layout:
          • Overview   — plan-specific (hand-authored, edit freely)
-         • Spine      — universal (describes the groundwork plan-folder shape)
-         • Actions    — universal (describes the 8 stateless actions)
-         • Profiles   — universal (describes the 3 domain profiles)
-         • State      — universal (describes fences + IDs + idempotency)
-         • Board      — universal (points at artifact/board.html)
          • Phasing    — auto-regenerated from spec-state fence
          • Decisions  — auto-regenerated from spec-state fence
          • Risks      — auto-regenerated from spec-state fence
+
+       (How groundwork itself works — the spine, the actions, profiles, the
+       state machine, the board — is documented in the skill: SKILL.md +
+       lib/state.md, with plans/groundwork/ as the worked showcase. It does
+       NOT belong in every scaffolded plan's spec.)
 
        Theme/mode/density: deliberately NO in-page switcher. In-shell, the
        AppBridge host-context handshake (handled below) sets data-theme /
@@ -33,8 +33,8 @@
     The three volatile tabs (Phasing · Decisions · Risks) render from the JSON
     inside the `<script id="groundwork-spec-state">` tag below. The fence wraps
     the full `<script>…</script>` block so `refresh-living-spec` replaces the
-    whole thing (tags + JSON) cleanly. The other six tabs stay hand-authored
-    (universal: Spine/Actions/Profiles/State/Board) or plan-specific (Overview).
+    whole thing (tags + JSON) cleanly. The Overview tab stays hand-authored
+    (plan-specific); everything outside the fence is yours to edit.
   -->
   <!-- groundwork:auto:start spec-state -->
   <script type="application/groundwork+json" id="groundwork-spec-state">{"version":1,"generated_at":null,"generated_by":"init — empty scaffold; run `groundwork refresh-living-spec` to populate from anchor + docs","phases":[],"decisions":[],"risks":[]}</script>
@@ -47,7 +47,7 @@
   "id": "{{plan_slug}}-living-spec",
   "name": "{{plan_title}} — living spec",
   "version": "0.1.0",
-  "description": "Multi-tab walkthrough of the {{plan_title}} plan: overview, spine, actions, profiles, state, board, phasing, decisions, risks. Living document — updates as 01-plan + 04 + 05 evolve.",
+  "description": "Living spec for the {{plan_title}} plan: overview, phasing, decisions, risks. Living document — updates as 01-plan + 04 + 05 evolve.",
   "license": "Apache-2.0",
   "icon": { "lucide": "book-open-text" },
   "capabilities": {},
@@ -334,11 +334,6 @@
     const Icon = ({ name, size = 14 }) => {
       const p = {
         bookOpen:    'M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2zM22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z',
-        layout:      'M3 3h18v18H3zM3 9h18M9 21V9',
-        listTree:    'M21 12h-8M21 6h-8M21 18h-8M3 6 5 8 3 10M3 12 5 14M3 18 5 20',
-        boxes:       'M2.97 12.92A2 2 0 0 0 2 14.63v3.24a2 2 0 0 0 .97 1.71l3 1.8a2 2 0 0 0 2.06 0l3-1.8a2 2 0 0 0 .97-1.71v-3.24a2 2 0 0 0-.97-1.71l-3-1.8a2 2 0 0 0-2.06 0Z',
-        users:       'M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm13 10v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75',
-        database:    'M5 4h14v4H5zm0 8h14v4H5zm0 8h14v0',
         gitBranch:   'M6 3v12M18 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm0 0c0 5-3 5-6 5s-6 0-6 6m12-1a3 3 0 1 1 0 6 3 3 0 0 1 0-6Zm-12 6a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z',
         sparkles:    'm12 3-1.5 4.5L6 9l4.5 1.5L12 15l1.5-4.5L18 9l-4.5-1.5L12 3Z',
         shield:      'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',
@@ -355,11 +350,6 @@
     /* ═════════ Tab definitions ═════════ */
     const TABS = [
       { id: 'overview',  label: 'Overview',  icon: 'bookOpen' },
-      { id: 'spine',     label: 'Spine',     icon: 'listTree' },
-      { id: 'actions',   label: 'Actions',   icon: 'boxes',     count: 8 },
-      { id: 'profiles',  label: 'Profiles',  icon: 'users',     count: 3 },
-      { id: 'state',     label: 'State',     icon: 'database' },
-      { id: 'board',     label: 'Board',     icon: 'layout' },
       { id: 'phasing',   label: 'Phasing',   icon: 'gitBranch', count: SPEC_STATE.phases.length },
       { id: 'decisions', label: 'Decisions', icon: 'sparkles',  count: SPEC_STATE.decisions.length },
       { id: 'risks',     label: 'Risks',     icon: 'shield',    count: SPEC_STATE.risks.length },
@@ -376,13 +366,11 @@
             {{goal}}
           </p>
           <p className="muted">
-            This is a <strong>living spec</strong> — the multi-tab walkthrough of <code>plans/{{plan_slug}}/</code>.
-            The <strong>Decisions</strong> tab carries the round-by-round log;
-            <strong> Phasing</strong> shows current phase state;
-            <strong> Risks</strong> tracks the named mitigations. Those three tabs auto-regenerate from
-            the plan docs via <code>groundwork refresh-living-spec</code>. The
-            <strong> Spine / Actions / Profiles / State / Board</strong> tabs are universal — they describe
-            the groundwork skill itself and are identical across every plan that uses it.
+            This is the <strong>living spec</strong> for <code>plans/{{plan_slug}}/</code> — a quick read on where
+            the plan stands. The <strong>Phasing</strong> tab shows current phase state, <strong>Decisions</strong>
+            carries the round-by-round log, and <strong>Risks</strong> tracks the named mitigations. Those three
+            auto-regenerate from the plan docs via <code>groundwork refresh-living-spec</code>; this Overview is
+            hand-authored.
           </p>
         </section>
 
@@ -390,319 +378,16 @@
           <span className="eyebrow"><span className="eyebrow-dot"></span>Customize this overview</span>
           <h2>Replace this section with plan-specific content</h2>
           <p className="muted">
-            This Overview tab is hand-authored. Replace it with the framing that fits the plan — goal cards,
-            a portability matrix, a KPI strip, a "what works where" table, an architecture sketch. Everything
-            outside the <code>spec-state</code> fence (the JSON block in the head) is hand-authored and never
-            touched by an action; you can edit any part of this file.
+            This Overview tab is yours. Replace it with the framing that fits the plan — goal cards, a KPI strip,
+            a scope table, an architecture sketch, a "what's in / what's out" list. Everything outside the
+            <code> spec-state</code> fence (the JSON block in the head) is hand-authored and never touched by an
+            action; you can edit any part of this file.
           </p>
           <p className="muted">
-            See <code>plans/groundwork/artifact/index.html</code> for a fully-built example (it overrides
-            this Overview with three KPI cards and a portability matrix).
-          </p>
-        </section>
-      </>
-    );
-
-    /* ═════════ Universal tabs (DO NOT EDIT PER-PLAN — these describe the skill) ═════════ */
-
-    const Spine = () => (
-      <>
-        <section>
-          <span className="eyebrow"><span className="eyebrow-dot"></span>The reusable spine</span>
-          <h2>What every <code>groundwork</code> plan folder looks like</h2>
-          <p>
-            A small, opinionated set of documents that fit on one tree. Most are markdown; the artifact (this page) is HTML;
-            the state anchor is JSON. <strong>The shape is constant across profiles</strong> — vocabulary inside the files
-            changes via the active profile (see the Profiles tab).
-          </p>
-          <table className="ikenga-table">
-            <thead>
-              <tr><th>Artifact</th><th>Role</th><th>Generalizes to (non-code)</th></tr>
-            </thead>
-            <tbody>
-              <tr><td className="mono"><code>00-README.md</code></td><td>Index + status + read order</td><td>same</td></tr>
-              <tr><td className="mono"><code>01-plan.md</code></td><td>The authoritative spec</td><td>the authoritative brief / strategy</td></tr>
-              <tr><td className="mono"><code>02-research-external.md</code></td><td>Outside research, cited</td><td>market / precedent / literature research</td></tr>
-              <tr><td className="mono"><code>03-research-internal.md</code></td><td>Inside-the-project research</td><td>existing assets / prior work / constraints</td></tr>
-              <tr><td className="mono"><code>04-discussion.md</code></td><td>Newest-first "Round N" decision log</td><td>same</td></tr>
-              <tr><td className="mono"><code>05-tracking.md</code></td><td>Work blocks + critical path + status</td><td>workstreams + dependencies + status</td></tr>
-              <tr><td className="mono"><code>NN-*.md</code></td><td>Focused sub-plans for hard pieces</td><td>same</td></tr>
-              <tr><td className="mono"><code>drafts/</code></td><td>Ready-to-drop artifacts</td><td>templates, copy, datasets</td></tr>
-              <tr><td className="mono"><code>designs/</code></td><td>Option mockups to compare + lock (per phase, produced by the <strong>design</strong> action)</td><td>concept variations</td></tr>
-              <tr><td className="mono"><code>09-orchestration.md</code></td><td>Multi-agent kickoff: gates, WP matrix, briefs</td><td>owner/agent assignment + sequencing</td></tr>
-              <tr><td className="mono"><code>artifact/index.html</code></td><td>Living visual spec (this page) — Phasing/Decisions/Risks auto-regenerate, the rest is hand-authored</td><td>same</td></tr>
-              <tr><td className="mono"><code>artifact/board.html</code></td><td>Operational tracking board — generated by <code>refresh-board</code></td><td>same</td></tr>
-              <tr><td className="mono"><code>.groundwork.json</code></td><td><strong>Plan state/identity</strong>: profile, spine version, per-doc hashes + generated-region map. The anchor every action reads.</td><td>same</td></tr>
-            </tbody>
-          </table>
-        </section>
-
-        <section>
-          <span className="eyebrow"><span className="eyebrow-dot"></span>Generated-region fences</span>
-          <h2>How "augments, never clobbers" actually holds</h2>
-          <p>
-            Actions only write inside HTML-comment fences. Everything outside is hand-authored and immutable to actions.
-            A re-run recomputes a region's content, hashes it, and writes only if the hash differs. Hand-written prose
-            in the same file stays byte-identical.
-          </p>
-          <pre className="code-block">{`Hand-written introduction paragraph.
-
-<span class="com">&lt;!-- groundwork:auto:start research-summary --&gt;</span>
-<span class="com">&lt;!-- last_action: research · 2026-05-20T14:30:00Z --&gt;</span>
-
-(generated content — actions overwrite this block byte-for-byte on re-run)
-
-<span class="com">&lt;!-- groundwork:auto:end research-summary --&gt;</span>
-
-Hand-written follow-up.`}</pre>
-          <p className="muted">
-            See the <a href="#" onClick={(e) => { e.preventDefault(); window.dispatchEvent(new CustomEvent('jump-tab', { detail: 'state' })); }}>State</a> tab for the full hash-diff algorithm.
-          </p>
-        </section>
-      </>
-    );
-
-    const Actions = () => {
-      const ACTIONS = [
-        { name: 'init',                kind: 'scaffolder',  spawns: null,                desc: 'Interviews for goal + profile, drops folder skeleton + templates + .groundwork.json. Idempotent (no clobber on re-run; hand-written prose preserved via fences). One entry point that doesn\'t require an existing .groundwork.json — every other action refuses without one.' },
-        { name: 'research',            kind: 'agent-spawn', spawns: 'researcher',        desc: 'Spawns a researcher agent for external (WebSearch/WebFetch) + internal (Grep/Read) passes. Writes findings into the fenced regions in 02 + 03; the action does the writing, the agent only returns structured content. Cites every claim.' },
-        { name: 'design',              kind: 'composed',    spawns: 'design-skill',      desc: 'Profile-gated. For visual/UX-bearing work, produces ≥2 comparable mockups in designs/; user picks one; the lock becomes a Round in 04. Composes ikenga-artifact-builder / huashu-design / frontend-design — or plain HTML if none installed. Per-phase, not all upfront.' },
-        { name: 'review',              kind: 'agent-spawn', spawns: 'reviewer',          desc: 'The highest-value recurring action. Spawns a reviewer for gap analysis, appends a new "Round N" to 04 (newest first), allocates G-NN IDs, and re-syncs every doc the IDs touch — deterministic via the ID registry, not guessed. Can also target a design (design-review pass).' },
-        { name: 'clarify',             kind: 'read-only',   spawns: null,                desc: 'Lightweight readiness gate. Scans for open questions in 04, unspecified IDs in 01, missing locked designs for visual profiles, critical-path freshness, and profile-conformance. Runs as the pre-step inside orchestrate; refuses on fail.' },
-        { name: 'orchestrate',         kind: 'generator',   spawns: null,                desc: 'Generates 09-orchestration.md from 05: WP matrix, freeze gates, wave plan, intra-isolation, mock contracts, worktree-vs-branch recommendation, one self-contained brief per WP-NN. Runs clarify first; cites locked designs in the relevant WP briefs.' },
-        { name: 'refresh-board',       kind: 'composed',    spawns: 'artifact-builder',  desc: '(Re)generates artifact/board.html from current docs + .groundwork.json. Composes ikenga-artifact-builder when present; falls back to the self-contained board template at profiles/_shared/board/index.html otherwise. Shows a drift indicator off whole-file hashes.' },
-        { name: 'refresh-living-spec', kind: 'generator',   spawns: null,                desc: 'Regenerates ONLY the spec-state fence in artifact/index.html — phases (from 05-tracking.md + WP rollups), decisions (from 04-discussion.md rounds), risks (from 01-plan §Risks). Hand-authored Overview + universal tabs are never touched.' },
-        { name: 'status',              kind: 'read-only',   spawns: null,                desc: 'Read-only health report: doc freshness vs hashes, open G-NN findings, IDs in 01 missing downstream, designs locked vs pending, research stamp age, profile conformance. Three rule-based suggested next actions, prioritized.' },
-      ];
-      return (
-        <>
-          <section>
-            <span className="eyebrow"><span className="eyebrow-dot"></span>Nine stateless actions</span>
-            <h2>Verbs that operate on a plan folder</h2>
-            <p>
-              Each action is stateless: read <code>.groundwork.json</code>, do its job, write atomically. No in-memory
-              state between invocations. All writes go inside fenced regions (see the State tab). Re-running an action
-              with no other change is a byte-identical no-op.
-            </p>
-          </section>
-          <section>
-            <div className="action-grid">
-              {ACTIONS.map(a => (
-                <div key={a.name} className="action-card">
-                  <div className="action-card-head">
-                    <span className="action-card-name">{a.name}</span>
-                    <span className="action-card-kind">{a.kind.replace('-', ' ')}</span>
-                  </div>
-                  <p className="action-card-desc">{a.desc}</p>
-                  {a.spawns && (<div className="action-card-spawns">spawns <code>{a.spawns}</code> agent</div>)}
-                </div>
-              ))}
-            </div>
-          </section>
-          <section>
-            <h3>Three agent roles the actions drive</h3>
-            <table className="ikenga-table">
-              <thead><tr><th>Agent</th><th>Driven by</th><th>Returns</th></tr></thead>
-              <tbody>
-                <tr><td className="mono">researcher</td><td className="mono">research</td><td>structured findings + sources (JSON envelope; the action writes them inside fences)</td></tr>
-                <tr><td className="mono">reviewer</td><td className="mono">review</td><td>findings with kind/severity/fold/touches[] + strengths-to-defend + new-risks + out-of-scope</td></tr>
-                <tr><td className="mono">orchestrator</td><td className="mono">(kickoff brief; not orchestrate itself — that's deterministic)</td><td>seeds an orchestrator session at build kickoff; the brief instructs Task creation + wave sequencing</td></tr>
-              </tbody>
-            </table>
-          </section>
-        </>
-      );
-    };
-
-    const Profiles = () => (
-      <>
-        <section>
-          <span className="eyebrow"><span className="eyebrow-dot"></span>Domain profiles</span>
-          <h2>The same spine, different vocabulary</h2>
-          <p>
-            Templates are parameterized by a profile chosen at <code>init</code>. The spine is constant; the profile
-            swaps the labels + optional blocks. A single <code>_shared</code> base + thin per-profile overlays — not
-            full copies — keeps maintenance honest.
-          </p>
-          <table className="ikenga-table">
-            <thead>
-              <tr>
-                <th>Profile</th>
-                <th><code>05</code> work unit</th>
-                <th><code>09</code> isolation axis</th>
-                <th>Freeze-gate noun</th>
-                <th>Produces designs?</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><span className="tag tag-tint">software</span></td>
-                <td>work package / PR</td>
-                <td>git repo + disjoint dirs</td>
-                <td>interface freeze</td>
-                <td><span className="tag tag-deal">yes</span></td>
-              </tr>
-              <tr>
-                <td><span className="tag tag-system">general</span></td>
-                <td>workstream / deliverable</td>
-                <td>owner + non-overlapping scope</td>
-                <td>decision lock</td>
-                <td><span className="tag">no</span></td>
-              </tr>
-              <tr>
-                <td><span className="tag">content</span></td>
-                <td>piece / asset</td>
-                <td>channel + editorial slot</td>
-                <td>brief / voice / key-art lock</td>
-                <td><span className="tag tag-deal">yes</span></td>
-              </tr>
-            </tbody>
-          </table>
-          <p className="muted">
-            This plan uses the <code>{{profile}}</code> profile.
-          </p>
-        </section>
-
-        <section>
-          <h3>Profile format</h3>
-          <p>A profile is a folder <code>profiles/&lt;name&gt;/</code> with a <code>profile.json</code> declaring overlay shape + an optional <code>templates/</code> dir with per-doc overrides. Templates substitute <code>{'{{vocab.work_unit}}'}</code> placeholders.</p>
-          <pre className="code-block">{`<span class="com">// profiles/software/profile.json</span>
-{
-  <span class="key">"name"</span>: <span class="str">"software"</span>,
-  <span class="key">"extends"</span>: <span class="str">"_shared"</span>,
-  <span class="key">"spine_version"</span>: <span class="str">"1"</span>,
-  <span class="key">"labels"</span>: {
-    <span class="key">"work_unit"</span>:        <span class="str">"work package"</span>,
-    <span class="key">"isolation_axis"</span>:   <span class="str">"git repo + disjoint dirs"</span>,
-    <span class="key">"freeze_gate_noun"</span>: <span class="str">"interface freeze"</span>
-  },
-  <span class="key">"optional_blocks"</span>: [<span class="str">"schema"</span>, <span class="str">"manifest"</span>, <span class="str">"adapter_contracts"</span>, <span class="str">"critical_files"</span>],
-  <span class="key">"produces_designs"</span>: <span class="num">true</span>
-}`}</pre>
-        </section>
-      </>
-    );
-
-    const State = () => (
-      <>
-        <section>
-          <span className="eyebrow"><span className="eyebrow-dot"></span>State, identity & idempotency</span>
-          <h2>The mechanism that makes a stateless action safe</h2>
-          <p>
-            Three parts. Each is documented hermetically in the skill's reference at <code>.claude/skills/groundwork/lib/state.md</code> — every action references that file rather than reimplementing the rules.
-          </p>
-        </section>
-
-        <section>
-          <h3>1. The identity anchor</h3>
-          <p>
-            <code>.groundwork.json</code> at the folder root is what marks a directory as a groundwork plan and pins its profile (no heuristic guessing). Every action reads it first; <code>init</code> writes it; the rest update specific fields.
-          </p>
-          <pre className="code-block">{`{
-  <span class="key">"spine_version"</span>: <span class="str">"1"</span>,
-  <span class="key">"profile"</span>: <span class="str">"{{profile}}"</span>,
-  <span class="key">"goal"</span>: <span class="str">"…"</span>,
-  <span class="key">"docs"</span>: {
-    <span class="key">"01-plan.md"</span>: {
-      <span class="key">"hash"</span>: <span class="str">"sha256:aa5b…"</span>,
-      <span class="key">"generated_regions"</span>: [
-        { <span class="key">"id"</span>: <span class="str">"goal"</span>, <span class="key">"hash"</span>: <span class="num">"…"</span>, <span class="key">"last_action"</span>: <span class="str">"init"</span> }
-      ]
-    }
-  },
-  <span class="key">"ids"</span>: {
-    <span class="key">"WP-01"</span>: { <span class="key">"kind"</span>: <span class="str">"work_package"</span>, <span class="key">"status"</span>: <span class="str">"done"</span> }
-  }
-}`}</pre>
-        </section>
-
-        <section>
-          <h3>2. The fence grammar</h3>
-          <p>
-            Actions write only inside <code>{'<!-- groundwork:auto:start ID -->'}</code> … <code>{'<!-- groundwork:auto:end ID -->'}</code> blocks. Inner-content hashes track region state; whole-file hashes track drift. A user editing inside a fence triggers a warn-and-skip (never a clobber).
-          </p>
-          <table className="ikenga-table">
-            <thead><tr><th>File</th><th>Reserved fence IDs</th><th>Owner action</th></tr></thead>
-            <tbody>
-              <tr><td className="mono">00-README.md</td><td className="mono">status-block, spine-index</td><td className="mono">init, subplan</td></tr>
-              <tr><td className="mono">01-plan.md</td><td className="mono">goal, ids</td><td className="mono">init, review</td></tr>
-              <tr><td className="mono">02-research-external.md</td><td className="mono">findings, sources</td><td className="mono">research</td></tr>
-              <tr><td className="mono">03-research-internal.md</td><td className="mono">findings</td><td className="mono">research</td></tr>
-              <tr><td className="mono">04-discussion.md</td><td className="mono">rounds-index</td><td className="mono">review</td></tr>
-              <tr><td className="mono">05-tracking.md</td><td className="mono">wp-matrix, wave-plan, critical-path</td><td className="mono">orchestrate</td></tr>
-              <tr><td className="mono">artifact/index.html</td><td className="mono">spec-state</td><td className="mono">refresh-living-spec</td></tr>
-              <tr><td className="mono">artifact/board.html</td><td className="mono">board-data, board-meta</td><td className="mono">refresh-board</td></tr>
-            </tbody>
-          </table>
-        </section>
-
-        <section>
-          <h3>3. Stable IDs — the traceability backbone</h3>
-          <p>
-            IDs thread <code>01-plan.md</code> → <code>05-tracking.md</code> → <code>09-orchestration.md</code> → board. The review action computes the affected-doc set from the ID registry + region hashes, not from guessing.
-          </p>
-          <table className="ikenga-table">
-            <thead><tr><th>ID kind</th><th>Format</th><th>Example</th><th>Where it originates</th></tr></thead>
-            <tbody>
-              <tr><td><span className="tag tag-warn">gap</span></td><td className="mono">G-NN</td><td className="mono">G-12</td><td>review pass — folded into a Round</td></tr>
-              <tr><td><span className="tag tag-tint">work package</span></td><td className="mono">WP-NN</td><td className="mono">WP-05, WP-05a</td><td>orchestrate — derived from 05 sections</td></tr>
-              <tr><td><span className="tag tag-system">freeze gate</span></td><td className="mono">G-&lt;NAME&gt;</td><td className="mono">G-SCHEMA, G-VERB</td><td>orchestrate — declared in plan §Freeze gates</td></tr>
-              <tr><td><span className="tag tag-deal">design</span></td><td className="mono">D-NN</td><td className="mono">D-01</td><td>design pass — one per <code>designs/*.html</code> produced</td></tr>
-            </tbody>
-          </table>
-        </section>
-      </>
-    );
-
-    const Board = () => (
-      <>
-        <section>
-          <span className="eyebrow"><span className="eyebrow-dot"></span>The plan-board artifact</span>
-          <h2>A separate artifact — at <code>artifact/board.html</code></h2>
-          <p>
-            The <em>living spec</em> (this page, at <code>artifact/index.html</code>) is the conceptual walkthrough — what the plan is, how the spine works, what each action does, the phases/decisions/risks. The <em>tracking board</em> is the operational dashboard you return to during a run: dense WP table with status, freeze gates, the decisions log + design coverage + research freshness in the right rail.
-          </p>
-          <p className="muted">
-            <a href="./board.html" target="_top">Open the tracking board →</a> in a new view to see this plan's WPs on the same canonical layout the skill ships. <code>refresh-board</code> writes into its <code>board-data</code> fence; the embedded mock-data block is the fallback before the first refresh.
-          </p>
-        </section>
-
-        <section>
-          <h3>Layouts — Mission Control default + Wave Board toggle</h3>
-          <p>
-            Two layouts, same data, toggle between them. Mission Control is the default — status-first, dense WP table + right rail carrying cross-cutting state (decisions, design coverage, research freshness). Wave Board is the toggle — waves as columns, cards flow left-to-right, gates as checkpoint chips.
-          </p>
-          <table className="ikenga-table">
-            <thead><tr><th>Surface</th><th>Layout</th><th>Where</th></tr></thead>
-            <tbody>
-              <tr><td>Canonical template</td><td>Mission Control + Wave Board toggle</td><td className="mono"><code>.claude/skills/groundwork/profiles/_shared/board/index.html</code></td></tr>
-            </tbody>
-          </table>
-        </section>
-
-        <section>
-          <h3>Per-WP actions</h3>
-          <table className="ikenga-table">
-            <thead><tr><th>Action</th><th>Standalone (any browser)</th><th>In Ikenga shell</th></tr></thead>
-            <tbody>
-              <tr>
-                <td><strong>Copy brief</strong></td>
-                <td><span className="tag tag-deal">✓ copies WP brief to clipboard</span></td>
-                <td><span className="tag tag-deal">✓ same</span></td>
-              </tr>
-              <tr>
-                <td><strong>Start session</strong></td>
-                <td><span className="tag">falls back to copy</span></td>
-                <td><span className="tag tag-tint">opens the New-Session dialog pre-filled</span></td>
-              </tr>
-            </tbody>
-          </table>
-        </section>
-
-        <section>
-          <h3>Composition with <code>ikenga-artifact-builder</code></h3>
-          <p>
-            The board is itself a proper Ikenga artifact (with <code>ikenga-manifest</code>, <code>capabilities</code>, mock-data fallback). <code>refresh-board</code> composes <code>ikenga-artifact-builder</code> when it's installed; otherwise it copies the self-contained fallback template and injects the live data into the fenced JSON blocks. <strong>Soft dependency, never hard.</strong>
+            New to groundwork? The skill itself — the spine, the actions, profiles, the state machine, the board —
+            is documented in <code>.claude/skills/groundwork/SKILL.md</code> + <code>lib/state.md</code>, with
+            <code> plans/groundwork/</code> as the worked showcase. That's the tool's documentation; this spec is
+            about <em>your</em> plan.
           </p>
         </section>
       </>
@@ -870,15 +555,8 @@ Hand-written follow-up.`}</pre>
 
       useEffect(() => { art.publishState && art.publishState('spec', { tab }); }, [tab, art]);
 
-      useEffect(() => {
-        const handler = (e) => setTab(e.detail);
-        window.addEventListener('jump-tab', handler);
-        return () => window.removeEventListener('jump-tab', handler);
-      }, []);
-
       const RENDER = {
-        overview: <Overview />, spine: <Spine />, actions: <Actions />, profiles: <Profiles />,
-        state: <State />, board: <Board />, phasing: <Phasing />, decisions: <Decisions />, risks: <Risks />,
+        overview: <Overview />, phasing: <Phasing />, decisions: <Decisions />, risks: <Risks />,
       };
 
       return (

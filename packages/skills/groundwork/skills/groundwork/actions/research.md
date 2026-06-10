@@ -7,7 +7,7 @@
 
 **Spine-version**: `expected = "1"`. Runs [`../lib/state.md` §"Spine-version preamble gate"](../lib/state.md#spine-version-preamble-gate) as the first step after loading `.groundwork.json` — writing action, so refuses on either direction of mismatch. No-op at v1=current.
 
-**Spawns**: one researcher agent (via the `Agent` tool, `general-purpose` subagent by default).
+**Spawns**: one researcher agent (via the `Agent` tool, `general-purpose` subagent by default) — or, with `--sweep`, a fan-out of finders via a Workflow (see §"Multi-modal sweep").
 
 ---
 
@@ -92,9 +92,37 @@ If the user has hand-edited inside a fence, the action warns and skips the regio
 
 ---
 
+## Multi-modal sweep (`--sweep`)
+
+**Opt-in.** Default is the single general-purpose agent above. With `--sweep`, run a Workflow that fans out **finders by angle** — each blind to the others, so coverage comes from diversity of search lane rather than one agent trying every angle:
+
+| Angle | Scope | Tools | Tier |
+|---|---|---|---|
+| `external-precedent` | external | WebSearch / WebFetch — prior art, precedents, related research | `sonnet` |
+| `external-library-docs` | external | WebSearch / WebFetch — library/API/RFC docs (`software` only) | `sonnet` |
+| `internal-codebase` | internal | Grep / Glob / Read — prior work, code that'd be touched | `sonnet` |
+| `internal-constraints` | internal | Grep / Glob / Read — constraints already encoded, conventions | `sonnet` |
+
+Only the angles matching the chosen scope run (external-only → first two; internal-only → last two; both → all). Sketch:
+
+```js
+const found = (await parallel(ANGLES.map(a => () =>
+  agent(researcherBrief(a), { label: a.key, schema: RESEARCHER_SCHEMA, model: 'sonnet' })
+))).filter(Boolean)
+// synthesis: dedup + merge into the two fence payloads (one agent, sees all finders)
+const merged = await agent(synthesisBrief(found), { schema: RESEARCH_SYNTHESIS_SCHEMA, model: 'sonnet' })
+return merged
+```
+
+`RESEARCHER_SCHEMA` / `RESEARCH_SYNTHESIS_SCHEMA` are in [`../lib/schemas.md`](../lib/schemas.md). Optionally **budget-scale** the finder count: `const N = budget.total ? Math.min(ANGLES.length, Math.floor(budget.total/120_000)) : ANGLES.length`.
+
+**The Workflow returns `merged`; it does not write files** (no filesystem in scripts). The action then writes `merged.external_findings` / `merged.external_sources` / `merged.internal_findings` into their fences via the **same `write-region` path** as the single-agent case (step 5 above), stamps via the script, and reports `WRITTEN`/`UNCHANGED`/`SKIPPED_DIRTY` identically. Pass today's date into the synthesis prompt (scripts can't read the clock). If Workflow isn't available, `--sweep` falls back to the single-agent path with a one-line note.
+
+---
+
 ## Composition
 
-groundwork doesn't reimplement web search — it spawns a general-purpose agent that uses the standard Claude Code research tools. For workspaces with project-specific MCP search (e.g. PostHog, Royalti CMS), the agent's brief notes "use any MCP tools available for project-scoped search" without naming them — the agent reads the tool list at spawn time.
+groundwork doesn't reimplement web search — it spawns a general-purpose agent (or, under `--sweep`, a fan-out of them) that uses the standard Claude Code research tools. For workspaces with project-specific MCP search (e.g. PostHog, Royalti CMS), the agent's brief notes "use any MCP tools available for project-scoped search" without naming them — the agent reads the tool list at spawn time. Under `--sweep`, Workflow agents reach the same session-connected MCP tools via on-demand schema loading.
 
 ---
 

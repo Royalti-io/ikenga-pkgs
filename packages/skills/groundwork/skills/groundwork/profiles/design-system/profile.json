@@ -1,0 +1,29 @@
+{
+  "name": "design-system",
+  "extends": "_shared",
+  "spine_version": "1",
+  "labels": {
+    "work_unit": "part",
+    "isolation_axis": "tier + domain",
+    "freeze_gate_noun": "design lock"
+  },
+  "optional_blocks": ["mode", "taxonomy", "tokens", "fixtures", "gallery", "quality_gate"],
+  "produces_designs": true,
+  "spine": [
+    "00-README.md",
+    "01-plan.md",
+    "02-research-external.md",
+    "03-research-internal.md",
+    "04-discussion.md",
+    "05-tracking.md",
+    "parts-template.md",
+    "quality-gate.md"
+  ],
+  "spine_overrides": {
+    "00-README.md": "templates/00-README.md",
+    "01-plan.md": "templates/01-plan.md",
+    "05-tracking.md": "templates/05-tracking.md",
+    "parts-template.md": "templates/parts-template.md",
+    "quality-gate.md": "templates/quality-gate.md"
+  }
+}

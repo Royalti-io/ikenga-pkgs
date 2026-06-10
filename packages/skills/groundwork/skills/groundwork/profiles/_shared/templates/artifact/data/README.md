@@ -30,7 +30,7 @@ The artifact's bridge polyfill (or the real Ikenga AppBridge `sources` API) load
 
 ## When NOT to use this folder
 
-- **Tiny mock data** — inline it in a `<script type="application/json" id="…-mock-data">` block in the HTML itself. Studio's living spec uses inline; the tracking board uses inline.
+- **Tiny mock data** — inline it in a `<script type="application/json" id="…-mock-data">` block in the HTML itself (the tracking board ships its fallback this way).
 - **Live data** — that's an AppBridge `sources.subscribe()` call against a sidecar / MCP server, not a static file.
 
 ## Refresh modes

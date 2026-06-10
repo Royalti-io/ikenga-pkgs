@@ -70,8 +70,8 @@ If you're an agent reading this README — that's how to check what's currently 
 
 _Hand-written narrative. Update as things move. The auto-block above is the machine-readable snapshot; this section is the human-readable one — "where we actually are right now" beyond the bullet list._
 
-- `01-plan.md` — _e.g. "authoritative spec; Pattern X locked, manifest sketch updated to single /studio route."_
-- `05-tracking.md` — _e.g. "14 work blocks; §7 rewritten as single-iframe-with-sub-views."_
+- `01-plan.md` — _e.g. "authoritative spec; Pattern X locked, manifest sketch updated to a single entry route."_
+- `05-tracking.md` — _e.g. "14 work blocks; §7 rewritten as a single view with sub-views."_
 - _sub-plans, drafts, designs — note current shape of each._
 
 ## Working with this folder

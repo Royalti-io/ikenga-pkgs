@@ -97,8 +97,18 @@ Return a single JSON envelope:
 
 ---
 
-## Agent type
+## Return schema
+
+This envelope is the canonical `REVIEWER_FINDINGS_SCHEMA` in [`../lib/schemas.md`](../lib/schemas.md).
+
+- **Single-agent path (default)** — prose contract; the `review` action parses the agent's final message.
+- **`--panel` path** — passed to `agent(prompt, {schema})`; the Workflow runtime enforces it (auto-retry) and each finding is then adversarially verified against `VERDICT_SCHEMA` before the action folds it. See `actions/review.md` §"Verified panel".
+
+---
+
+## Agent type & model
 
 - `general-purpose` for whole-plan reviews (needs Read across many files + sometimes WebSearch for precedent).
 - `Explore` for read-only structural reviews of a single doc.
 - The user can override via `--agent <type>` to `review`.
+- **Model**: lens-finders run at `sonnet`; the adversarial `VERDICT` verifiers run at `opus` (skeptical refutation is the high-stakes step). Per [`../lib/schemas.md` §"Model tiers"](../lib/schemas.md).

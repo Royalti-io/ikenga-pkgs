@@ -89,3 +89,19 @@ DO-NOT-TOUCH · DESIGN REFERENCE (if any) · DEFINITION OF DONE (self-verifiable
 ```
 
 A subagent picks up its brief from `09-orchestration.md §WP-NN`; it does not need to read `09` end-to-end.
+
+When you spawn subagents yourself (the improvised path), set each one's `model` to the WP's `tier` from the matrix (`opus` / `sonnet` / `haiku` — see `lib/schemas.md` §"Model tiers"); don't leave it to inherit.
+
+---
+
+## Workflow execution path (when `artifact/orchestrate.workflow.js` exists)
+
+If `orchestrate` was run with `--emit-workflow`, you do **not** improvise the fan-out — you run the emitted script and reconcile its results. This is the preferred path; the improvised "spawn a subagent per WP by hand" protocol above is the fallback when no script exists or Workflow is unavailable.
+
+1. **KICKOFF** — same as below: `groundwork status` + `clarify`, then `TaskCreate` per `WP-NN`.
+2. **RUN** — invoke `Workflow({ scriptPath: "{plan_folder}/artifact/orchestrate.workflow.js" })`. It fans out each wave (WPs in `parallel`, each in its own worktree), adversarially verifies every freeze gate, and **returns** `{ results }` (or `{ halted, failed, results, verdicts }` if a gate failed sign-off). It writes no files — that's yours.
+3. **RECONCILE** (from the returned `results[]`, each a `WP_REPORT_SCHEMA` object) — for every WP reported `done` and gate-verified: set its Task `completed`, tick its `05-tracking.md` checkbox, and commit `chore({plan_slug}): WP-NN done`. For `blocked` / `needs-decision`: leave the checkbox, surface to the user. Record any non-null `drift` per the DRIFT LOG step.
+4. **MERGE** — in wave order, per the matrix (contract/lib first, `pnpm install`, then consumers).
+5. **HALTED GATE** — if the run returned `{ halted }`, the freeze gate failed sign-off: do **not** proceed. Review the `verdicts`, fix or re-scope the failing WP(s), and re-run the workflow (cached unchanged WPs return instantly via Workflow resume) or finish those WPs by hand.
+
+The invariant is unchanged: **only you write `05`/Tasks/commits/merges.** The workflow just replaces the manual per-WP spawn-and-collect loop with a deterministic, gate-verified fan-out.

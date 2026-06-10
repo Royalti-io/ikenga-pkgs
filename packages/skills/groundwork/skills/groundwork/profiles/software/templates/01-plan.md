@@ -59,15 +59,15 @@ _For any non-trivial software project that integrates with existing code. The ex
 
 | Concern | Strategy | Source / target | Notes |
 |---|---|---|---|
-| _e.g._ Schema | **Lift** | from `pkgs/_review/<x>/.../schema.ts` → `drafts/schema.ts` → consumer WP-NN | byte-identical with `<other source>`; renamed `Beat → Cell` at the boundary |
-| _e.g._ Canvas primitive | **Extract** | from `shell/src/shell/home/home.tsx` → `contract/src/canvas/` | gates WP-NN; see `06-canvas-extraction.md` diff plan |
+| _e.g._ Schema | **Lift** | from `path/to/source/schema.ts` → `drafts/schema.ts` → consumer WP-NN | byte-identical with `<other source>`; renamed `OldType → NewType` at the boundary |
+| _e.g._ Shared primitive | **Extract** | from `path/to/entry-module.ts` → `core/src/<primitive>/` | gates WP-NN; see `06-<primitive>-extraction.md` diff plan |
 | _e.g._ Adapter A | **Build fresh** | `WP-NN` ships `path/to/adapter.ts` | depends on contract WP-NN |
 | _e.g._ Library X | **Net-zero-fork** | npm-depend `@org/x@version`; integrate via the public surface | upstream stability check: `<source>` |
 | _e.g._ Legacy viewer | **Drop** | `path/to/old-viewer.tsx` removed in WP-NN | nothing depends on it; verified by grep |
 
 ### Upstream library posture
 
-_If integrating with multiple libraries, document the per-library strategy. Studio's "net zero forks" policy is a useful default — never fork an upstream; integrate via published API surfaces or peer sidecars._
+_If integrating with multiple libraries, document the per-library strategy. A "net-zero-forks" policy is a useful default — never fork an upstream; integrate via published API surfaces or peer sidecars._
 
 ## Renderer / adapter contracts
 

@@ -76,7 +76,7 @@ Lives at the root of every groundwork plan folder (alongside `00-README.md`). It
   },
   "ids": {                              // global ID registry (Round 2 traceability)
     "G-01": { "doc": "04-discussion.md", "round": 2, "status": "folded",   "touches": ["01-plan.md", "05-tracking.md"] },
-    "WP-01": { "doc": "05-tracking.md",  "wave": 0,  "status": "queued",   "depends_on": [], "gate": "G-CANVAS" },
+    "WP-01": { "doc": "05-tracking.md",  "wave": 0,  "status": "queued",   "depends_on": [], "gate": "G-CANVAS", "tier": "opus" },
     "G-SCHEMA": { "kind": "freeze_gate", "wp": "WP-02", "status": "pending" }
   },
   "designs": {                          // Round 3 — design coverage tracking
@@ -103,6 +103,7 @@ Lives at the root of every groundwork plan folder (alongside `00-README.md`). It
 - **`docs.<path>.hash`** — sha256 of the whole file's bytes as last written by a groundwork action. If the current on-disk hash differs, hand edits exist somewhere — actions still honor fences but `status` reports the drift.
 - **`docs.<path>.generated_regions[]`** — one entry per `<!-- groundwork:auto:start ID -->` block in that file. The `hash` is over the **inner content only** (excluding the fence comments themselves) so a fence-position move counts as a hand edit, not a regenerated block.
 - **`ids`** — the **traceability backbone** (Round 2). Every `G-NN` / `WP-NN` / `G-<NAME>` ID lives here with its origin doc and the set of docs it touches. The review action computes the affected-doc set from this registry + region hashes — no guessing.
+- **`ids[WP-NN].tier`** — *optional* model tier (`opus` / `sonnet` / `haiku`) by task weight, stamped by `orchestrate` (heuristic default, user-overridable via `--field tier=<t>`). Surfaced by `board-data` and consumed by the emitted Workflow (`agent(…, {model})`) and the orchestrator's improvised spawns. See [`schemas.md` §"Model tiers"](schemas.md). Absent → consumers default to `sonnet`.
 - **`ids[WP-NN].drift_log[]`** (Round 8 · G-13) — *optional* per-WP audit trail of in-flight scope changes. Empty by default; only present when the shipped code diverged from the WP's sub-plan or brief. Each entry: `{round: <N>, commit: "<sha>", scope_change: "<one line>", justification: "<one line>", subplan_section: "<§ name>" | null}`. Populated by the orchestrator when a WP report mentions a "beyond the diff plan" decision (mirrors the matching `## Drift log` row in the diff-plan sub-plan). Surfaces in `review` and `status`: a future review pass greps `drift_log[]` for "shipped code matches plan?" verification. WPs that match plan keep the field absent — empty `drift_log[]` is a positive signal, not noise.
 - **`designs`** — Round 3 design-coverage registry; `clarify` checks for visual-profile readiness, `status` reports gaps, `orchestrate` cites locked designs in the relevant WP briefs.
 - **`subplans`** — Focused `NN-*.md` sub-plans (numbered ≥ 06). `subplan` action creates them; `status` lists them; `review` notes when a finding touches one. **No `SP-NN` ID** — sub-plans are file-numbered, not ID-allocated; cross-references happen by filename (and by the optional `ref` field linking to a WP / gap / section). `status` field is hand-edited: `active` / `landed` / `abandoned` / `deferred`.
@@ -164,7 +165,7 @@ The transform table format is deliberately out of scope for v1 — the gate alon
 
 A **profile** governs the vocabulary and spine a plan resolves against. It is the second identity input (after `.groundwork.json`) — `init` writes the profile name into the anchor, and every action reads `profiles/<name>/profile.json` from the skill source to look up labels, spine list, and overrides.
 
-The three built-ins (`software`, `general`, `content`) are the canonical worked examples. **Users may drop their own profile under `.claude/skills/groundwork/profiles/<name>/`** and `init --profile <name>` will resolve it like a built-in, provided it satisfies the contract below. `status`'s profile-conformance check (`actions/status.md` §"Profile conformance check") is the gate that validates this on every read.
+The four built-ins (`software`, `general`, `content`, `design-system`) are the canonical worked examples. **Users may drop their own profile under `.claude/skills/groundwork/profiles/<name>/`** and `init --profile <name>` will resolve it like a built-in, provided it satisfies the contract below. `status`'s profile-conformance check (`actions/status.md` §"Profile conformance check") is the gate that validates this on every read.
 
 ### File layout
 
@@ -256,7 +257,7 @@ with `profile.json`:
 }
 ```
 
-`groundwork init plans/incident-2026-05-22/ --profile ops --goal "Stand up the GCS-failover runbook"` resolves the profile, materializes 01–05 (only 05 from the ops overlay; the other four from `_shared`), and writes a `.groundwork.json` with `profile: "ops"`. The next `groundwork status` reports `ops` alongside the three built-ins as ✓ conformant.
+`groundwork init plans/incident-2026-05-22/ --profile ops --goal "Stand up the GCS-failover runbook"` resolves the profile, materializes 01–05 (only 05 from the ops overlay; the other four from `_shared`), and writes a `.groundwork.json` with `profile: "ops"`. The next `groundwork status` reports `ops` alongside the four built-ins as ✓ conformant.
 
 If the user typos `extneds: "_shared"`, rule 4 fires: `profile "ops": extends must be "_shared" (got undefined)` and `init` refuses.
 
@@ -308,13 +309,16 @@ Inside HTML, JSON, or any non-markdown file, use the same `<!-- … -->` form wh
 | `05-tracking.md` | `critical-path` | `orchestrate` |
 | `05-tracking.md` | `wave-plan` | `orchestrate` |
 | `09-orchestration.md` | `*` (whole-file) | `orchestrate` |
+| `artifact/orchestrate.workflow.js` | `*` (whole-file) | `orchestrate --emit-workflow` |
 | `artifact/board.html` | `board-data` | `refresh-board` |
 | `artifact/board.html` | `board-meta` | `refresh-board` |
 | `artifact/index.html` | `spec-state` | `refresh-living-spec` |
 
-`artifact/index.html` is the **living spec** — scaffolded from `profiles/_shared/templates/artifact/index.html` at `init` and updated only inside the `spec-state` fence by `refresh-living-spec`. Everything outside the fence (universal Spine/Actions/Profiles/State/Board tabs, hand-authored Overview) is preserved across re-runs. `artifact/board.html` is the generated tracking board — `refresh-board` owns it.
+`artifact/index.html` is the **living spec** — scaffolded from `profiles/_shared/templates/artifact/index.html` at `init` and updated only inside the `spec-state` fence by `refresh-living-spec`. Everything outside the fence (the hand-authored Overview tab) is preserved across re-runs. `artifact/board.html` is the generated tracking board — `refresh-board` owns it.
 
 `09-orchestration.md` is the one file an action may rewrite whole. It is *generated*; the convention is "delete and re-author from `05` + `.groundwork.json`," not "edit in place." If the user has added hand-written sections, they go above an explicit `<!-- groundwork:auto:start orchestration -->` fence; everything outside survives.
+
+`artifact/orchestrate.workflow.js` is the *executable twin* of `09-orchestration.md`, emitted only under `--emit-workflow`. Like `09` it is whole-file generated (never hand-edited) and re-derived from the wave plan on each run; its whole-file hash lives in `docs`. It is filled from `profiles/_shared/templates/artifact/orchestrate.workflow.js`.
 
 ---
 
@@ -426,9 +430,21 @@ The user re-runs `groundwork review` immediately, no change. All three regions r
 
 ---
 
+## Workflow execution invariants
+
+The opt-in Workflow paths (`research --sweep`, `review --panel`, `orchestrate --emit-workflow`) are an *execution* layer over the same state machine — they never bypass it. Two hard constraints, because **Workflow scripts have no filesystem, `Date`, or `Math.random`**:
+
+1. **The script computes; the calling session persists.** A Workflow `agent()` fan-out fans out and *returns* structured results (validated against the [`schemas.md`](schemas.md) contracts). It writes nothing to the plan folder. The **action / orchestrator session** then applies every result through the ordinary path — `write-region` into fences, `next-id` + `register-id` for the registry, `05` checkbox ticks, Task mirroring, commits. So the "fences are the only writable blocks" and "only the orchestrator writes `05`" invariants hold unchanged; Workflow just produces *better inputs* (fanned-out, schema-valid, adversarially verified) to the same writes.
+2. **Anything time- or randomness-dependent is passed in, not read.** The emit step inlines WP briefs as string constants and substitutes a literal `meta`; the synthesis stamp (`research --sweep`) is passed into the prompt. This is also why emitted scripts are deterministic to resume (Workflow caches unchanged `agent()` calls).
+
+Net: opt-in Workflow changes *how candidate content is produced and verified*, never *how state is recorded*. Disable the flags (or run without Workflow available) and behavior is byte-identical to the single-agent / prose-handoff path.
+
+---
+
 ## What this enables
 
 - Stateless actions: every action reads `.groundwork.json` first, does its thing, writes atomically. No in-memory state survives between invocations.
 - Honest "augments, never clobbers": fences are the contract; hand-written prose outside is sacred.
 - Deterministic re-sync after review: the IDs say which docs to touch; the registry tracks the touches; the action follows the list.
 - Profile portability: nothing in this file assumes code. The state mechanism works identically for a marketing campaign or an org change — the templates change, the state machine does not.
+- Optional Workflow execution: when the user opts in, the same state machine takes fanned-out, schema-validated, gate-verified inputs instead of single-agent ones — without changing what gets written or how.

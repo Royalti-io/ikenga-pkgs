@@ -81,7 +81,7 @@ The merge criterion in `## Goal` restated as a checklist:
 
 ## Drift log
 
-Empty by default — only filled in if the shipped code diverges from the plan above. Each entry is one row recording an in-flight scope change (added field, removed step, signature tweak, process deviation) the build agent made without re-spec'ing first. The orchestrator appends to this list when a WP's report mentions a "beyond the diff plan" decision, AND mirrors a one-line cross-ref into the WP's report in `05-tracking.md`. Keeps process drift discoverable to future `review` passes (the studio failure mode this skill was built to prevent).
+Empty by default — only filled in if the shipped code diverges from the plan above. Each entry is one row recording an in-flight scope change (added field, removed step, signature tweak, process deviation) the build agent made without re-spec'ing first. The orchestrator appends to this list when a WP's report mentions a "beyond the diff plan" decision, AND mirrors a one-line cross-ref into the WP's report in `05-tracking.md`. Keeps process drift discoverable to future `review` passes (the silent plan-vs-shipped-code drift this skill was built to prevent).
 
 | Round | Commit | Scope change | Justification | Sub-plan section affected |
 |---|---|---|---|---|

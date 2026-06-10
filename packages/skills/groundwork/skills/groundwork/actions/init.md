@@ -41,7 +41,7 @@ Use `AskUserQuestion`. Skip any question already answered.
 |---|---|---|---|
 | 1 | Where should this plan live? | Target folder | (free-text, default `plans/<today>-<derived-from-goal>/` — date-prefixed `YYYY-MM-DD-slug`, see step 1) |
 | 2 | What's the one-sentence goal? | Goal | (free-text) |
-| 3 | Which profile? | Profile | `software` (Recommended) — code/feature work, produces designs · `general` — non-code, lean, no designs · `content` — editorial/marketing work, produces designs (key art) · _or a custom profile name dropped under `.claude/skills/groundwork/profiles/<name>/` — the conformance gate in `../lib/state.md` §"Profile contract" validates it before scaffolding_ |
+| 3 | Which profile? | Profile | `software` (Recommended) — code/feature work, produces designs · `general` — non-code, lean, no designs · `content` — editorial/marketing work, produces designs (key art) · `design-system` — component/token systems, produces designs (adds parts + quality-gate docs) · _or a custom profile name dropped under `.claude/skills/groundwork/profiles/<name>/` — the conformance gate in `../lib/state.md` §"Profile contract" validates it before scaffolding_ |
 | 4 | Will this produce visual / UX surfaces? | Visual? | Yes (Recommended for `software` if UI is involved) · No (skips the `design` action) |
 | 5 | Drop a starter sub-plan stub now (`NN-*.md`)? | Sub-plans | Yes — give me a name · No (Recommended for first-pass) |
 
@@ -61,13 +61,13 @@ If invoked with the fast path (`groundwork init <dir> --profile <p> --goal "…"
 | `03-research-internal.md` | `findings` (empty) | Title + how-to-use intro |
 | `04-discussion.md` | `rounds-index` (empty) | "Rounds — newest first" header |
 | `05-tracking.md` | `wp-matrix` (empty), `wave-plan` (empty), `critical-path` (empty) | Workstream descriptions |
-| `artifact/index.html` | `spec-state` (empty JSON: phases/decisions/risks all `[]`) | Universal Spine/Actions/Profiles/State/Board tabs + a stub Overview the user customizes |
+| `artifact/index.html` | `spec-state` (empty JSON: phases/decisions/risks all `[]`) | A stub Overview tab the user customizes |
 | `artifact/manifest.json` | whole file (rendered from template) | n/a |
 | `designs/.gitkeep` | — | — |
 | `drafts/README.md` | whole file (rendered from template) | — |
 | `.groundwork.json` | whole file | n/a |
 
-`artifact/index.html` (the living spec) is scaffolded **from the template** at `profiles/_shared/templates/artifact/index.html` — substituting `{{plan_title}}` / `{{plan_slug}}` / `{{profile}}` / `{{goal}}`. The hand-authored Overview tab is a stub the user replaces with plan-specific framing; the universal Spine/Actions/Profiles/State/Board tabs are baked in and identical across every plan. The volatile Phasing/Decisions/Risks tabs render from the `spec-state` fence, populated on first run of `refresh-living-spec`.
+`artifact/index.html` (the living spec) is scaffolded **from the template** at `profiles/_shared/templates/artifact/index.html` — substituting `{{plan_title}}` / `{{plan_slug}}` / `{{profile}}` / `{{goal}}`. It is a **lean, plan-specific spec** of four tabs: a hand-authored Overview stub the user replaces with plan framing, plus the volatile Phasing/Decisions/Risks tabs that render from the `spec-state` fence (populated on first run of `refresh-living-spec`). It deliberately carries no methodology-explainer tabs — a plan's living spec is about the plan, not about groundwork; the tool's own docs are `SKILL.md` + `lib/state.md`, with `plans/groundwork/` as the worked showcase.
 
 `artifact/board.html` is **not** written at init — `refresh-board` creates it on first run.
 
@@ -141,7 +141,7 @@ The canonical strings the FE emits (palette / Kickoff card / argument-picker per
 ```
 Scaffold a new groundwork plan folder at `{target_folder}`.
 
-Profile: {profile} (one of: software, general, content). Goal: {goal}.
+Profile: {profile} (one of: software, general, content, design-system). Goal: {goal}.
 
 If the groundwork skill is loaded in this session, follow its `init` action — read `.claude/skills/groundwork/actions/init.md`, run the discovery interview (skipping questions already answered above), and scaffold the spine. If the skill is not loaded, treat this as a plain instruction: create the folder, write the standard 6-doc spine (00-README through 05-tracking), the living-spec artifact (`artifact/index.html` + `artifact/manifest.json`), and an empty `.groundwork.json` anchored at `spine_version: "1"` with the profile and goal, and report back the file list.
 

@@ -7,7 +7,7 @@
 
 **Spine-version**: `expected = "1"`. Runs [`../lib/state.md` §"Spine-version preamble gate"](../lib/state.md#spine-version-preamble-gate) as the first step after loading `.groundwork.json` — writing action (appends new Round to `04`, allocates `G-NN` IDs, re-syncs touched fences), so refuses on either direction of mismatch. No-op at v1=current.
 
-**Spawns**: one reviewer agent. Subagent type depends on scope — `general-purpose` for broad reviews, `Explore` for read-only structural critiques.
+**Spawns**: one reviewer agent. Subagent type depends on scope — `general-purpose` for broad reviews, `Explore` for read-only structural critiques. With `--panel`, a fan-out of lens-reviewers + adversarial verifiers via a Workflow (see §"Verified panel").
 
 **This is the highest-value recurring action.** The studio plan got materially better from two review passes; the studio second-pass caught `05-tracking.md` drifting from `01-plan.md` — a failure that motivated the entire stable-ID + traceability mechanism in `lib/state.md`.
 
@@ -142,10 +142,40 @@ Surfaced verbatim in the Round under "Strengths the reviewer said to defend."
 
 ---
 
+## Verified panel (`--panel`)
+
+**Opt-in** — and the real implementation of the long-dormant `--multi` stub. Default stays one reviewer (consistent with "multi-reviewer mode off by default in P1"). With `--panel`, run a Workflow that turns the single best-effort reviewer into a **diverse-lens panel whose findings are adversarially verified before they're folded** — directly addressing this action's biggest weakness: one reviewer's plausible-but-wrong finding currently folds straight into the plan.
+
+```js
+const LENSES = ['structural-gaps', 'risks-not-surfaced', 'contradictions', 'readiness']  // or the chosen subset
+// 1. one reviewer per lens (blind to each other) — diversity of lens, not redundancy
+const raw = (await parallel(LENSES.map(l => () =>
+  agent(reviewerBrief(l), { label: `lens:${l}`, schema: REVIEWER_FINDINGS_SCHEMA, model: 'sonnet' })
+))).filter(Boolean)
+// 2. BARRIER: dedup findings across lenses — plain code, not an agent
+const deduped = dedupeByTitleAndTouches(raw.flatMap(r => r.findings))
+// 3. perspective-diverse adversarial verify: 3 distinct lenses try to REFUTE each finding
+const verified = await parallel(deduped.map(f => () =>
+  parallel(['correctness', 'severity-calibration', 'is-it-actually-real'].map(lens => () =>
+    agent(`Try to refute this finding via the ${lens} lens: ${JSON.stringify(f)}. Default refuted=true if uncertain.`,
+          { label: `verify:${lens}`, schema: VERDICT_SCHEMA, model: 'opus' })
+  )).then(vs => ({ ...f, real: vs.filter(Boolean).filter(v => !v.refuted).length >= 2 }))
+))
+const confirmed = verified.filter(f => f.real)
+```
+
+Schemas are in [`../lib/schemas.md`](../lib/schemas.md). A finding survives only if **≥2 of 3** refutation attempts fail — this kills the plausible-but-wrong findings a single reviewer would have folded. A final synthesis agent merges each surviving lens's `strengths_to_defend` / `new_risks` / `deferred` / `not_reopened` / `still_open` into one Round envelope (still required; `strengths_to_defend` is not optional).
+
+**For a thorough audit**, add the **loop-until-dry** pattern — re-run the lens panel until K consecutive rounds surface no *new* (deduped-against-all-seen) findings, so the tail of subtle gaps isn't missed.
+
+**The Workflow returns `confirmed` + the merged envelope; it writes nothing** (no filesystem in scripts). The action then folds them through the **exact same pipeline as the single-agent case**: allocate `G-NN` via `next-id` (one per confirmed finding), append the Round to `04-discussion.md` (newest-first), re-sync each finding's `touches[]` fences via `write-region`, register each ID. The Round body and output shape are byte-identical to the single-agent path — `--panel` only changes *how findings are produced and filtered*, not how they're recorded. If Workflow isn't available, `--panel` falls back to the single reviewer with a one-line note.
+
+---
+
 ## Edge cases
 
 - **Reviewer returns nothing material** — write a "Round N — review pass: no findings" entry noting the lens and what was checked. This is itself useful (a non-trivial nothing-found pass is evidence the plan is settling).
-- **Conflicting findings across reviewers (if --multi)** — note both in the Round; surface to the user; do not auto-resolve. Multi-reviewer mode is off by default in P1.
+- **Conflicting findings across reviewers (`--panel`)** — the adversarial-verify stage resolves most (a finding contradicted by its refuters drops out); for genuinely conflicting *surviving* findings, note both in the Round and surface to the user — do not auto-resolve. `--panel` is off by default (single reviewer); see §"Verified panel". (`--multi` is accepted as a back-compat alias for `--panel`.)
 - **Hand-edited Round in `04`** — never touched; only the new Round is appended.
 - **`touches[]` includes a doc that doesn't exist** — register the gap but skip the re-sync; surface as a warning ("G-XX wants to touch `06-foo.md` which doesn't exist; create it or update the finding").
 

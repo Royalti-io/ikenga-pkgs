@@ -8,7 +8,7 @@ Files in this directory are **artifacts the plan produced that are meant to land
 Use `drafts/` when:
 
 1. **The plan needed to design the exact shape of a file** (a schema, a config, an API surface, a piece of copy) and getting it right *was* part of the planning work, not the implementation work.
-2. **The file is consumed at a specific WP boundary** that you can name in `01-plan.md` and `05-tracking.md`. (Studio's `drafts/schema.ts` is consumed at WP-02 § Schema; the WP brief says "start from `drafts/schema.ts`.")
+2. **The file is consumed at a specific WP boundary** that you can name in `01-plan.md` and `05-tracking.md`. (e.g. a `drafts/schema.ts` consumed at WP-02 § Schema, where the WP brief says "start from `drafts/schema.ts`.")
 3. **The file would be wasted effort to re-derive** during implementation. If a subagent could re-create it in 10 minutes from the spec, it doesn't belong here.
 
 ## When NOT to put something here
@@ -22,7 +22,7 @@ Use `drafts/` when:
 
 ### Header
 
-Every draft file starts with a structured header. For lifted-from-elsewhere drafts, follow studio's pattern (`plans/studio/drafts/schema.ts`) — four blocks:
+Every draft file starts with a structured header. For lifted-from-elsewhere drafts, use four blocks:
 
 ```ts
 /**
@@ -49,7 +49,7 @@ Every draft file starts with a structured header. For lifted-from-elsewhere draf
 For built-fresh drafts (no source), use the shorter form:
 
 ```ts
-// DRAFT-FOR: ikenga-pkgs/packages/apps/studio/shared/schema.ts (WP-02)
+// DRAFT-FOR: path/to/final/schema.ts (WP-02)
 // Built fresh in Round N — see 01-plan.md §Schema.
 ```
 

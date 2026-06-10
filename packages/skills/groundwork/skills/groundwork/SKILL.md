@@ -10,19 +10,20 @@ description: |
   ikenga-artifact-builder, huashu-design, frontend-design, ikenga-pkg-builder
   when present; degrades gracefully when not. Profile-driven: `software`
   (rich default, code work), `general` (lean, non-code — campaigns, org
-  changes), and `content` (editorial/marketing with key art).
+  changes), `content` (editorial/marketing with key art), and `design-system`
+  (component/token systems — adds parts + quality-gate docs to the spine).
 
   TRIGGER when the user asks to start a real plan for non-trivial work
   ("plan a feature," "scaffold a plan folder," "set up groundwork for…"),
   references an existing plans/ folder by groundwork structure, or runs
-  any of these actions: groundwork init / research / design / review /
-  clarify / orchestrate / refresh-board / refresh-living-spec / status.
+  any of these actions: groundwork init / research / design / subplan /
+  review / clarify / orchestrate / refresh-board / refresh-living-spec / status.
 
   DO NOT TRIGGER for one-off code changes, single-document writeups, ADRs,
   or content that fits in a single markdown file — those don't need a
   multi-doc plan folder. If the user just wants a single artifact
   (dashboard, mockup), route to ikenga-artifact-builder instead.
-allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, Agent, Skill, TaskCreate, TaskUpdate, TaskList, TaskGet
+allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, Agent, Skill, Workflow, TaskCreate, TaskUpdate, TaskList, TaskGet
 ---
 <!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 
@@ -64,14 +65,14 @@ Match the user's request against the table; load the matching action file and fo
 | If the user says… | Load this | Then |
 |---|---|---|
 | "scaffold groundwork", "init", "new plan folder", "start groundwork in X/" | [`actions/init.md`](actions/init.md) | Interview goal + profile, scaffold, write `.groundwork.json` |
-| "groundwork research", "do a research pass", "fill 02/03" | [`actions/research.md`](actions/research.md) | Spawn researcher; write inside fences |
+| "groundwork research", "do a research pass", "fill 02/03" | [`actions/research.md`](actions/research.md) | Spawn researcher; write inside fences (`--sweep` → multi-modal Workflow fan-out) |
 | "groundwork design", "design pass", "mock up the UI options" | [`actions/design.md`](actions/design.md) | Profile-gated; compose design skill or plain HTML; lock one |
 | "groundwork subplan", "scaffold an NN-*.md", "new diff-plan / decision-doc / bug-doc" | [`actions/subplan.md`](actions/subplan.md) | Scaffold a focused sub-plan from one of three archetypes; register in `.groundwork.json.subplans`; cross-link from 00-README |
-| "groundwork review", "review pass", "gap analysis" | [`actions/review.md`](actions/review.md) | Spawn reviewer; append Round; re-sync via IDs |
+| "groundwork review", "review pass", "gap analysis" | [`actions/review.md`](actions/review.md) | Spawn reviewer; append Round; re-sync via IDs (`--panel` → verified Workflow panel) |
 | "groundwork clarify", "ready to orchestrate?" | [`actions/clarify.md`](actions/clarify.md) | Scan for open questions + unspecified IDs + missing locked designs |
-| "groundwork orchestrate", "generate 09", "wave plan" | [`actions/orchestrate.md`](actions/orchestrate.md) | Runs clarify first; emits `09-orchestration.md` |
+| "groundwork orchestrate", "generate 09", "wave plan" | [`actions/orchestrate.md`](actions/orchestrate.md) | Runs clarify first; emits `09-orchestration.md` (`--emit-workflow` → runnable `.workflow.js` + offer to run) |
 | "refresh the board", "update artifact/board.html" | [`actions/refresh-board.md`](actions/refresh-board.md) | Re-derive board data from current docs |
-| "refresh the living spec", "update artifact/index.html", "the Phasing/Decisions/Risks tabs are stale" | [`actions/refresh-living-spec.md`](actions/refresh-living-spec.md) | Regenerate only the `spec-state` fence (Phasing/Decisions/Risks); hand-authored tabs are never touched |
+| "refresh the living spec", "update artifact/index.html", "the Phasing/Decisions/Risks tabs are stale" | [`actions/refresh-living-spec.md`](actions/refresh-living-spec.md) | Regenerate only the `spec-state` fence (Phasing/Decisions/Risks); the hand-authored Overview tab is never touched |
 | "groundwork status", "where are we" | [`actions/status.md`](actions/status.md) | Read-only report |
 
 ### Discover vs. fast path
@@ -96,8 +97,9 @@ A profile swaps **vocabulary** and **optional blocks**, not the spine. Templates
 | `software` | Ikenga features, any code work | "work package" / PR | `true` | schema, manifest, adapter contracts, critical files |
 | `general` | Non-code work — campaigns, org changes, research | "workstream" / "deliverable" | `false` | stakeholders, deliverables, success metrics |
 | `content` | Editorial/marketing — content series, campaigns with key art | "piece" / "asset" | `true` | editorial standards, distribution plan |
+| `design-system` | Component/token systems — design-language work | "part" | `true` | mode, taxonomy, tokens, fixtures, gallery, quality_gate |
 
-**Maintenance model**: a single `profiles/_shared/` base + thin per-profile overlays. `profile.json` declares `extends: "_shared"`; only diffs need to live in the overlay. Format spec in `01-plan.md` §"Domain profiles."
+**Maintenance model**: a single `profiles/_shared/` base + thin per-profile overlays. `profile.json` declares `extends: "_shared"`; only diffs need to live in the overlay. Format spec in `01-plan.md` §"Domain profiles." `design-system` additionally declares its own `spine` (adding `parts-template.md` + `quality-gate.md` to the standard six docs).
 
 `status` runs a profile-conformance check to catch drift in user-dropped profiles.
 
@@ -129,9 +131,22 @@ groundwork *composes* existing skills rather than reimplementing them. Soft depe
 | Hi-fi / production frontend | `example-skills:frontend-design` / `web-artifacts-builder` *(layered with huashu)* | huashu-design alone |
 | Anti-slop polish / critique / audit pass | `impeccable` *(layered with huashu)* | huashu's own expert-review pass |
 | Build handoff for Ikenga pkgs | `ikenga-pkg-builder` | `09-orchestration.md` is the terminal deliverable |
+| Multi-agent execution / fan-out (opt-in) | **`Workflow`** *(via `orchestrate --emit-workflow`, `research --sweep`, `review --panel`)* | Single `Agent` spawn + prose `09` handoff (today's default) |
 | Requirements interviews | `AskUserQuestion` (global planning rule) | n/a — always present in Claude Code |
 
 The `design` action does **not** pick one skill from this list — `huashu-design` is the always-on quality spine and Claude layers any combination of the others on top, deciding the blend while building (no limits). If `ikenga-artifact-builder` is absent, `refresh-board` writes the self-contained fallback template. If no design skill at all is installed, `design` falls back to plain HTML.
+
+### Workflow (opt-in execution layer)
+
+Three actions can deepen into a Workflow fan-out when the user asks for it — never by default, because Workflow is heavyweight, explicit-opt-in, and billed:
+
+| Flag | Action | What it does |
+|---|---|---|
+| `--emit-workflow` | `orchestrate` | Also writes `artifact/orchestrate.workflow.js` — the runnable twin of `09`: waves → `parallel()` fan-out, freeze gates → adversarial sign-off barriers, WPs → worktree-isolated, schema-validated runs. Then **offers to run it**. |
+| `--sweep` | `research` | Fans out finders by angle (precedent / library-docs / codebase / constraints) → synthesis. |
+| `--panel` | `review` | Diverse-lens reviewer panel → dedup → perspective-diverse adversarial verify (kills plausible-but-wrong findings). Implements the old `--multi` stub. |
+
+All three **return** schema-validated results (contracts in [`lib/schemas.md`](lib/schemas.md)) and the **calling session does every write** — Workflow scripts have no filesystem, so fences, IDs, `05` checkboxes, Tasks, commits, and merges stay in the action's hands, exactly as in the single-agent path. Drop the flag (or run without Workflow) and behavior is byte-identical to today. Each agent declares a `model` tier (haiku/sonnet/opus) per the global subagent-model policy.
 
 ---
 
@@ -157,7 +172,9 @@ The `design` action does **not** pick one skill from this list — `huashu-desig
 ```
 groundwork/
 ├── SKILL.md                                  ← you are here (router only)
-├── lib/state.md                              ← state machine spec — every action obeys
+├── lib/
+│   ├── state.md                              ← state machine spec — every action obeys
+│   └── schemas.md                            ← Workflow result contracts + model tiers
 ├── actions/
 │   ├── init.md
 │   ├── research.md
@@ -167,6 +184,7 @@ groundwork/
 │   ├── clarify.md
 │   ├── orchestrate.md
 │   ├── refresh-board.md
+│   ├── refresh-living-spec.md                ← regenerate the spec-state fence in artifact/index.html
 │   └── status.md
 ├── agents/
 │   ├── researcher.md                         ← brief template the research action spawns
@@ -187,14 +205,22 @@ groundwork/
     │   │   │   ├── decision-doc.md
     │   │   │   └── bug-doc.md
     │   │   └── artifact/                     ← scaffolded into <plan>/artifact/
+    │   │       ├── index.html                ← living spec (Overview + Phasing/Decisions/Risks)
     │   │       ├── manifest.json
+    │   │       ├── orchestrate.workflow.js   ← runnable twin of 09 (--emit-workflow)
     │   │       └── data/                     ← optional external data sources
     │   └── board/index.html                  ← self-contained Mission Control + Wave-toggle
-    ├── software/
-    │   ├── profile.json                      ← `extends: _shared`, produces_designs: true
+    ├── software/                             ← `extends: _shared`, produces_designs: true
+    │   ├── profile.json
     │   └── templates/                        ← thin overlays (only the docs that differ)
-    └── general/
-        ├── profile.json                      ← `extends: _shared`, produces_designs: false
+    ├── general/                              ← `extends: _shared`, produces_designs: false
+    │   ├── profile.json
+    │   └── templates/
+    ├── content/                              ← `extends: _shared`, produces_designs: true (key art)
+    │   ├── profile.json
+    │   └── templates/
+    └── design-system/                        ← `extends: _shared`, +parts-template + quality-gate docs
+        ├── profile.json
         └── templates/
 ```
 

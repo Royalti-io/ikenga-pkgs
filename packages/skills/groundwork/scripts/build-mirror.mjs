@@ -168,7 +168,9 @@ It drops a domain-agnostic spine (\`00-README\` · \`01-plan\` · \`02/03\` rese
 \`04-discussion\` newest-first · \`05-tracking\` · \`09-orchestration\` · a
 standalone \`artifact/board.html\` plan-board) plus stateless action-skills that
 augment the docs in place without clobbering hand-written prose. Profile-driven:
-\`software\` (rich default) and \`general\` (lean, non-code).
+\`software\` (rich default, code work), \`general\` (lean, non-code — campaigns,
+org changes), \`content\` (editorial/marketing with key art), and \`design-system\`
+(component/token systems).
 
 > **This repo is a generated mirror.** The canonical source lives in
 > \`royalti-io/ikenga-pkgs\` at \`packages/skills/groundwork/\` (ADR-009). Do not
@@ -178,8 +180,8 @@ augment the docs in place without clobbering hand-written prose. Profile-driven:
 
 ### \`npx skills\` (recommended)
 
-The [\`skills\`](https://skills.sh) CLI works with Claude Code, Codex, Cursor,
-OpenCode, and 50+ other agents.
+The [\`skills\`](https://skills.sh) CLI works with Claude Code, Codex, Gemini,
+Cursor, OpenCode, and 70+ other agents.
 
 \`\`\`bash
 # Global install (recommended — available across all projects)

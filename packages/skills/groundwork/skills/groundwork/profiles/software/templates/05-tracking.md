@@ -19,12 +19,12 @@ _No review passes yet. After `groundwork review` runs, this block carries a one-
 _Hand-written. The 1-line execution flow capturing the linear bottleneck through Phase 1. Update by hand when the critical path changes; re-derive at the start of each phase._
 
 ```
-canvas-extract  →  schema  →  sidecar core  →  HF adapter  →  MCP server  →  studio iframe (5 sub-views)  →  exporter  →  smoke
+core-extract  →  schema  →  service core  →  primary adapter  →  API handler  →  web UI (N views)  →  exporter  →  smoke
 ```
 
 **Parallel tracks** that can start once `schema` lands:
-- _e.g. "Skills/blocks track — bundled skills + ~30 blocks + N archetype skills"_
-- _e.g. "Editor swap workstream — runs in parallel; studio unblocked by either backend"_
+- _e.g. "Config/components track — bundled config + ~30 components + N archetype modules"_
+- _e.g. "Dependency-swap workstream — runs in parallel; UI unblocked by either backend"_
 
 ---
 

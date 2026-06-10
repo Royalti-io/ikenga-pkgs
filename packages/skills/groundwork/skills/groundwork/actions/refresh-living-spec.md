@@ -11,14 +11,14 @@
 
 ## What it does
 
-Regenerates **one fenced region** — `spec-state` in `artifact/index.html` — from the plan's anchor + markdown sources. Everything else in `artifact/index.html` is hand-authored and never touched (hand-authored Overview tab + universal Spine/Actions/Profiles/State/Board tabs).
+Regenerates **one fenced region** — `spec-state` in `artifact/index.html` — from the plan's anchor + markdown sources. Everything else in `artifact/index.html` is hand-authored and never touched (just the plan-specific Overview tab).
 
 The fence holds a JSON document parsed by the React app to render three tabs:
 - **Phasing** — per-phase status + KPI cards (derived from `05-tracking.md` `## Phase N` headers + WP statuses rolled up from `.groundwork.json.ids`)
 - **Decisions** — newest-first round entries (derived from `04-discussion.md` rounds-index fence + round bodies)
 - **Risks** — risk cards with mitigations (derived from `01-plan.md §Risks` bullets + any "New risks folded" rounds)
 
-The other six tabs (Overview, Spine, Actions, Profiles, State, Board) describe the skill or the plan's framing and are hand-authored. They are never touched by this action.
+The scaffolded living spec carries exactly four tabs — **Overview** (hand-authored, plan-specific) plus the three above. It deliberately does **not** explain the groundwork methodology (spine / actions / profiles / state machine / board): a plan's living spec is about the plan, not the tool that made it — that documentation lives in the skill (`SKILL.md` + `lib/state.md`) with `plans/groundwork/` as the worked showcase. The Overview tab is never touched by this action.
 
 ---
 
@@ -85,7 +85,7 @@ The JSON can be either compact (one-line) or pretty-printed — `JSON.parse` acc
 
 ## What it does NOT do
 
-- **Does not touch hand-authored tabs** (Overview, Spine, Actions, Profiles, State, Board). Only the `spec-state` fence is written.
+- **Does not touch the hand-authored Overview tab.** Only the `spec-state` fence is written.
 - **Does not modify `04-discussion.md` / `01-plan.md` / `05-tracking.md`**. Read-only from those.
 - **Does not allocate new IDs**. Reads existing IDs from `.groundwork.json.ids`.
 - **Does not run `clarify`**. This action is a pure regenerate; it doesn't gate on readiness.
