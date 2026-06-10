@@ -83,14 +83,26 @@
     "sqlite": {
       "db": "ikenga.local"
     },
-    "paActions": true
+    "paActions": true,
+    "http": {
+      "auth_secret": "twenty"
+    },
+    "secrets": {
+      "declarations": [
+        {
+          "name": "twenty",
+          "vault_key": "TWENTY_API_KEY"
+        }
+      ]
+    }
   },
   "permissions": {
     "shell.execute": [],
     "fs.read": [],
     "fs.write": [],
     "net": [
-      "https://esm.sh"
+      "https://esm.sh",
+      "https://twenty.royalti.io/rest/"
     ],
     "sqlite.tables": [
       "pa_action_drafts",
@@ -99,7 +111,9 @@
       "newsletter_sends",
       "iyke_kv"
     ],
-    "vault.keys": []
+    "vault.keys": [
+      "TWENTY_API_KEY"
+    ]
   },
   "requires": [
     {

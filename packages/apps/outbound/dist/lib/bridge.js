@@ -77,6 +77,33 @@ export async function hostDbExec(sql, params = []) {
   }
 }
 
+/**
+ * Trusted-tier outbound HTTP via the host's `host.fetch` verb (WP-04/WP-07).
+ * The shell attaches the declared auth secret host-side (per the manifest
+ * `capabilities.http.auth_secret` → `capabilities.secrets` → Stronghold vault)
+ * and enforces the `permissions.net` URL allowlist; the secret is NEVER echoed
+ * back in the response. `body` comes back as a STRING — callers JSON.parse it.
+ *
+ * req: { url, method?, headers?, body?, timeout? }
+ * → { ok, status?, headers?, body?, truncated?, bytes?, reason? }
+ *
+ * Throws if the bridge isn't connected OR the host doesn't implement host.fetch
+ * (old/untrusted shell) — callers MUST catch and fall back. We do NOT swallow
+ * the error here so callers can distinguish "no host.fetch" from "no match".
+ */
+export async function hostFetch(req) {
+  if (!app) throw new Error('[outbound] bridge not connected — host.fetch unavailable');
+  const res = await app.callServerTool({
+    name: 'host.fetch',
+    arguments: req,
+  });
+  const sc = res?.structuredContent;
+  if (!sc) {
+    throw new Error(res?.content?.[0]?.text ?? 'host.fetch returned no structuredContent');
+  }
+  return sc;
+}
+
 // ── Approve-gate verbs (host.paActions*) — the folded approve-gate write path. ──
 // Strategy B (plans/outbound-pkg/01-plan.md §G-PAACTIONS): four thin verbs the
 // shell wraps over the existing, tested `pa_actions_*` Rust commands, gated by

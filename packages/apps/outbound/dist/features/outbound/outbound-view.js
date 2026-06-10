@@ -32,6 +32,7 @@ import {
 } from '../../lib/ui.js';
 import {
   hostDbQuery,
+  hostFetch,
   setMenu,
   isStandalone,
   publishIykeState,
@@ -452,12 +453,101 @@ function emailFromLabel(row) {
   return recip ? `${who} → ${recip}` : who;
 }
 
-// Reply-intelligence: CRM context for an email recipient (B.5). There is no
-// dedicated `tenants`/Twenty mirror in ikenga.db, but the local `contacts` table
-// IS the CRM mirror — joined here by email, with a real open balance pulled from
-// `receivables` by customer_email. Returns null (→ "unknown sender" empty state)
-// when no contact matches, so nothing is fabricated for unknown recipients.
+// Reply-intelligence: CRM context for an email recipient (B.5).
+//
+// WP-07 (trusted-pkg): we now try a LIVE pull from Twenty CRM first via the
+// trusted-tier `host.fetch` verb — single-person lookup by primaryEmail, mapped
+// into the reply-intelligence shape below. On ANY failure (host.fetch absent on
+// an old/untrusted shell, network error, or no CRM match) we FALL BACK to the
+// local `contacts` + `receivables` mirror path (`fetchReplyIntelligenceLocal`).
+//
+// This makes the rewire safe to ship BEFORE the trusted shell deploys: until
+// host.fetch is live-verified the live branch just throws and we degrade to the
+// existing mirror. Once host.fetch is proven live, the fallback below AND the
+// whole mirror/drain/iyke_kv queue (twenty-mirror.mjs/.sh, twenty-mirror-drain,
+// the jobs.json cron entries, and requestCrmRefresh) get DELETED in a follow-up.
 async function fetchReplyIntelligence(email) {
+  if (!email) return null;
+  try {
+    const live = await fetchReplyIntelligenceLive(email);
+    if (live) return live;
+    // Live reached the host but returned no CRM match → fall through to the
+    // local mirror (it may still hold a stale/enriched row for this email).
+  } catch {
+    /* host.fetch unavailable (old/untrusted shell) or network error → fallback */
+  }
+  return fetchReplyIntelligenceLocal(email);
+}
+
+// Twenty REST base + the single-person query the mirror uses
+// (twenty-mirror.mjs::fetchPersonByEmail). `depth=1` so the person's company is
+// embedded for the organization label. Allowlisted via permissions.net.
+const TWENTY_REST_BASE = 'https://twenty.royalti.io/rest';
+
+// Live single-recipient pull from Twenty CRM via host.fetch. Returns the
+// reply-intelligence shape, or null if Twenty has no match for this email.
+// Throws (caller catches → fallback) when host.fetch is unavailable / errors.
+async function fetchReplyIntelligenceLive(email) {
+  // Mirror twenty-mirror.mjs::fetchPersonByEmail's filter; depth=1 embeds company.
+  const filter = `emails.primaryEmail[eq]:${encodeURIComponent(email)}`;
+  const url = `${TWENTY_REST_BASE}/people?filter=${filter}&depth=1&limit=1`;
+  const res = await hostFetch({ url, method: 'GET' });
+  if (!res || res.ok !== true) {
+    throw new Error(res?.reason ?? `host.fetch failed (status ${res?.status ?? '?'})`);
+  }
+  // `body` is a STRING — JSON.parse it (the auth secret is host-side only).
+  let parsed;
+  try {
+    parsed = JSON.parse(res.body ?? 'null');
+  } catch {
+    throw new Error('host.fetch: Twenty response body was not JSON');
+  }
+  const person = parsed?.data?.people?.[0] ?? null;
+  if (!person) return null; // no CRM match → caller may try the local mirror
+  return mapTwentyPersonToReplyIntel(person, email);
+}
+
+// Map a Twenty `/rest/people` person (with embedded `company` at depth=1) into
+// the exact reply-intelligence return shape the local path produces. Field
+// derivation mirrors twenty-mirror.mjs's mapping helpers (personName/personOrg).
+function mapTwentyPersonToReplyIntel(p, email) {
+  const first = p?.name?.firstName ?? '';
+  const last = p?.name?.lastName ?? '';
+  const fullName = [first, last].filter(Boolean).join(' ').trim() || null;
+  // depth=1 embeds the related company object on the person.
+  const org = p?.company?.name ?? null;
+  const lastSeen = p?.updatedAt ?? null;
+
+  const lastMs = lastSeen ? Date.parse(lastSeen) : NaN;
+  const ageDays = Number.isFinite(lastMs) ? (Date.now() - lastMs) / 86_400_000 : null;
+  const health = ageDays == null ? '—' : ageDays < 30 ? 'Active' : ageDays < 90 ? 'Cooling' : 'Dormant';
+
+  return {
+    tenant_name: org || fullName || email,
+    tenant_sub: 'crm', // Twenty source classification (mirrors contact_type='crm')
+    last_touch: lastSeen ? relDays(lastSeen) : '—',
+    last_touch_sub: null, // Twenty has no interaction_count on the person record
+    health,
+    health_sub: ageDays == null ? null : `${Math.round(ageDays)}d since contact`,
+    catalog: '—',
+    catalog_sub: 'no catalog link',
+    // Open balance lives in local `receivables`, not Twenty — left honest at '—'
+    // on the live path (the post-deploy follow-up can join receivables here too).
+    open_balance: '—',
+    balance_sub: null,
+    owner: '—',
+    owner_sub: null,
+    risk_flag: 'None',
+    risk_color: 'var(--live)',
+  };
+}
+
+// LOCAL FALLBACK (pre-WP-07 path). The local `contacts` table IS the CRM mirror
+// (maintained by twenty-mirror.mjs) — joined here by email, with a real open
+// balance pulled from `receivables` by customer_email. Returns null (→ "unknown
+// sender" empty state) when no contact matches. DELETED in the post-deploy
+// follow-up once the live host.fetch path is verified.
+async function fetchReplyIntelligenceLocal(email) {
   if (!email) return null;
   try {
     const rows = await hostDbQuery(
