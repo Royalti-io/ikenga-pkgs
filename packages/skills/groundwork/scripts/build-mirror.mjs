@@ -76,6 +76,12 @@ function main() {
   // 5. README.md — install + portability pointer.
   writeFileSync(join(OUT, 'README.md'), README_MD);
 
+  // 5a. assets/ — screenshots + quickstart demo (README references these at assets/*).
+  const assetsDir = join(PKG_ROOT, 'assets');
+  if (existsSync(assetsDir)) {
+    cpSync(assetsDir, join(OUT, 'assets'), { recursive: true });
+  }
+
   // 6. .gitignore.
   writeFileSync(join(OUT, '.gitignore'), '.DS_Store\n*.log\nnode_modules/\n');
 
@@ -160,32 +166,109 @@ log "Update later: git -C $CLONE_DIR pull"
 
 const README_MD = `# groundwork
 
-A Claude Code skill that scaffolds and maintains a reusable
-**research → design → plan → orchestrate → act** folder for any non-trivial
-work — software features, marketing campaigns, org changes.
+**A Claude Code skill that scaffolds and maintains a living plan folder. Re-runs augment your work — they never overwrite it.**
 
-It drops a domain-agnostic spine (\`00-README\` · \`01-plan\` · \`02/03\` research ·
-\`04-discussion\` newest-first · \`05-tracking\` · \`09-orchestration\` · a
-standalone \`artifact/board.html\` plan-board) plus stateless action-skills that
-augment the docs in place without clobbering hand-written prose. Profile-driven:
-\`software\` (rich default) and \`general\` (lean, non-code).
+\`\`\`bash
+npx skills add royalti-io/groundwork
+\`\`\`
 
-> **This repo is a generated mirror.** The canonical source lives in
-> \`royalti-io/ikenga-pkgs\` at \`packages/skills/groundwork/\` (ADR-009). Do not
-> edit files here — they are overwritten by the mirror build.
+Works with Claude Code, Codex, Gemini, Cursor, and 70+ other agents.
+
+---
+
+## Quickstart demo
+
+<!-- Interactive demo — open in a browser: assets/quickstart-demo.html -->
+
+**[▶ Open interactive quickstart demo](assets/quickstart-demo.html)**
+*(init → research → review → orchestrate — 4 steps, keyboard-navigable)*
+
+---
+
+## What it does
+
+You give groundwork a goal. It scaffolds a folder of numbered, living documents — a plan, two research files, a discussion log, a tracking file, and a standalone HTML board you can open in any browser. Then it gives you a small set of actions you can run at any time: \`research\`, \`design\`, \`review\`, \`orchestrate\`, \`refresh-board\`.
+
+The part that matters: every block the skill generates is wrapped in a fenced region. **Everything outside a fence is yours and is never touched.** When you re-run an action, a checksum decides what changes on disk — not the model. A vibe you can't trust; a sha256 you can.
+
+---
+
+## Plan board
+
+The board reads your tracking file and renders three views: mission control, Kanban, and a dependency-graph of your wave plan.
+
+![groundwork board — Kanban view with status columns and a work-package brief panel](assets/ss-board-kanban.png)
+
+![groundwork board — DAG view showing wave order and gate dependencies](assets/ss-board-dag.png)
+
+It is a [self-contained HTML artifact](https://ikenga.dev): open it in any browser, no server needed. Inside the Ikenga workspace it renders live next to your running sessions.
+
+---
+
+## The folder shape
+
+\`\`\`
+plans/your-feature/
+├── .groundwork.json          ← identity + state anchor
+├── 00-README.md              ← north star + links
+├── 01-plan.md                ← goal, phases, architecture, risks
+├── 02-research-external.md   ← prior art, competitors, libraries
+├── 03-research-internal.md   ← codebase, schema, constraints
+├── 04-discussion.md          ← review rounds, newest-first
+├── 05-tracking.md            ← WPs, deps, DoDs, status
+├── 09-orchestration.md       ← wave plan + per-WP kickoff briefs
+└── artifact/
+    └── board.html            ← standalone plan board
+\`\`\`
+
+![Folder treemap — the spine visualised as a proportional area map](assets/keyart-folder-treemap.png)
+
+---
+
+## Profiles
+
+A profile swaps vocabulary and optional blocks — not the spine. The safe-regeneration machinery is identical across all four.
+
+| Profile | For | Work unit |
+|---|---|---|
+| \`software\` | Features, code work | work package / PR |
+| \`general\` | Campaigns, org changes, non-code | workstream / deliverable |
+| \`content\` | Editorial work, content series | piece / asset |
+| \`design-system\` | Component/token systems | part |
+
+The \`design-system\` profile adds a parts gallery, token pipeline, and a per-part quality gate.
+
+![design-system profile — living component gallery with foundations and parts tracked against tokens](assets/ss-designsystem-gallery.png)
+
+---
+
+## Action set
+
+| Action | What it does |
+|---|---|
+| \`init\` | Interview + scaffold the folder skeleton |
+| \`research\` | Fill \`02\`/\`03\` research files (external + internal) |
+| \`design\` | Produce ≥2 comparable design options, lock one |
+| \`subplan\` | Scaffold a focused sub-plan (diff-plan / decision-doc / bug-doc) |
+| \`review\` | Gap analysis → new Round in \`04\` → re-sync tracking |
+| \`clarify\` | Readiness gate before \`orchestrate\` |
+| \`orchestrate\` | Emit \`09-orchestration.md\` with wave plan + WP briefs |
+| \`refresh-board\` | Regenerate \`artifact/board.html\` from current docs |
+| \`status\` | Read-only freshness + ID + coverage report |
+
+Add \`--emit-workflow\` to \`orchestrate\` for a runnable Claude Code Workflow that fans waves out in parallel and turns freeze gates into sign-off barriers.
+
+---
 
 ## Install
 
 ### \`npx skills\` (recommended)
 
-The [\`skills\`](https://skills.sh) CLI works with Claude Code, Codex, Cursor,
-OpenCode, and 50+ other agents.
-
 \`\`\`bash
-# Global install (recommended — available across all projects)
+# Global — available across all projects
 npx skills add royalti-io/groundwork -g
 
-# Project install (committed with your repo, shared with team)
+# Project — committed with your repo, shared with the team
 npx skills add royalti-io/groundwork
 \`\`\`
 
@@ -206,6 +289,8 @@ The installer drops the skill into \`~/.claude/skills/groundwork/\` via symlink
 against a cached clone in \`~/.cache/ikenga-skills/\`, so \`git pull\` is the
 update path.
 
+---
+
 ## Usage
 
 After install, in any Claude Code session:
@@ -214,15 +299,25 @@ After install, in any Claude Code session:
 /groundwork init plans/<your-plan>/ --profile software --goal "…"
 \`\`\`
 
-then \`research\` / \`design\` / \`review\` / \`orchestrate\` / \`refresh-board\` as the
-work progresses. See [\`skills/groundwork/SKILL.md\`](skills/groundwork/SKILL.md)
-for the full agent-facing spec.
+Then run actions as the work progresses:
 
-## Portability
+\`\`\`
+/groundwork research plans/<your-plan>/
+/groundwork review plans/<your-plan>/
+/groundwork orchestrate plans/<your-plan>/
+\`\`\`
 
-A few references in the docs and the standalone board point at this-workspace
-example paths (\`plans/studio\` / \`plans/groundwork\`). They are illustrative; see
-[\`skills/groundwork/PORTABILITY.md\`](skills/groundwork/PORTABILITY.md).
+See [\`skills/groundwork/SKILL.md\`](skills/groundwork/SKILL.md) for the full agent-facing spec.
+
+---
+
+## Further reading
+
+- **Blog post:** [I built a planning skill because my plans kept rotting](https://royalti.io/blog/groundwork-planning-that-doesnt-rot)
+- **Docs:** [ikenga.dev/packages/groundwork](https://ikenga.dev/packages/groundwork)
+- **Ikenga workspace:** [ikenga.dev](https://ikenga.dev)
+
+---
 
 ## License
 

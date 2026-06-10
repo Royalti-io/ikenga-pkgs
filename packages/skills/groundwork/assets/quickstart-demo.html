@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>groundwork — quickstart demo</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet"/>
+<style>
+:root {
+  --paper: #FBFAF7;
+  --ink: #1C1B1A;
+  --muted: #6E6A62;
+  --line: #E7E2D8;
+  --teal: #2E7D6B;
+  --teal-bg: #E8F1ED;
+  --teal-line: #BFD9D0;
+  --sans: 'Plus Jakarta Sans', system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { background: #1C1B1A; }
+body {
+  font-family: var(--sans);
+  background: #1C1B1A;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+/* Terminal wrapper */
+.terminal {
+  width: 100%;
+  max-width: 780px;
+  background: #0D0D0B;
+  border-radius: 12px;
+  overflow: hidden;
+  box-shadow: 0 32px 80px rgba(0,0,0,.7);
+  border: 1px solid #2E2C28;
+}
+.term-bar {
+  background: #1E1D1B;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid #2E2C28;
+}
+.dot { width: 12px; height: 12px; border-radius: 50%; }
+.dot-r { background: #FF5F57; }
+.dot-y { background: #FEBC2E; }
+.dot-g { background: #28C840; }
+.term-title {
+  margin-left: auto;
+  margin-right: auto;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: #6E6A62;
+  letter-spacing: .02em;
+}
+.term-body {
+  padding: 24px 28px 32px;
+  font-family: var(--mono);
+  font-size: 14px;
+  line-height: 1.7;
+  color: #C8C4BC;
+  min-height: 360px;
+}
+.prompt { color: var(--teal); }
+.cmd { color: #F0EDE6; }
+.arg { color: #98C9BE; }
+.comment { color: #4E4B44; }
+.out { color: #8A8278; }
+.hi { color: var(--teal); font-weight: 600; }
+.warn { color: #FEBC2E; }
+.ok { color: #28C840; }
+.cursor {
+  display: inline-block;
+  width: 9px;
+  height: 1.2em;
+  background: var(--teal);
+  vertical-align: middle;
+  animation: blink 1s step-end infinite;
+}
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
+
+/* Steps strip */
+.steps {
+  display: flex;
+  justify-content: center;
+  gap: 0;
+  padding: 20px 0 0;
+}
+.step {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+.step-label {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: #4E4B44;
+  padding: 6px 14px;
+  border-radius: 4px;
+  transition: color .3s, background .3s;
+}
+.step.active .step-label {
+  color: var(--teal);
+  background: rgba(46,125,107,.15);
+}
+.step.done .step-label {
+  color: #6E6A62;
+}
+.step-arrow {
+  color: #2E2C28;
+  font-size: 16px;
+  padding: 0 2px;
+}
+
+/* Pager */
+.pager {
+  display: flex;
+  gap: 8px;
+  justify-content: center;
+  padding: 18px 0 0;
+}
+.pager-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #2E2C28;
+  cursor: pointer;
+  transition: background .2s;
+}
+.pager-dot.active { background: var(--teal); }
+
+/* Nav buttons */
+.nav {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  padding: 14px 0 0;
+}
+.btn {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  background: none;
+  border: 1px solid #2E2C28;
+  color: #6E6A62;
+  border-radius: 6px;
+  padding: 7px 18px;
+  cursor: pointer;
+  transition: border-color .2s, color .2s;
+}
+.btn:hover { border-color: var(--teal); color: var(--teal); }
+.btn.play {
+  border-color: var(--teal);
+  color: var(--teal);
+}
+
+/* Slide system */
+.slide { display: none; }
+.slide.active { display: block; }
+
+/* Typewriter */
+.typewriter { overflow: hidden; white-space: nowrap; }
+</style>
+</head>
+<body>
+
+<div class="steps" id="steps">
+  <div class="step active" data-step="0">
+    <div class="step-label">init</div>
+  </div>
+  <div class="step-arrow">→</div>
+  <div class="step" data-step="1">
+    <div class="step-label">research</div>
+  </div>
+  <div class="step-arrow">→</div>
+  <div class="step" data-step="2">
+    <div class="step-label">review</div>
+  </div>
+  <div class="step-arrow">→</div>
+  <div class="step" data-step="3">
+    <div class="step-label">orchestrate</div>
+  </div>
+</div>
+
+<div class="terminal" style="margin-top:20px">
+  <div class="term-bar">
+    <div class="dot dot-r"></div>
+    <div class="dot dot-y"></div>
+    <div class="dot dot-g"></div>
+    <div class="term-title">claude — ~/projects/royalti-feature</div>
+  </div>
+  <div class="term-body" id="term-body">
+
+    <!-- Slide 0: init -->
+    <div class="slide active" id="slide-0">
+<pre><span class="comment"># Step 1 — scaffold the plan folder</span>
+<span class="prompt">$</span> <span class="cmd">/groundwork init</span> <span class="arg">plans/split-settlement/</span> <span class="arg">--profile software</span>
+   <span class="arg">--goal "Build the royalty-split settlement flow"</span>
+
+<span class="hi">groundwork · init</span>
+<span class="out">  scaffold   plans/split-settlement/00-README.md</span>
+<span class="out">  scaffold   plans/split-settlement/01-plan.md</span>
+<span class="out">  scaffold   plans/split-settlement/02-research-external.md</span>
+<span class="out">  scaffold   plans/split-settlement/03-research-internal.md</span>
+<span class="out">  scaffold   plans/split-settlement/04-discussion.md</span>
+<span class="out">  scaffold   plans/split-settlement/05-tracking.md</span>
+<span class="out">  scaffold   plans/split-settlement/artifact/board.html</span>
+<span class="out">  wrote      plans/split-settlement/.groundwork.json</span>
+
+<span class="ok">✓</span> <span class="out">7 docs · profile: software · ready for <span class="hi">research</span></span></pre>
+    </div>
+
+    <!-- Slide 1: research -->
+    <div class="slide" id="slide-1">
+<pre><span class="comment"># Step 2 — fill in the research files</span>
+<span class="prompt">$</span> <span class="cmd">/groundwork research</span> <span class="arg">plans/split-settlement/</span>
+
+<span class="hi">groundwork · research</span> <span class="out">reading .groundwork.json …</span>
+<span class="out">  probe  external precedents: Stripe Connect, BEAM, Songtrust</span>
+<span class="out">  probe  internal: schema, existing payment service, ledger</span>
+<span class="out">  probe  constraints: multi-currency, PAYE timing, tx log</span>
+
+<span class="out">  fence-diff  02-research-external.md  <span class="hi">3 regions changed</span></span>
+<span class="out">  fence-diff  03-research-internal.md  <span class="hi">2 regions changed</span>  1 unchanged</span>
+<span class="out">  fence-diff  01-plan.md               <span class="hi">1 region changed</span></span>
+
+<span class="ok">✓</span> <span class="out">research complete · hand-written notes preserved · run <span class="hi">review</span> next</span></pre>
+    </div>
+
+    <!-- Slide 2: review -->
+    <div class="slide" id="slide-2">
+<pre><span class="comment"># Step 3 — gap analysis, add a Round to 04-discussion</span>
+<span class="prompt">$</span> <span class="cmd">/groundwork review</span> <span class="arg">plans/split-settlement/</span>
+
+<span class="hi">groundwork · review</span> <span class="out">Round 1 …</span>
+
+<span class="out">  gap  G-01  No failure-mode spec for partial splits above 100%</span>
+<span class="out">  gap  G-02  Idempotency contract missing on settlement trigger</span>
+<span class="out">  gap  G-03  Multi-currency rounding not specified (floor vs ceil)</span>
+
+<span class="out">  WP-01 <span class="hi">→</span> split engine (no deps) — clear</span>
+<span class="out">  WP-02 <span class="hi">→</span> settlement trigger — depends WP-01</span>
+<span class="out">  WP-03 <span class="hi">→</span> ledger write — depends WP-02</span>
+
+<span class="out">  fence-diff  04-discussion.md  <span class="hi">appended Round 1</span></span>
+<span class="out">  fence-diff  05-tracking.md    <span class="hi">WP matrix synced</span></span>
+
+<span class="ok">✓</span> <span class="out">3 gaps · 3 WPs · tracking in sync · run <span class="hi">orchestrate</span> when ready</span></pre>
+    </div>
+
+    <!-- Slide 3: orchestrate -->
+    <div class="slide" id="slide-3">
+<pre><span class="comment"># Step 4 — emit the kickoff brief and wave plan</span>
+<span class="prompt">$</span> <span class="cmd">/groundwork orchestrate</span> <span class="arg">plans/split-settlement/</span>
+
+<span class="hi">groundwork · orchestrate</span>
+
+<span class="out">  Wave 0  (parallel)   WP-01 split engine  ·  WP-spec G-01/G-03 answers</span>
+<span class="out">  Gate    G-SCHEMA     schema locked — no WP-02 until agreed</span>
+<span class="out">  Wave 1  (parallel)   WP-02 trigger  ·  WP-03 ledger write</span>
+<span class="out">  Gate    G-E2E        e2e green — nothing ships before this</span>
+
+<span class="out">  scaffold  plans/split-settlement/09-orchestration.md</span>
+<span class="out">  refresh   plans/split-settlement/artifact/board.html</span>
+
+<span class="ok">✓</span> <span class="out">wave plan ready · board refreshed · hand each WP brief to an agent</span>
+<span class="prompt">$</span> <span class="cursor"></span></pre>
+    </div>
+
+  </div>
+</div>
+
+<div class="pager" id="pager">
+  <div class="pager-dot active" data-idx="0"></div>
+  <div class="pager-dot" data-idx="1"></div>
+  <div class="pager-dot" data-idx="2"></div>
+  <div class="pager-dot" data-idx="3"></div>
+</div>
+
+<div class="nav">
+  <button class="btn" id="btn-prev">← prev</button>
+  <button class="btn play" id="btn-auto">▶ auto-play</button>
+  <button class="btn" id="btn-next">next →</button>
+</div>
+
+<script>
+const SLIDES = 4;
+let current = 0;
+let autoTimer = null;
+
+function show(idx) {
+  idx = ((idx % SLIDES) + SLIDES) % SLIDES;
+  document.querySelectorAll('.slide').forEach((s,i) => s.classList.toggle('active', i === idx));
+  document.querySelectorAll('.pager-dot').forEach((d,i) => d.classList.toggle('active', i === idx));
+  document.querySelectorAll('.step').forEach((s,i) => {
+    s.classList.toggle('active', i === idx);
+    s.classList.toggle('done', i < idx);
+  });
+  current = idx;
+}
+
+document.getElementById('btn-prev').onclick = () => { stopAuto(); show(current - 1); };
+document.getElementById('btn-next').onclick = () => { stopAuto(); show(current + 1); };
+document.querySelectorAll('.pager-dot').forEach(d => {
+  d.onclick = () => { stopAuto(); show(+d.dataset.idx); };
+});
+
+const btnAuto = document.getElementById('btn-auto');
+
+function startAuto() {
+  autoTimer = setInterval(() => show(current + 1), 3200);
+  btnAuto.textContent = '⏸ pause';
+  btnAuto.classList.add('play');
+}
+function stopAuto() {
+  clearInterval(autoTimer);
+  autoTimer = null;
+  btnAuto.textContent = '▶ auto-play';
+}
+btnAuto.onclick = () => { autoTimer ? stopAuto() : startAuto(); };
+
+// Keyboard nav
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { stopAuto(); show(current + 1); }
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { stopAuto(); show(current - 1); }
+  if (e.key === ' ') { e.preventDefault(); autoTimer ? stopAuto() : startAuto(); }
+});
+</script>
+
+</body>
+</html>
