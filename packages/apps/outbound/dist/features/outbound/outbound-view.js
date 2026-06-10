@@ -327,15 +327,45 @@ async function fetchSentSequences() {
 }
 
 // Relative-age label for the reply-intelligence "last touch" cell.
-function relDays(iso) {
+// compact:true → terse top-right form for email rows ("15m", "6h", "2d", "just now").
+function relDays(iso, { compact = false } = {}) {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return '—';
-  const d = Math.round((Date.now() - t) / 86_400_000);
+  const ms = Date.now() - t;
+  if (ms < 0) return compact ? '' : '—'; // future
+  const mins = Math.round(ms / 60_000);
+  if (compact && mins < 2) return 'just now';
+  const d = Math.round(ms / 86_400_000);
+  if (compact) {
+    if (mins < 60) return `${mins}m`;
+    const h = Math.round(ms / 3_600_000);
+    if (h < 24) return `${h}h`;
+    if (d < 7) return `${d}d`;
+    if (d < 30) return `${Math.round(d / 7)}w`;
+    if (d < 365) return `${Math.round(d / 30)}mo`;
+    return `${Math.round(d / 365)}y`;
+  }
   if (d <= 0) return 'today';
   if (d < 7) return `${d}d ago`;
   if (d < 30) return `${Math.round(d / 7)}w ago`;
   if (d < 365) return `${Math.round(d / 30)}mo ago`;
   return `${Math.round(d / 365)}y ago`;
+}
+
+// From-label for email queue grouped rows (spec 01-email-grouping.md §5).
+function emailFromLabel(row) {
+  if (row.emailGroup === 'sequence') {
+    const who = row.drafted_by ?? '—';
+    const seq = row.sequence_id ?? '—';
+    return `${who} → ${seq}`;
+  }
+  if (row.emailGroup === 'reply') {
+    return row.recipient_name || row.recipient_email || '—';
+  }
+  // manual
+  const who = row.drafted_by ?? '—';
+  const recip = row.recipient_name || row.recipient_email;
+  return recip ? `${who} → ${recip}` : who;
 }
 
 // Reply-intelligence: CRM context for an email recipient (B.5). There is no
@@ -630,10 +660,81 @@ async function fetchSocialFanout(slug) {
 // ─── Fixture data (fallback until real rows exist) ──────────────────────────────
 
 const FIXTURE_EMAIL_QUEUE = [
-  { id: 'eq-1', subject: 'Re: Royalti onboarding · file processing', recipient_name: 'Valentim de Carvalho', recipient_email: 'valentim@example.com', channel: 'smtp', status: 'pending', raw_status: 'awaiting', ux_mode: 'approve', is_overdue: 1, src: 'approval', scheduled_for: null, drafted_by: 'cmo' },
-  { id: 'eq-2', subject: 'Welcome — your Royalti tenant is ready', recipient_name: '{{first_name}}', recipient_email: '', channel: 'resend', status: 'pending', raw_status: 'awaiting', ux_mode: 'approve', is_overdue: 0, src: 'approval', scheduled_for: 'Today 14:30', drafted_by: 'pa' },
-  { id: 'eq-3', subject: 'Q2 product roundup · for label admins', recipient_name: 'label admins segment', recipient_email: '', channel: 'listmonk', status: 'pending', raw_status: 'awaiting', ux_mode: 'approve', is_overdue: 0, src: 'approval', scheduled_for: 'Today 16:00', drafted_by: 'cmo' },
-  { id: 'eq-4', subject: 'Quick check-in · still using Royalti?', recipient_name: 'no-catalog signups', recipient_email: '', channel: 'listmonk', status: 'pending', raw_status: 'awaiting', ux_mode: 'approve', is_overdue: 0, src: 'approval', scheduled_for: 'Mon 09:00', drafted_by: 'pa' },
+  // ── Replies group (emailGroup: 'reply') ─────────────────────────────────────
+  // eq-r1 recipient is keyed into FIXTURE_CRM → drives the full 8-cell ri-grid
+  // in standalone. Auto-selected first (rows[0]) so the showcase opens on it.
+  {
+    id: 'eq-r1',
+    subject: 'Re: Royalti onboarding · file processing delay',
+    body: `Hi,\n\nThanks for flagging this. The delay you saw was caused by a schema mismatch on the ingestion side — we patched it in 0.7.4 and the backfill ran clean this morning.\n\nYour tenant (id 590) should now show all statements. Let me know if anything looks off.\n\nBest,\nRuby`,
+    recipient_name: 'Valentim de Carvalho',
+    recipient_email: 'valentim@soundlabel.pt',
+    channel: 'smtp',
+    status: 'pending',
+    raw_status: 'awaiting',
+    ux_mode: 'approve',
+    is_overdue: 1,
+    hours_late: 17,
+    src: 'approval',
+    scheduled_for: null,
+    drafted_by: 'pa',
+    tenant_id: 590,
+    emailGroup: 'reply',
+  },
+  {
+    id: 'eq-r2',
+    subject: 'Re: Pricing question for enterprise tier',
+    body: `Hi Amara,\n\nGreat question — enterprise pricing is bespoke and based on catalog size and team seats.\n\nHappy to jump on a 20-minute call this week to walk through the numbers. Does Thursday 15:00 WAT work?\n\nBest,\nChinedum`,
+    recipient_name: 'Amara Okafor',
+    recipient_email: 'amara.okafor@afrobeats-dist.com',
+    channel: 'smtp',
+    status: 'pending',
+    raw_status: 'awaiting',
+    ux_mode: 'approve',
+    is_overdue: 0,
+    src: 'approval',
+    scheduled_for: 'Today 16:00',
+    drafted_by: 'cbo',
+    topic_tag: 'enterprise',
+    emailGroup: 'reply',
+  },
+  // ── Manual outreach group (emailGroup: 'manual') ────────────────────────────
+  {
+    id: 'eq-m1',
+    subject: 'Welcome — your Royalti tenant is ready',
+    body: `Hi {{first_name}},\n\nYour Royalti workspace is live. Here is what you can do in the first 48 hours:\n\n1. Ingest your first statement from the Statements tab.\n2. Set up your split templates under Settings → Splits.\n3. Invite your accountant or distributor contact.\n\nIf anything is unclear the docs are at docs.royalti.io and I am available on this email.\n\nRuby`,
+    recipient_name: '{{first_name}}',
+    recipient_email: '',
+    channel: 'resend',
+    status: 'pending',
+    raw_status: 'awaiting',
+    ux_mode: 'approve',
+    is_overdue: 0,
+    src: 'approval',
+    scheduled_for: 'Today 14:30',
+    drafted_by: 'pa',
+    emailGroup: 'manual',
+  },
+  // ── Sequence step group (emailGroup: 'sequence') ────────────────────────────
+  {
+    id: 'eq-s1',
+    subject: 'Following up on the Royalti deck · step 2',
+    body: `Hi [first name],\n\nWanted to circle back on the deck I sent last week — if you had a chance to look, happy to walk you through the ingestion demo on a 15-minute call.\n\nAlternatively I can send a Loom if async is easier. Just say the word.\n\nBest,\nChinedum`,
+    recipient_name: 'ar@universalmusic.pt',
+    recipient_email: 'ar@universalmusic.pt',
+    channel: 'smtp',
+    status: 'pending',
+    raw_status: 'awaiting',
+    ux_mode: 'approve',
+    is_overdue: 0,
+    src: 'approval',
+    scheduled_for: 'Mon 09:00',
+    drafted_by: 'pa',
+    emailGroup: 'sequence',
+    sequence_id: 'Cold A&R outreach',
+    sequence_step: 2,
+    sequence_total: 4,
+  },
 ];
 
 const FIXTURE_EMAIL_SCHEDULE = [
@@ -647,8 +748,14 @@ const FIXTURE_EMAIL_SENT = [
 ];
 
 const FIXTURE_NL_QUEUE = [
-  { id: 'nl-1', subject: 'You can deliver from Royalti now', subject_b: null, draft_slug: 'royalti-deliver', status: 'cooling', raw_status: 'awaiting', cooling_until: '47m', quality_score: 92, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 0 },
-  { id: 'nl-2', subject: 'Schema patches that unblocked tenant 590', subject_b: 'The shape disparity that was eating royalty data', draft_slug: 'schema-patches-590', status: 'pending', raw_status: 'awaiting', cooling_until: null, quality_score: 86, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 1 },
+  { id: 'nl-1', subject: 'You can deliver from Royalti now', subject_b: null, draft_slug: 'royalti-deliver', status: 'cooling', raw_status: 'awaiting', cooling_until: '47m', quality_score: 92, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 0,
+    preheader: 'Send DDEX messages from your workspace — no aggregator required.',
+    from_line: 'Ruby <ruby@royalti.io>',
+    body: `Royalti now ships a full delivery pipeline.\n\nYou can send DDEX ERN4 messages directly from your workspace to DSPs that accept DDEX — no third-party aggregator account required for the initial batch.\n\nHere is what that means in practice:\n\n## What changed\n\nThe delivery seam was the last piece of the puzzle. Before this release, labels using Royalti could ingest statements and calculate royalties, but the outbound leg still meant exporting a spreadsheet and handing it to a distributor.\n\nNow the loop is closed. A single approval in the Outbound pane sends a DDEX message to your connected DSPs.\n\n## What you need to do\n\nIf you are already on Royalti, your tenant is DDEX-ready. Go to Settings → Delivery, connect your first DSP endpoint, and submit a test release. The confirmation takes 24 hours.\n\nIf you are not on Royalti yet, you can request early access at royalti.io/deliver.\n\n## What is next\n\nWe are working on a MEAD profile for sync licensing and a batch-release scheduler. Both are on the public roadmap.\n\nAs always, reply to this email with questions — Ruby reads every one.\n\nRuby\nRoyalti` },
+  { id: 'nl-2', subject: 'Schema patches that unblocked tenant 590', subject_b: 'The shape disparity that was eating royalty data', draft_slug: 'schema-patches-590', status: 'pending', raw_status: 'awaiting', cooling_until: null, quality_score: 86, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 1,
+    preheader: 'A two-line migration fix that took three days to find — and how we made it automatic.',
+    from_line: 'Ruby <ruby@royalti.io>',
+    body: `Tenant 590 hit a wall last month.\n\nWhen they uploaded their first statement batch, the ingestion pipeline rejected 312 rows because the revenue model field was an enum the schema didn't recognise.\n\nThe fix was a two-line migration, but finding it took three days of log triage.\n\nWe are writing about it because the same shape problem shows up across 8% of new tenants in their first month. This is the kind of thing that erodes trust before a product has a chance to prove itself.\n\nThe patch is in 0.7.3. If you are running an older version, the upgrade path is in the docs.\n\nRuby` },
 ];
 
 const FIXTURE_NL_SENT = [
@@ -705,8 +812,21 @@ const FIXTURE_SEQ_RECIPIENTS = [
 ];
 
 const FIXTURE_SOCIAL_QUEUE = [
-  { id: 'sq-1', platform: 'linkedin', account: 'Royalti', content: 'Royalti.io is now live for music labels — handle your full royalty pipeline from one workspace.', status: 'in_review', raw_status: 'awaiting', scheduled_for: '2026-06-07 09:00', source: 'C-07', title: 'Royalti.io is now live' },
-  { id: 'sq-2', platform: 'twitter', account: 'royalti_io', content: 'Thread 1/7: The royalty data problem nobody talks about. \n\nMusic labels spend 40+ hours per month reconciling statements from distributors. Here\'s how we fixed it.', status: 'pending', raw_status: 'awaiting', scheduled_for: '2026-06-10 09:00', source: 'C-08', title: 'Royalty data thread' },
+  // ── Blog announcement · fan-out batch (LinkedIn + X + Bluesky share blog-01) ──
+  // Three siblings collapse to ONE display row carrying all three platform pills.
+  { id: 'sq-b1-li', slug: 'blog-01', platform: 'linkedin', account: 'Royalti', source_group: 'blog', blog_slug: 'royalty-calc-overhaul', content: 'The royalty calculator overhaul shipped this week. Statements ingest in ~90s for a 30k-row CSV, and splits recompute live as you edit. #royalti #musicbusiness', status: 'in_review', raw_status: 'awaiting', scheduled_for: '2026-06-10 12:48', source: 'C-07', title: 'Royalty calculator overhaul · launch post', drafted_by: 'pa', thread_index: null, thread_total: null, tone_check: false, media_url: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=1200&h=627&fit=crop', hashtags: ['#royalti', '#musicbusiness', '#labels'], platforms: ['linkedin'], thread: null },
+  { id: 'sq-b1-x', slug: 'blog-01', platform: 'x', account: 'royalti_io', source_group: 'blog', blog_slug: 'royalty-calc-overhaul', content: 'The royalty calculator overhaul shipped this week. Statements ingest in ~90s for a 30k-row CSV…', status: 'in_review', raw_status: 'awaiting', scheduled_for: '2026-06-10 12:48', source: 'C-07', title: 'Royalty calculator overhaul · launch post', drafted_by: 'pa', thread_index: null, thread_total: null, tone_check: false, media_url: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=1200&h=627&fit=crop', hashtags: ['#royalti', '#musicbusiness', '#labels'], platforms: ['x'], thread: null },
+  { id: 'sq-b1-bs', slug: 'blog-01', platform: 'bluesky', account: 'royalti.io', source_group: 'blog', blog_slug: 'royalty-calc-overhaul', content: 'The royalty calculator overhaul shipped this week. Statements ingest in ~90s for a 30k-row CSV…', status: 'in_review', raw_status: 'awaiting', scheduled_for: '2026-06-10 12:48', source: 'C-07', title: 'Royalty calculator overhaul · launch post', drafted_by: 'pa', thread_index: null, thread_total: null, tone_check: false, media_url: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=1200&h=627&fit=crop', hashtags: ['#royalti', '#musicbusiness', '#labels'], platforms: ['bluesky'], thread: null },
+  // ── Blog announcement · singleton (no batch, no blog_slug path) ───────────────
+  { id: 'sq-b2', slug: null, platform: 'linkedin', account: 'Royalti', source_group: 'blog', blog_slug: null, content: 'New blog post: "Why we rewrote the splits engine in 6 weeks" — the trade-offs we made on accuracy vs speed, and what we\'d do differently.', status: 'pending', raw_status: 'awaiting', scheduled_for: '2026-06-10 14:00', source: 'C-09', title: 'Splits engine rewrite · explainer', drafted_by: 'pa', thread_index: null, thread_total: null, tone_check: false, media_url: null, hashtags: ['#engineering'], platforms: ['linkedin'], thread: null },
+  // ── AI generation · tone-check row (renders the tone-check warn chip) ─────────
+  { id: 'sq-ai1', slug: null, platform: 'linkedin', account: 'Royalti', source_group: 'ai', blog_slug: null, content: 'If you\'ve ever fought with split sheets in Excel for a 6-feature track, you\'ll find this familiar. We turned that fight into one ledger.', status: 'in_review', raw_status: 'awaiting', scheduled_for: '2026-06-09 09:00', source: 'C-10', title: 'Split sheet story', drafted_by: 'ruby', thread_index: null, thread_total: null, tone_check: true, media_url: null, hashtags: [], platforms: ['linkedin'], thread: null },
+  // ── AI generation · thread row (thread · 4 of 4 chip) ─────────────────────────
+  { id: 'sq-ai2', slug: null, platform: 'x', account: 'royalti_io', source_group: 'ai', blog_slug: null, content: 'The least glamorous part of running a label: chasing a $124 cheque across three statement formats. Royalti unifies them into one ledger. 1/4', status: 'in_review', raw_status: 'awaiting', scheduled_for: '2026-06-09 11:00', source: 'C-11', title: 'Thread · chasing the cheque', drafted_by: 'cmo-agent', thread_index: 4, thread_total: 4, tone_check: false, media_url: null, hashtags: ['#royaltyaccounting', '#ddex'], platforms: ['x', 'bluesky'], thread: [
+    '2/4: The root cause is the format war. Every distributor sends a different CSV shape — columns named differently, currency sometimes implicit, territory codes inconsistent.',
+    '3/4: The fix is not a parser for each distributor. It is a schema all distributors can map to. That is what Royalti does under the hood.',
+    '4/4: If you run a label and you are still reconciling by hand — try Royalti. Link in bio.',
+  ] },
 ];
 
 const FIXTURE_SOCIAL_SCHEDULE = [
@@ -714,8 +834,36 @@ const FIXTURE_SOCIAL_SCHEDULE = [
 ];
 
 const FIXTURE_SOCIAL_SENT = [
-  { id: 'sq-0', platform: 'linkedin', account: 'Royalti', content: 'We\'ve built a workspace that puts royalty data, outreach, and reporting in one place.', status: 'posted', scheduled_for: '2026-06-01 09:00', posted_at: '2026-06-01 09:01', source: 'C-06' },
+  { id: 'sq-0', platform: 'linkedin', account: 'Royalti', content: 'We\'ve built a workspace that puts royalty data, outreach, and reporting in one place.', status: 'posted', scheduled_for: '2026-06-01 09:00', posted_at: '2026-06-01 09:01', source: 'C-06', media_url: 'https://royalti.io/og/workspace-card.jpg', hashtags: ['#royalti', '#musicbusiness'] },
 ];
+
+// Fixture CRM records — keyed by LOWERCASED recipient_email. Provides the 8-cell
+// ri-grid data (and the email scorecard's thread/personalization signals) in
+// STANDALONE mode only; live mode resolves these from the host DB via
+// fetchReplyIntelligence. Shape mirrors fetchReplyIntelligence's return.
+// eq-r1 (valentim@soundlabel.pt) is the auto-selected first Replies row, so the
+// showcase opens straight onto a populated grid.
+const FIXTURE_CRM = {
+  'valentim@soundlabel.pt': {
+    tenant_name: 'Sound Label Lda.',
+    tenant_sub: 'Distributor',
+    last_touch: '3d ago',
+    last_touch_sub: '14 interactions',
+    health: 'Active',
+    health_sub: '3d since contact',
+    sequence: '— none — (direct reply)',
+    sequence_sub: 'not part of a sequence run',
+    catalog: '880 tracks',
+    catalog_sub: 'Afropop / Fado blend · ingested 2026-03-12',
+    open_balance: '$0',
+    balance_sub: 'current',
+    owner: 'Chinedum O.',
+    owner_sub: 'CEO · direct relationship',
+    risk_flag: 'None',
+    risk_color: 'var(--live)',
+    thread_count: 3,
+  },
+};
 
 // ─── Small helpers ─────────────────────────────────────────────────────────────
 
@@ -746,8 +894,10 @@ function CoolingChip({ until }) {
   return html`<span class="ob-chip cooling">cooling ${until}</span>`;
 }
 
-function OverdueChip() {
-  return html`<span class="ob-chip overdue">overdue</span>`;
+function OverdueChip({ hoursLate } = {}) {
+  // Honest: only show lateness detail when the worker stamped a real hours_late.
+  const detail = hoursLate > 0 ? ` · ${hoursLate}h late` : '';
+  return html`<span class="ob-chip overdue">overdue${detail}</span>`;
 }
 
 function formatPct(v) {
@@ -759,6 +909,33 @@ function formatDate(v) {
   if (!v) return '—';
   return String(v);
 }
+
+// Compact relative-time for social queue rows ("now" / "12m" / "6h" / "3d").
+// Honest: no signal → '—'. Treats the stored "YYYY-MM-DD HH:MM" as UTC.
+function relativeTime(v) {
+  if (!v) return '—';
+  const t = new Date(String(v).replace(' ', 'T') + 'Z').getTime();
+  if (!Number.isFinite(t)) return '—';
+  const abs = Math.abs(Date.now() - t);
+  if (abs < 60e3) return 'now';
+  if (abs < 3600e3) return Math.round(abs / 60e3) + 'm';
+  if (abs < 86400e3) return Math.round(abs / 3600e3) + 'h';
+  return Math.round(abs / 86400e3) + 'd';
+}
+
+// Compact platform pill for the social-queue master rows — the design-system
+// `.plat` family (mono, tinted, compact), NOT the full-width .ob-platform-badge.
+const PLAT_KEY = { linkedin: 'li', twitter: 'x', x: 'x', bluesky: 'bs', bsky: 'bs', instagram: 'ig', facebook: 'fb' };
+function PlatPill({ platform }) {
+  const k = PLAT_KEY[platform] ?? platform;
+  return html`<span class=${'plat plat-' + k}>${String(k).toUpperCase()}</span>`;
+}
+
+// Social source-group → verbatim design label + fixed render order (omit empties).
+const SOURCE_GROUP_LABEL = { blog: 'Blog announcement', ai: 'AI generation', manual: 'Manual', reply: 'Reply' };
+const SOCIAL_GROUP_ORDER = ['blog', 'ai', 'manual', 'reply'];
+// Platform badge order within a fan-out row: li → x → bs → ig → fb.
+const SOCIAL_PLAT_ORDER = ['linkedin', 'twitter', 'x', 'bluesky', 'bsky', 'instagram', 'facebook'];
 
 function wordCount(text) {
   if (!text) return 0;
@@ -949,6 +1126,88 @@ function newsletterQualityCells(row) {
   ];
 }
 
+// ─── Email draft quality cells (5-cell, design §B email) ─────────────────────
+// Mirrors newsletterQualityCells shape: { label, value, sub, pct, tone } so the
+// cells render through the exact same nl-quality-cell markup. crm = resolved CRM
+// record from fetchReplyIntelligence, or null. Every cell is honest about its
+// signal limits — '—' value and 'warn' tone when no real data exists.
+function emailQualityCells(row, crm) {
+  const body = row.body ?? '';
+  const hasBody = !!body;
+  const agent = row.drafted_by ?? null;
+
+  // --- LENGTH --- direct body signal (line count). "on-voice" only signals the
+  // draft came from a named agent — never claims voice analysis ran.
+  const lines = hasBody ? body.split('\n').filter((s) => s.trim()).length : 0;
+  const onVoice = agent ? 'on-voice' : 'heuristic';
+
+  // --- CLAIMS --- detectable but not verifiable (no verifier pipeline yet).
+  const claims = countClaims(body);
+
+  // --- PERSONALIZATION --- merge-field count + CRM presence.
+  const mergeCount = hasBody
+    ? (body.match(/\{\{[^}]+\}\}|\[first[\s_]name\]/gi) || []).length
+    : 0;
+  const hasCrm = !!crm;
+  const persLevel = mergeCount >= 3 ? 'High' : (mergeCount >= 1 || hasCrm) ? 'Med' : 'Low';
+  const crmNote = hasCrm ? ' · via CRM' : (mergeCount ? '' : ' · no CRM');
+
+  // --- THREAD CONTEXT --- CRM thread_count → full; sequence membership → partial;
+  // nothing → honest "No thread · —". Never fabricates a count.
+  const threadCount = crm?.thread_count;
+  const hasSeq = !!row.sequence_id;
+  const hasThread = threadCount != null && threadCount > 0;
+  const threadLevel = hasThread && threadCount >= 3 ? 'Full'
+                    : hasThread                     ? 'Partial'
+                    : hasSeq                        ? 'Sequence'
+                    :                                 'No thread';
+  const priorLabel = hasThread
+    ? `${threadCount} prior msg${threadCount !== 1 ? 's' : ''}`
+    : '—';
+
+  // --- TONE MATCH --- coarse anti-pattern heuristic, clearly labelled.
+  const anti = countAntiPatterns(body);
+  const toneOk = hasBody && anti === 0;
+
+  return [
+    {
+      label: 'Length',
+      value: lines ? `${lines}` : '—',
+      sub: lines ? `lines · ${onVoice}` : 'no body',
+      pct: lines ? Math.min(100, Math.round((lines / 8) * 100)) : 0,
+      tone: !lines ? 'warn' : lines >= 2 && lines <= 8 ? 'ok' : 'warn',
+    },
+    {
+      label: 'Claims',
+      value: hasBody ? `${claims}` : '—',
+      sub: hasBody ? (claims > 0 ? 'detected · unverified' : 'none detected') : 'no body',
+      pct: hasBody ? Math.min(100, claims * 20) : 0,
+      tone: !hasBody ? 'warn' : claims === 0 ? 'ok' : 'warn',
+    },
+    {
+      label: 'Personalization',
+      value: persLevel,
+      sub: `${mergeCount} merge field${mergeCount !== 1 ? 's' : ''}${crmNote}`,
+      pct: persLevel === 'High' ? 90 : persLevel === 'Med' ? 55 : 20,
+      tone: persLevel === 'High' ? 'ok' : 'warn',
+    },
+    {
+      label: 'Thread context',
+      value: threadLevel,
+      sub: priorLabel,
+      pct: threadLevel === 'Full' ? 100 : threadLevel === 'Partial' ? 60 : threadLevel === 'Sequence' ? 40 : 0,
+      tone: threadLevel === 'Full' ? 'ok' : 'warn',
+    },
+    {
+      label: 'Tone match',
+      value: !hasBody ? '—' : toneOk ? 'On-voice' : 'Off-voice',
+      sub: !hasBody ? 'no body' : agent ? `${agent} model · heuristic` : 'heuristic',
+      pct: !hasBody ? 0 : toneOk ? 88 : Math.max(10, 88 - anti * 25),
+      tone: !hasBody ? 'warn' : toneOk ? 'ok' : 'warn',
+    },
+  ];
+}
+
 // ─── State display ─────────────────────────────────────────────────────────────
 
 function StateDisplay({ state, message, onRetry }) {
@@ -1074,8 +1333,18 @@ function TwoWeekCalendar({ items, renderPill }) {
 function ReplyIntelligence({ email, sequenceId, standalone }) {
   const { data: crm } = useQuery({
     queryKey: ['email', 'ri', email],
-    queryFn: () => fetchReplyIntelligence(email),
-    enabled: !standalone && !!email,
+    // Standalone resolves synchronously from FIXTURE_CRM (or null → honest empty
+    // state); live mode calls the host DB. typeof-guard so the standalone path
+    // degrades to null if the fixtures layer is absent. Query runs whenever
+    // `email` is truthy in both modes (same dedup key as the email scorecard).
+    queryFn: () => {
+      if (standalone) {
+        const map = typeof FIXTURE_CRM !== 'undefined' ? FIXTURE_CRM : {};
+        return Promise.resolve(map[email?.toLowerCase()] ?? null);
+      }
+      return fetchReplyIntelligence(email);
+    },
+    enabled: !!email,
     placeholderData: null,
   });
 
@@ -1153,6 +1422,29 @@ function EmailQueueView({ standalone }) {
     onSuccess: () => { setEditOpen(false); invalidate(); },
   });
 
+  // Resolved selection (must be computed pre-return so the crm hook can key on it,
+  // without violating rules-of-hooks). selected wins; else first queue row.
+  const rowsAll = data ?? [];
+  const selResolved = selected ?? rowsAll[0] ?? null;
+  // Sibling CRM query for the 5-cell email quality scorecard's THREAD/PERSONALIZATION
+  // signals. Same queryKey as ReplyIntelligence → request is deduplicated. Standalone
+  // resolves synchronously from the email fixture map; live calls the host DB.
+  const { data: crm } = useQuery({
+    queryKey: ['email', 'ri', selResolved?.recipient_email],
+    queryFn: () => {
+      const email = selResolved?.recipient_email;
+      if (standalone) {
+        // FIXTURE_CRM is supplied by the fixtures layer; typeof-guard so the
+        // standalone path degrades to null (→ honest empty cells) if it's absent.
+        const map = typeof FIXTURE_CRM !== 'undefined' ? FIXTURE_CRM : {};
+        return Promise.resolve(map[email?.toLowerCase()] ?? null);
+      }
+      return fetchReplyIntelligence(email);
+    },
+    enabled: !!selResolved?.recipient_email,
+    placeholderData: null,
+  });
+
   if (isLoading) return html`<${StateDisplay} state="loading" message="Loading email queue…" />`;
   if (isError) return html`<${StateDisplay} state="error" message="Couldn't load email queue" onRetry=${refetch} />`;
   if (!data?.length) return html`<${StateDisplay} state="empty" message="No email items awaiting approval" />`;
@@ -1162,6 +1454,7 @@ function EmailQueueView({ standalone }) {
   const isFailed = sel?.raw_status === 'failed';
   const canApprove = isApprovable(sel);
   const armedRow = undo.armed ? rows.find((r) => r.id === undo.armed) : null;
+  const emailCells = sel ? emailQualityCells(sel, crm ?? null) : [];
 
   const pick = (row) => { setSelected(row); setRejectOpen(false); setEditOpen(false); };
 
@@ -1176,20 +1469,64 @@ function EmailQueueView({ standalone }) {
     <${FloatingUndoBar} armed=${undo.armed} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} subject=${armedRow?.subject ?? sel?.subject} />
     <div class="nl-split">
       <div class="nl-master">
-        ${rows.map(row => html`
-          <div
-            key=${row.id}
-            class=${cn('nl-row', { 'is-on': sel?.id === row.id })}
-            onClick=${() => pick(row)}
-          >
-            <div class="nl-row-head">
-              <${ChannelChip} channel=${row.channel} />
-              ${row.is_overdue ? html`<${OverdueChip} />` : null}
-            </div>
-            <div class="nl-row-subj">${row.subject}</div>
-            <div class="nl-row-pre">${row.recipient_name || row.recipient_email || '—'}</div>
-          </div>
-        `)}
+        ${(() => {
+          // Grouped master list: REPLIES → MANUAL → SEQUENCE STEP (design email §B).
+          // Empty groups are omitted entirely (no empty header). Agent rows surface
+          // under their inferred emailGroup; never hard-code a fixed group count.
+          const groups = [
+            { key: 'reply', label: 'REPLIES' },
+            { key: 'manual', label: 'MANUAL' },
+            { key: 'sequence', label: 'SEQUENCE STEP' },
+          ];
+          // Any rows whose emailGroup is missing/unknown fall into MANUAL so they
+          // are never silently dropped from the list.
+          const known = new Set(groups.map((g) => g.key));
+          const bucket = (r) => (known.has(r.emailGroup) ? r.emailGroup : 'manual');
+          return groups.map(({ key, label }) => {
+            const group = rows.filter((r) => bucket(r) === key);
+            if (!group.length) return null;
+            return html`
+              <div class="nl-master-group-head" key=${'gh-' + key}>
+                ${label} · ${group.length}
+              </div>
+              ${group.map((row) => {
+                const fromLabel = emailFromLabel(row);
+                const timeLabel = relDays(row.scheduled_for, { compact: true });
+                const snip = row.body
+                  ? `"${row.body.replace(/\s+/g, ' ').trim().slice(0, 80).trimEnd()}…"`
+                  : null;
+                return html`
+                  <div
+                    key=${row.id}
+                    class=${cn('nl-row', { 'is-on': sel?.id === row.id })}
+                    onClick=${() => pick(row)}
+                  >
+                    <div class="em-row-line1">
+                      <span class="em-row-from">${fromLabel}</span>
+                      ${timeLabel && timeLabel !== '—'
+                        ? html`<span class="em-row-time">${timeLabel}</span>`
+                        : null}
+                    </div>
+                    <div class="nl-row-subj">${row.subject}</div>
+                    ${snip ? html`<div class="em-row-snip">${snip}</div>` : null}
+                    <div class="em-row-foot">
+                      <${ChannelChip} channel=${row.channel} />
+                      ${row.is_overdue ? html`<${OverdueChip} hoursLate=${row.hours_late} />` : null}
+                      ${row.tenant_id ? html`<span class="ob-chip seq">tenant ${row.tenant_id}</span>` : null}
+                      ${row.topic_tag ? html`<span class="ob-chip tint">${row.topic_tag}</span>` : null}
+                      ${key === 'sequence' && row.sequence_step != null
+                        ? html`<span class="ob-chip seq">sequence · step ${row.sequence_step}/${row.sequence_total ?? '?'}</span>`
+                        : null}
+                      ${key === 'sequence' && row.sequence_id
+                        ? html`<span class="ob-chip tint">${row.sequence_id}</span>`
+                        : null}
+                    </div>
+                  </div>
+                `;
+              })}
+            `;
+          });
+        })()}
       </div>
       <div class="nl-detail">
         ${sel ? html`
@@ -1208,6 +1545,18 @@ function EmailQueueView({ standalone }) {
             </div>
 
             <${ReplyIntelligence} email=${sel.recipient_email} sequenceId=${sel.sequence_id} standalone=${standalone} />
+
+            ${emailCells.length ? html`
+              <div class="nl-quality-grid eq-quality-grid">
+                ${emailCells.map((c, i) => html`
+                  <div key=${i} class=${cn('nl-quality-cell', c.tone)}>
+                    <div class="qlabel">${c.label}</div>
+                    <div class="qvalue">${c.value} <span class="qsub">${c.sub}</span></div>
+                    <div class="qbar"><div style=${{ width: `${c.pct}%` }}></div></div>
+                  </div>
+                `)}
+              </div>
+            ` : null}
 
             <div class="ip-body" style=${{ flex: 1, padding: '1rem', color: 'var(--fg-muted)', fontSize: '0.8125rem' }}>
               <p style=${{ margin: 0 }}>
@@ -2092,17 +2441,131 @@ function SequencesSentView({ standalone }) {
 
 // ─── Social views ───────────────────────────────────────────────────────────────
 
+// MediaCard — the OG image card (1200×627) when media_url is present, else a
+// tasteful "no media" empty slot with a URL-attach affordance. Writes via the
+// parent-provided onUpdate (→ updateDraft → edited_json). No upload (Phase 2).
+function MediaCard({ mediaUrl, onUpdate }) {
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [urlDraft, setUrlDraft] = useState('');
+  const hasMedia = Boolean(mediaUrl);
+  return html`
+    <div class="ob-social-media">
+      <div class="ob-social-media-label">Media</div>
+      ${hasMedia ? html`
+        <div class="ob-social-media-card">
+          <img src=${mediaUrl} alt="Post media" class="ob-social-media-img" />
+          <button class="ob-social-media-remove" title="Remove media" aria-label="Remove media" onClick=${() => onUpdate(null)}>×</button>
+        </div>
+      ` : html`
+        <div class="ob-social-media-empty" role="button" tabindex="0"
+             onClick=${() => setAttachOpen((o) => !o)}
+             onKeyDown=${(e) => { if (e.key === 'Enter') setAttachOpen((o) => !o); }}>
+          <span class="ob-social-media-empty-icon" aria-hidden="true">▱</span>
+          <span>No media · attach URL</span>
+        </div>
+      `}
+      ${attachOpen ? html`
+        <div class="ob-social-media-attach">
+          <input class="ob-social-media-url-input" type="url"
+            placeholder="https://cdn.example.com/image.jpg (1200×627)"
+            value=${urlDraft} onInput=${(e) => setUrlDraft(e.target.value)} />
+          <button class="ob-btn-sm is-primary" disabled=${!urlDraft}
+            onClick=${() => { onUpdate(urlDraft); setAttachOpen(false); setUrlDraft(''); }}>Attach</button>
+          <button class="ob-btn-sm" onClick=${() => setAttachOpen(false)}>Cancel</button>
+        </div>
+      ` : null}
+    </div>
+  `;
+}
+
+// HashtagEditor — parsed/explicit hashtags as removable pill chips + a "+ add"
+// inline input. Local state lifts to the parent (onChange) for live preview, and
+// every add/remove writes through onUpdate (→ updateDraft → edited_json).
+function HashtagEditor({ hashtags, onChange, onUpdate }) {
+  const [inputVal, setInputVal] = useState('');
+  const [inputOpen, setInputOpen] = useState(false);
+  const inputRef = useRef(null);
+  const tags = hashtags || [];
+
+  function removeTag(tag) {
+    const next = tags.filter((t) => t !== tag);
+    onChange(next);
+    onUpdate(next);
+  }
+  function addTag() {
+    const raw = inputVal.trim();
+    if (!raw) { setInputOpen(false); return; }
+    const tag = raw.startsWith('#') ? raw : '#' + raw;
+    if (tags.includes(tag)) { setInputVal(''); setInputOpen(false); return; }
+    const next = [...tags, tag];
+    onChange(next);
+    onUpdate(next);
+    setInputVal('');
+    setInputOpen(false);
+  }
+  function handleKeyDown(e) {
+    if (e.key === 'Enter') { e.preventDefault(); addTag(); }
+    if (e.key === 'Escape') { setInputVal(''); setInputOpen(false); }
+  }
+
+  return html`
+    <div class="ob-hashtags">
+      <div class="ob-hashtags-label">Hashtags</div>
+      <div class="ob-hashtags-chips">
+        ${tags.map((tag) => html`
+          <span key=${tag} class="ob-tag-chip">
+            ${tag}
+            <button class="ob-tag-chip-remove" aria-label=${'Remove ' + tag} onClick=${() => removeTag(tag)}>×</button>
+          </span>
+        `)}
+        ${inputOpen ? html`
+          <input ref=${inputRef} class="ob-tag-chip-input" type="text" placeholder="#tag"
+            value=${inputVal} onInput=${(e) => setInputVal(e.target.value)}
+            onKeyDown=${handleKeyDown} onBlur=${addTag} autoFocus />
+        ` : html`
+          <button class="ob-tag-chip ob-tag-chip-add" onClick=${() => setInputOpen(true)}>+ add</button>
+        `}
+      </div>
+    </div>
+  `;
+}
+
 // Per-platform preview editor (design social §B): base body on the left, stacked
 // LinkedIn / X / Bluesky previews on the right with per-platform char caps; fan-out
-// rows + reject below. Body is editable locally (preview-only mock — no write-back
-// since social_queue stores one platform per row).
+// rows + reject below. Body is editable locally; media + hashtags write back to
+// edited_json via updateDraft (the per-platform base body stays preview-only).
 function SocialEditor({ post, standalone, onApprove, approvePending, onReject, rejectPending, onRetry, rawStatus, commitError, armed, undoSecondsLeft, onCancelUndo }) {
   const canApprove = isApprovable({ raw_status: rawStatus });
   const [body, setBody] = useState(post?.content ?? '');
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [localHashtags, setLocalHashtags] = useState(post?.hashtags ?? []);
+  const [mediaUpdatePending, setMediaUpdatePending] = useState(false);
+  const [hashtagUpdatePending, setHashtagUpdatePending] = useState(false);
 
-  // Reset local body when the selected post changes.
-  useEffect(() => { setBody(post?.content ?? ''); setRejectOpen(false); }, [post?.id]);
+  // Reset local state when the selected post changes.
+  useEffect(() => {
+    setBody(post?.content ?? '');
+    setLocalHashtags(post?.hashtags ?? []);
+    setRejectOpen(false);
+  }, [post?.id]);
+
+  // Write media_url / hashtags through edited_json (host.paActions.update).
+  // In standalone (fixture) mode there is no host write path — keep it a no-op
+  // so the chip editor stays interactive without throwing.
+  async function handleMediaUpdate(newUrl) {
+    if (standalone || !post?.id) return;
+    setMediaUpdatePending(true);
+    try { await updateDraft(post.id, { media_url: newUrl }); }
+    catch (e) { console.error('[outbound] media update failed:', String(e?.message ?? e)); }
+    finally { setMediaUpdatePending(false); }
+  }
+  async function handleHashtagUpdate(tags) {
+    if (standalone || !post?.id) return;
+    setHashtagUpdatePending(true);
+    try { await updateDraft(post.id, { hashtags: tags }); }
+    catch (e) { console.error('[outbound] hashtag update failed:', String(e?.message ?? e)); }
+    finally { setHashtagUpdatePending(false); }
+  }
 
   const { data: fanout } = useQuery({
     queryKey: ['social', 'fanout', post?.slug],
@@ -2156,6 +2619,8 @@ function SocialEditor({ post, standalone, onApprove, approvePending, onReject, r
               `;
             })}
           </div>
+          <${MediaCard} mediaUrl=${post?.media_url} onUpdate=${handleMediaUpdate} />
+          <${HashtagEditor} hashtags=${localHashtags} onChange=${setLocalHashtags} onUpdate=${handleHashtagUpdate} />
         </div>
 
         <div>
@@ -2173,7 +2638,7 @@ function SocialEditor({ post, standalone, onApprove, approvePending, onReject, r
                   <div class="pv-body is-blocked">⚠ Over ${p.cap}-char cap by ${len - p.cap}. Add an alt-body for ${p.sub}, or split into a thread.</div>
                   <div class="pv-stats"><span style=${{ color: 'var(--danger)' }}>cannot post until resolved</span></div>
                 ` : html`
-                  <div class="pv-body">${body}</div>
+                  <div class="pv-body">${body}${localHashtags.length ? html`<span class="pv-tags"> ${localHashtags.join(' ')}</span>` : null}</div>
                   <div class="pv-stats"><span>♡ 0</span><span>↻ 0</span></div>
                 `}
               </div>
@@ -2282,7 +2747,43 @@ function SocialQueueView({ standalone }) {
   if (!data?.length) return html`<${StateDisplay} state="empty" message="No social posts awaiting approval" />`;
 
   const rows = data ?? [];
-  const sel = selected ?? rows[0];
+
+  // Collapse fan-out siblings (same batch_id / slug) into one display row carrying
+  // a platforms[] array. Rows with no slug are singletons. The first sibling is the
+  // representative (_batchRows[0]) handed to the detail editor.
+  const batchMap = new Map();
+  const displayRows = [];
+  for (const row of rows) {
+    if (row.slug) {
+      if (batchMap.has(row.slug)) {
+        batchMap.get(row.slug).platforms.push(row.platform);
+      } else {
+        const dr = { ...row, platforms: [row.platform], _batchRows: [row] };
+        batchMap.set(row.slug, dr);
+        displayRows.push(dr);
+      }
+    } else {
+      displayRows.push({ ...row, platforms: [row.platform], _batchRows: [row] });
+    }
+  }
+  // Sort platform badge order within each display row: li → x → bs → ig → fb.
+  for (const dr of displayRows) {
+    dr.platforms.sort((a, b) => {
+      const ai = SOCIAL_PLAT_ORDER.indexOf(a);
+      const bi = SOCIAL_PLAT_ORDER.indexOf(b);
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    });
+  }
+  // Group into fixed-order sections (omit empties).
+  const groupedRows = SOCIAL_GROUP_ORDER.map((key) => ({
+    key,
+    label: SOURCE_GROUP_LABEL[key],
+    rows: displayRows.filter((r) => (r.source_group ?? 'manual') === key),
+  })).filter((g) => g.rows.length > 0);
+
+  // Selection: `sel` is a REAL mapSocialQueue row (the representative), not the
+  // synthetic display row. Default to the first display row's representative.
+  const sel = selected ?? displayRows[0]?._batchRows[0];
   const isArmed = sel ? undo.isArmed(sel.id) : false;
   const armedRow = undo.armed ? rows.find((r) => r.id === undo.armed) : null;
 
@@ -2290,16 +2791,44 @@ function SocialQueueView({ standalone }) {
     <${FloatingUndoBar} armed=${undo.armed} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} subject=${armedRow?.title ?? armedRow?.content ?? sel?.title} label="Scheduling" />
     <div class="nl-split">
       <div class="nl-master">
-        ${rows.map(row => html`
-          <div key=${row.id} class=${cn('nl-row', { 'is-on': sel?.id === row.id })} onClick=${() => setSelected(row)}>
-            <div class="nl-row-head">
-              <${PlatformBadge} platform=${row.platform} />
-              <span class="ob-chip seq">${row.source ?? ''}</span>
-            </div>
-            <div class="nl-row-subj" style=${{ whiteSpace: 'normal', WebkitLineClamp: 2, display: '-webkit-box', WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-              ${row.content?.substring(0, 80)}${row.content?.length > 80 ? '…' : ''}
-            </div>
-            <div class="nl-row-pre">${formatDate(row.scheduled_for)}</div>
+        ${groupedRows.map((group) => html`
+          <div key=${group.key}>
+            <div class="nl-master-group-head">${group.label} · ${group.rows.length}</div>
+            ${group.rows.map((row) => {
+              const isOn = sel?.id === row.id;
+              const platformCount = row.platforms.length;
+              const blogSlugChip = row.blog_slug
+                ? html`<span class="ob-chip">blog · /${row.blog_slug}</span>`
+                : (row.source_group === 'blog' ? html`<span class="ob-chip">blog</span>` : null);
+              const platformsChip = platformCount >= 2
+                ? html`<span class="ob-chip chip-tint">${platformCount} platform${platformCount > 2 ? 's' : ''}</span>`
+                : null;
+              const agentChip = row.drafted_by && row.drafted_by !== 'pa'
+                ? html`<span class="ob-chip">cmo-agent · ${row.drafted_by}</span>`
+                : null;
+              const threadChip = row.thread_index != null && row.thread_total != null
+                ? html`<span class="ob-chip">thread · ${row.thread_index} of ${row.thread_total}</span>`
+                : null;
+              const toneChip = row.tone_check
+                ? html`<span class="ob-chip ob-chip-warn">tone check</span>`
+                : null;
+              return html`
+                <div key=${row.id} class=${cn('so-q-row nl-row', { 'is-on': isOn })} onClick=${() => setSelected(row._batchRows[0])}>
+                  <div class="so-q-row-head">
+                    ${row.platforms.map((p) => html`<${PlatPill} key=${p} platform=${p} />`)}
+                    <span class="so-q-row-time">${relativeTime(row.scheduled_for)}</span>
+                  </div>
+                  <div class="so-q-row-text">"${(row.content ?? '').substring(0, 100)}${(row.content?.length ?? 0) > 100 ? '…' : ''}"</div>
+                  <div class="so-q-row-foot">
+                    ${blogSlugChip}
+                    ${platformsChip}
+                    ${agentChip}
+                    ${threadChip}
+                    ${toneChip}
+                  </div>
+                </div>
+              `;
+            })}
           </div>
         `)}
       </div>

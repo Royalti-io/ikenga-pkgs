@@ -93,6 +93,56 @@ function platformOf(item) {
   return 'linkedin';
 }
 
+// Social source-group: maps (item, meta) → one of four canonical group keys
+// ('blog' | 'ai' | 'manual' | 'reply') for the social-queue master grouping.
+// Pure + tolerant — undefined args degrade to the 'manual' fallback.
+// Priority chain — first match wins:
+//   1. item.sourceGroup — explicit stamp by the producer (highest trust).
+//   2. meta.agentClass === 'blog-announce'      → 'blog'
+//   3. item.blogSlug present (non-empty string)  → 'blog'
+//   4. meta.agent present && !== 'pa' (named)    → 'ai'
+//   5. item.via === 'manual' || meta.manual      → 'manual'
+//   6. item.replyTo (thread reply context)       → 'reply'
+//   7. fallback                                  → 'manual'
+export function socialSourceGroup(item, meta) {
+  const it = item || {};
+  const m = meta || {};
+  if (it.sourceGroup) return it.sourceGroup;
+  if (m.agentClass === 'blog-announce') return 'blog';
+  if (it.blogSlug) return 'blog';
+  if (m.agent && String(m.agent).toLowerCase() !== 'pa') return 'ai';
+  if (it.via === 'manual' || m.manual) return 'manual';
+  if (it.replyTo) return 'reply';
+  return 'manual';
+}
+
+// Hashtags for a social DraftItem: ordered, deduped array of '#'-prefixed strings.
+// Precedence: item.hashtags[] (explicit, agent-stamped) > parse /#\w+/g from body.
+// Pure + tolerant — non-array hashtags / missing body → []; entries are
+// normalised to carry a leading '#'.
+export function deriveHashtags(item) {
+  const it = item || {};
+  if (Array.isArray(it.hashtags) && it.hashtags.length > 0) {
+    return it.hashtags.map((t) => (String(t).startsWith('#') ? String(t) : '#' + String(t)));
+  }
+  const body = String(it.body || it.subject || '');
+  const found = body.match(/#\w+/g);
+  if (!found) return [];
+  // Dedup preserving first-occurrence order.
+  return [...new Set(found)];
+}
+
+// Platforms set for a social DraftItem: ordered fan-out target list.
+// Precedence: item.platforms[] (explicit fan-out) > single platformOf(item).
+// Pure + tolerant — non-array / empty platforms → [platformOf(item)].
+export function socialPlatforms(item) {
+  const it = item || {};
+  if (Array.isArray(it.platforms) && it.platforms.length > 0) {
+    return it.platforms.slice();
+  }
+  return [platformOf(it)];
+}
+
 // pa_action_drafts.status (+ delivery_status + scheduled_at) → the per-channel
 // DESIGN status vocab the renderers chip on. Channel-aware only where the design
 // diverges (social uses 'posted'; newsletter groups on cooling/pending/approved).
@@ -123,6 +173,7 @@ function baseRow(row) {
   return {
     item,
     meta,
+    edited, // exposed for emailGroup inference (edited "Re:" subject override)
     ct,
     subject: edited.subject ?? item.subject ?? '(no subject)',
     body: edited.body ?? item.body ?? '',
@@ -139,6 +190,26 @@ function baseRow(row) {
 
 export function mapEmailQueue(row) {
   const b = baseRow(row);
+
+  // emailGroup: grouping signal for the master list (master grouping spec 01).
+  // Sequence test wins over reply test — a sequence follow-up with a "Re:"
+  // subject must stay in the SEQUENCE STEP group (sequence context wins).
+  let emailGroup;
+  if (b.item.sequence != null) {
+    emailGroup = 'sequence';
+  } else if (
+    b.item.kind === 'reply' ||
+    b.item.in_reply_to ||
+    /^re:/i.test(b.item.subject ?? '') ||
+    /^re:/i.test(b.edited?.subject ?? '')
+  ) {
+    emailGroup = 'reply';
+  } else {
+    emailGroup = 'manual';
+  }
+
+  const seq = b.item.sequence || {};
+
   return {
     id: row.id,
     subject: b.subject,
@@ -150,7 +221,12 @@ export function mapEmailQueue(row) {
     raw_status: row.status, // pa_action_drafts lifecycle (awaiting/edited/committed/sending/failed)
     ux_mode: 'approve',
     drafted_by: b.drafted_by,
-    sequence_id: b.item.sequence ? b.item.sequence.name : null,
+    sequence_id: seq.name ?? null,
+    sequence_step: seq.step ?? null,
+    sequence_total: seq.total ?? null,
+    emailGroup,
+    tenant_id: b.item.tenantId ?? null,
+    topic_tag: b.item.topic ?? b.meta.topic ?? null,
     scheduled_for: b.scheduled_for,
     is_overdue: b.ct !== 'social' && isPast(row.scheduled_at) && row.status === 'awaiting' ? 1 : 0,
     src: 'pa', // WP-04 rewires approve/reject through host.paActions* (Strategy B)
@@ -227,6 +303,16 @@ export function mapSocialQueue(row) {
     source: b.meta.actionName || null,
     slug: row.batch_id || null, // batch_id is the fan-out group key
     title: b.subject,
+    // Grouping signal for the social master list (spec 04).
+    source_group: socialSourceGroup(b.item, b.meta),
+    blog_slug: b.item.blogSlug || null,
+    // Media + hashtags + fan-out platforms (spec 03 / 04). Passthrough-only:
+    // media_url surfaces item.media_url; hashtags falls back to a /#\w+/ body
+    // parse; platforms defaults to [platformOf(item)] when no explicit list.
+    media_url: b.item.media_url ?? null,
+    hashtags: deriveHashtags(b.item),
+    platforms: socialPlatforms(b.item),
+    thread: b.item.thread ?? null,
   };
 }
 
@@ -243,6 +329,10 @@ export function mapSocialSent(row) {
     delivery_status: b.delivery_status,
     source: b.meta.actionName || null,
     slug: row.batch_id || null,
+    // Media + hashtags + fan-out platforms passthrough (parity with mapSocialQueue).
+    media_url: b.item.media_url ?? null,
+    hashtags: deriveHashtags(b.item),
+    platforms: socialPlatforms(b.item),
   };
 }
 
