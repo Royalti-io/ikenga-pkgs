@@ -261,6 +261,7 @@ export function mapEmailQueue(row) {
     src: 'pa', // WP-04 rewires approve/reject through host.paActions* (Strategy B)
     delivery_status: b.delivery_status,
     error_text: b.error_text,
+    quality: b.item.quality ?? null, // ItemQuality | null — from payload_json.item.quality (G-QUALITY)
   };
 }
 
@@ -298,6 +299,7 @@ export function mapNewsletterQueue(row) {
     drafted_by: b.drafted_by,
     has_ab: 0,
     body: b.body,
+    quality: b.item.quality ?? null, // ItemQuality | null — from payload_json.item.quality (G-QUALITY)
   };
 }
 
@@ -561,6 +563,70 @@ export function newsletterHistorySignals(item, historyRows) {
   }
 
   return { freshness, previouslyFeatured };
+}
+
+// ── Draft-time quality verdict helpers (G-QUALITY, WP-13) ────────────────────
+// Pure, exported so they can be unit-tested in derive.test.mjs without importing
+// the full view layer.  Both functions accept the `quality` value from
+// `item.quality` (or a mapped row's `quality` field); null/undefined → '—' honest.
+
+/**
+ * Build a { label, value, sub, pct, tone } cell for the Claims quality dimension.
+ *
+ * Stamped: value = "N/M" counts, sub = "X verified · Y unsourced · Z failed",
+ *          tone = 'fail' if any 'failed', 'warn' if any 'unsourced', else 'ok'.
+ * Unstamped: value = '—', sub = 'not verified at draft', tone = 'warn'.
+ *
+ * @param {ItemQuality|null|undefined} quality
+ * @returns {{ label: string, value: string, sub: string, pct: number, tone: string }}
+ */
+export function claimsVerdictCell(quality) {
+  if (!quality || !Array.isArray(quality.claims)) {
+    return { label: 'Claims', value: '—', sub: 'not verified at draft', pct: 0, tone: 'warn' };
+  }
+  const claims = quality.claims;
+  const total = claims.length;
+  if (total === 0) {
+    // Draft explicitly has zero factual claims — clean slate.
+    return { label: 'Claims', value: '0', sub: 'no factual claims', pct: 100, tone: 'ok' };
+  }
+  const verified = claims.filter((c) => c.verdict === 'verified').length;
+  const failed = claims.filter((c) => c.verdict === 'failed').length;
+  const unsourced = claims.filter((c) => c.verdict === 'unsourced').length;
+  const parts = [];
+  if (verified > 0) parts.push(`${verified} verified`);
+  if (unsourced > 0) parts.push(`${unsourced} unsourced`);
+  if (failed > 0) parts.push(`${failed} failed`);
+  const sub = parts.join(' · ') || 'claims checked';
+  const tone = failed > 0 ? 'fail' : unsourced > 0 ? 'warn' : 'ok';
+  const pct = Math.round((verified / total) * 100);
+  return { label: 'Claims', value: `${verified}/${total}`, sub, pct, tone };
+}
+
+/**
+ * Build a { label, value, sub, pct, tone } cell for the Tone-match quality dimension.
+ *
+ * Stamped: value = 'On-voice' / 'Off-voice', sub = tone.basis (truncated to 80 chars),
+ *          tone = 'ok' if on-voice else 'warn'.
+ * Unstamped: value = '—', sub = 'not assessed', tone = 'warn'.
+ *
+ * @param {ItemQuality|null|undefined} quality
+ * @returns {{ label: string, value: string, sub: string, pct: number, tone: string }}
+ */
+export function toneVerdictCell(quality) {
+  if (!quality || !quality.tone) {
+    return { label: 'Tone match', value: '—', sub: 'not assessed', pct: 0, tone: 'warn' };
+  }
+  const t = quality.tone;
+  const isOnVoice = t.verdict === 'on-voice';
+  const basis = t.basis ? String(t.basis).slice(0, 80) : '';
+  return {
+    label: 'Tone match',
+    value: isOnVoice ? 'On-voice' : 'Off-voice',
+    sub: basis,
+    pct: isOnVoice ? 90 : 20,
+    tone: isOnVoice ? 'ok' : 'warn',
+  };
 }
 
 // ── Batch loader → per-channel/per-view split ─────────────────────────────────

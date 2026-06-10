@@ -57,6 +57,8 @@ import {
   mapSocialSent,
   mapSequenceQueue,
   newsletterHistorySignals,
+  claimsVerdictCell,
+  toneVerdictCell,
 } from '../../lib/derive.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -744,6 +746,8 @@ const FIXTURE_EMAIL_QUEUE = [
   // ── Replies group (emailGroup: 'reply') ─────────────────────────────────────
   // eq-r1 recipient is keyed into FIXTURE_CRM → drives the full 8-cell ri-grid
   // in standalone. Auto-selected first (rows[0]) so the showcase opens on it.
+  // quality: fully-verified stamp (all claims verified, on-voice) → Claims 2/2 ok,
+  // Tone match On-voice ok.
   {
     id: 'eq-r1',
     subject: 'Re: Royalti onboarding · file processing delay',
@@ -761,6 +765,16 @@ const FIXTURE_EMAIL_QUEUE = [
     drafted_by: 'pa',
     tenant_id: 590,
     emailGroup: 'reply',
+    // ItemQuality stamp — fully verified + on-voice (G-QUALITY / WP-13).
+    quality: {
+      claims: [
+        { text: 'patched in 0.7.4', source: 'https://royalti.io/changelog/0.7.4', verdict: 'verified' },
+        { text: 'backfill ran clean this morning', source: 'https://royalti.io/changelog/0.7.4', verdict: 'verified' },
+      ],
+      tone: { verdict: 'on-voice', basis: 'Direct, no hype terms, first-person Ruby voice.', model: 'claude-sonnet-4-5' },
+      verified_at: '2026-06-10T09:15:00.000Z',
+      verifier: 'draft-time',
+    },
   },
   {
     id: 'eq-r2',
@@ -778,8 +792,20 @@ const FIXTURE_EMAIL_QUEUE = [
     drafted_by: 'cbo',
     topic_tag: 'enterprise',
     emailGroup: 'reply',
+    // ItemQuality stamp — failed claim + off-voice (G-QUALITY / WP-13).
+    // Demonstrates: Claims cell → fail tone; Tone match cell → Off-voice warn.
+    quality: {
+      claims: [
+        { text: 'enterprise pricing is bespoke and based on catalog size and team seats', source: null, verdict: 'failed' },
+        { text: 'Thursday 15:00 WAT', source: null, verdict: 'unsourced' },
+      ],
+      tone: { verdict: 'off-voice', basis: 'Proposal language too casual for an enterprise ask.', model: 'claude-sonnet-4-5' },
+      verified_at: '2026-06-10T09:20:00.000Z',
+      verifier: 'draft-time',
+    },
   },
   // ── Manual outreach group (emailGroup: 'manual') ────────────────────────────
+  // eq-m1 has NO quality stamp → Claims '—' + Tone match '—' (honest, D-10).
   {
     id: 'eq-m1',
     subject: 'Welcome — your Royalti tenant is ready',
@@ -795,6 +821,7 @@ const FIXTURE_EMAIL_QUEUE = [
     scheduled_for: 'Today 14:30',
     drafted_by: 'pa',
     emailGroup: 'manual',
+    // No quality field — renders '—' for Claims + Tone match (honest, D-10).
   },
   // ── Sequence step group (emailGroup: 'sequence') ────────────────────────────
   {
@@ -815,6 +842,7 @@ const FIXTURE_EMAIL_QUEUE = [
     sequence_id: 'Cold A&R outreach',
     sequence_step: 2,
     sequence_total: 4,
+    // No quality field — renders '—' for Claims + Tone match (honest, D-10).
   },
 ];
 
@@ -832,11 +860,24 @@ const FIXTURE_NL_QUEUE = [
   { id: 'nl-1', subject: 'You can deliver from Royalti now', subject_b: null, draft_slug: 'royalti-deliver', status: 'cooling', raw_status: 'awaiting', cooling_until: '47m', quality_score: 92, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 0,
     preheader: 'Send DDEX messages from your workspace — no aggregator required.',
     from_line: 'Ruby <ruby@royalti.io>',
-    body: `Royalti now ships a full delivery pipeline.\n\nYou can send DDEX ERN4 messages directly from your workspace to DSPs that accept DDEX — no third-party aggregator account required for the initial batch.\n\nHere is what that means in practice:\n\n## What changed\n\nThe delivery seam was the last piece of the puzzle. Before this release, labels using Royalti could ingest statements and calculate royalties, but the outbound leg still meant exporting a spreadsheet and handing it to a distributor.\n\nNow the loop is closed. A single approval in the Outbound pane sends a DDEX message to your connected DSPs.\n\n## What you need to do\n\nIf you are already on Royalti, your tenant is DDEX-ready. Go to Settings → Delivery, connect your first DSP endpoint, and submit a test release. The confirmation takes 24 hours.\n\nIf you are not on Royalti yet, you can request early access at royalti.io/deliver.\n\n## What is next\n\nWe are working on a MEAD profile for sync licensing and a batch-release scheduler. Both are on the public roadmap.\n\nAs always, reply to this email with questions — Ruby reads every one.\n\nRuby\nRoyalti` },
+    body: `Royalti now ships a full delivery pipeline.\n\nYou can send DDEX ERN4 messages directly from your workspace to DSPs that accept DDEX — no third-party aggregator account required for the initial batch.\n\nHere is what that means in practice:\n\n## What changed\n\nThe delivery seam was the last piece of the puzzle. Before this release, labels using Royalti could ingest statements and calculate royalties, but the outbound leg still meant exporting a spreadsheet and handing it to a distributor.\n\nNow the loop is closed. A single approval in the Outbound pane sends a DDEX message to your connected DSPs.\n\n## What you need to do\n\nIf you are already on Royalti, your tenant is DDEX-ready. Go to Settings → Delivery, connect your first DSP endpoint, and submit a test release. The confirmation takes 24 hours.\n\nIf you are not on Royalti yet, you can request early access at royalti.io/deliver.\n\n## What is next\n\nWe are working on a MEAD profile for sync licensing and a batch-release scheduler. Both are on the public roadmap.\n\nAs always, reply to this email with questions — Ruby reads every one.\n\nRuby\nRoyalti`,
+    // ItemQuality stamp — fully verified + on-voice (G-QUALITY / WP-13).
+    quality: {
+      claims: [
+        { text: 'no third-party aggregator account required for the initial batch', source: 'https://royalti.io/deliver', verdict: 'verified' },
+        { text: 'The confirmation takes 24 hours', source: 'https://docs.royalti.io/delivery', verdict: 'verified' },
+      ],
+      tone: { verdict: 'on-voice', basis: 'Clear, direct, no hype terms, Ruby first-person voice.', model: 'claude-sonnet-4-5' },
+      verified_at: '2026-06-10T08:00:00.000Z',
+      verifier: 'draft-time',
+    },
+  },
   { id: 'nl-2', subject: 'Schema patches that unblocked tenant 590', subject_b: 'The shape disparity that was eating royalty data', draft_slug: 'schema-patches-590', status: 'pending', raw_status: 'awaiting', cooling_until: null, quality_score: 86, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 1,
     preheader: 'A two-line migration fix that took three days to find — and how we made it automatic.',
     from_line: 'Ruby <ruby@royalti.io>',
-    body: `Tenant 590 hit a wall last month.\n\nWhen they uploaded their first statement batch, the ingestion pipeline rejected 312 rows because the revenue model field was an enum the schema didn't recognise.\n\nThe fix was a two-line migration, but finding it took three days of log triage.\n\nWe are writing about it because the same shape problem shows up across 8% of new tenants in their first month. This is the kind of thing that erodes trust before a product has a chance to prove itself.\n\nThe patch is in 0.7.3. If you are running an older version, the upgrade path is in the docs.\n\nRuby` },
+    body: `Tenant 590 hit a wall last month.\n\nWhen they uploaded their first statement batch, the ingestion pipeline rejected 312 rows because the revenue model field was an enum the schema didn't recognise.\n\nThe fix was a two-line migration, but finding it took three days of log triage.\n\nWe are writing about it because the same shape problem shows up across 8% of new tenants in their first month. This is the kind of thing that erodes trust before a product has a chance to prove itself.\n\nThe patch is in 0.7.3. If you are running an older version, the upgrade path is in the docs.\n\nRuby`,
+    // No quality field → Claims '—' + honest unstamped state (D-10 backlog rows).
+  },
 ];
 
 const FIXTURE_NL_SENT = [
@@ -1139,10 +1180,10 @@ const SEQ_REJECT_REASONS = ['Cadence too aggressive', 'Wrong segment', 'Copy nee
 
 // Build the 8 newsletter quality cells from the draft row (B.6). quality_score
 // is a stored column; word count, anti-patterns, section variety and CTAs are
-// computed directly from the body text (real signals). Claims needs a verifier
-// pipeline (stays honest placeholder). Freshness + Previously-featured are now
-// real via newsletterHistorySignals (WP-11). Each cell:
-// { label, value, sub, pct, tone } (tone = 'ok' | 'warn' | 'fail').
+// computed directly from the body text (real signals). Claims reads the
+// draft-time ItemQuality stamp (G-QUALITY, WP-13) — honest '—' when unstamped.
+// Freshness + Previously-featured are real via newsletterHistorySignals (WP-11).
+// Each cell: { label, value, sub, pct, tone } (tone = 'ok' | 'warn' | 'fail').
 // historySignals = { freshness, previouslyFeatured } from newsletterHistorySignals,
 // or null when the query hasn't resolved yet (renders honest '—' placeholders).
 function newsletterQualityCells(row, historySignals) {
@@ -1155,7 +1196,6 @@ function newsletterQualityCells(row, historySignals) {
   const anti = countAntiPatterns(body);
   const sections = countSections(body);
   const { ctas, bangs } = countCtas(body);
-  const claims = countClaims(body);
 
   return [
     {
@@ -1172,15 +1212,9 @@ function newsletterQualityCells(row, historySignals) {
       pct: wc ? Math.min(100, Math.round((wc / 500) * 100)) : 0,
       tone: wcOk == null ? 'warn' : wcOk ? 'ok' : 'warn',
     },
-    {
-      label: 'Claims',
-      value: hasBody ? `${claims}` : '—',
-      sub: hasBody ? 'detected · unverified' : 'no body',
-      pct: hasBody ? Math.min(100, claims * 12) : 0,
-      // Honest: we can detect claims in the text but not verify them — a
-      // verifier pipeline would flip this to ok/fail.
-      tone: 'warn',
-    },
+    // Claims: reads draft-time ItemQuality stamp (G-QUALITY, WP-13).
+    // Stamped rows show verified/total counts; unstamped rows show honest '—'.
+    claimsVerdictCell(row.quality),
     {
       label: 'Anti-patterns',
       value: hasBody ? `${anti}` : '—',
@@ -1214,18 +1248,15 @@ function newsletterQualityCells(row, historySignals) {
 // cells render through the exact same nl-quality-cell markup. crm = resolved CRM
 // record from fetchReplyIntelligence, or null. Every cell is honest about its
 // signal limits — '—' value and 'warn' tone when no real data exists.
+// Claims + Tone match read the draft-time ItemQuality stamp (G-QUALITY, WP-13);
+// unstamped rows show honest '—', never a soft heuristic guess (D-10).
 function emailQualityCells(row, crm) {
   const body = row.body ?? '';
   const hasBody = !!body;
   const agent = row.drafted_by ?? null;
 
-  // --- LENGTH --- direct body signal (line count). "on-voice" only signals the
-  // draft came from a named agent — never claims voice analysis ran.
+  // --- LENGTH --- direct body signal (line count).
   const lines = hasBody ? body.split('\n').filter((s) => s.trim()).length : 0;
-  const onVoice = agent ? 'on-voice' : 'heuristic';
-
-  // --- CLAIMS --- detectable but not verifiable (no verifier pipeline yet).
-  const claims = countClaims(body);
 
   // --- PERSONALIZATION --- merge-field count + CRM presence.
   const mergeCount = hasBody
@@ -1248,25 +1279,17 @@ function emailQualityCells(row, crm) {
     ? `${threadCount} prior msg${threadCount !== 1 ? 's' : ''}`
     : '—';
 
-  // --- TONE MATCH --- coarse anti-pattern heuristic, clearly labelled.
-  const anti = countAntiPatterns(body);
-  const toneOk = hasBody && anti === 0;
-
   return [
     {
       label: 'Length',
       value: lines ? `${lines}` : '—',
-      sub: lines ? `lines · ${onVoice}` : 'no body',
+      sub: lines ? 'lines' : 'no body',
       pct: lines ? Math.min(100, Math.round((lines / 8) * 100)) : 0,
       tone: !lines ? 'warn' : lines >= 2 && lines <= 8 ? 'ok' : 'warn',
     },
-    {
-      label: 'Claims',
-      value: hasBody ? `${claims}` : '—',
-      sub: hasBody ? (claims > 0 ? 'detected · unverified' : 'none detected') : 'no body',
-      pct: hasBody ? Math.min(100, claims * 20) : 0,
-      tone: !hasBody ? 'warn' : claims === 0 ? 'ok' : 'warn',
-    },
+    // Claims: reads draft-time ItemQuality stamp (G-QUALITY, WP-13).
+    // Stamped rows show verified/total counts; unstamped rows show honest '—'.
+    claimsVerdictCell(row.quality),
     {
       label: 'Personalization',
       value: persLevel,
@@ -1281,13 +1304,9 @@ function emailQualityCells(row, crm) {
       pct: threadLevel === 'Full' ? 100 : threadLevel === 'Partial' ? 60 : threadLevel === 'Sequence' ? 40 : 0,
       tone: threadLevel === 'Full' ? 'ok' : 'warn',
     },
-    {
-      label: 'Tone match',
-      value: !hasBody ? '—' : toneOk ? 'On-voice' : 'Off-voice',
-      sub: !hasBody ? 'no body' : agent ? `${agent} model · heuristic` : 'heuristic',
-      pct: !hasBody ? 0 : toneOk ? 88 : Math.max(10, 88 - anti * 25),
-      tone: !hasBody ? 'warn' : toneOk ? 'ok' : 'warn',
-    },
+    // Tone match: reads draft-time ItemQuality stamp (G-QUALITY, WP-13).
+    // Stamped rows show 'On-voice'/'Off-voice' + basis; unstamped rows show honest '—'.
+    toneVerdictCell(row.quality),
   ];
 }
 

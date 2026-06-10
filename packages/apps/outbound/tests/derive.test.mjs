@@ -12,6 +12,8 @@ import {
   splitByContentType,
   countByContentType,
   newsletterHistorySignals,
+  claimsVerdictCell,
+  toneVerdictCell,
 } from '../dist/lib/derive.js';
 
 let pass = 0;
@@ -325,6 +327,168 @@ const OUTSIDE_60D = '2026-03-01 10:00:00';  // ~101 days before 2026-06-10
   // rowsWithBody = 0 → honest '—'
   eq(previouslyFeatured.value, '—', 'all rows no body+slug: value —');
   eq(previouslyFeatured.sub, 'no body in history', 'all rows no body+slug: sub correct');
+}
+
+// ── claimsVerdictCell (G-QUALITY, WP-13) ────────────────────────────────────
+{
+  // 1. No quality stamp → '—', sub 'not verified at draft', tone 'warn'.
+  const c = claimsVerdictCell(null);
+  eq(c.value, '—', 'claims: no stamp → value —');
+  eq(c.sub, 'not verified at draft', 'claims: no stamp → sub');
+  eq(c.tone, 'warn', 'claims: no stamp → tone warn');
+}
+{
+  // 2. quality present but claims is not an array → treated as unstamped.
+  const c = claimsVerdictCell({ tone: { verdict: 'on-voice', basis: 'ok', model: 'm' } });
+  eq(c.value, '—', 'claims: no claims array → value —');
+  eq(c.tone, 'warn', 'claims: no claims array → tone warn');
+}
+{
+  // 3. All claims verified → ok tone, value "N/N".
+  const quality = {
+    claims: [
+      { text: 'patched in 0.7.4', source: 'https://royalti.io/changelog', verdict: 'verified' },
+      { text: 'backfill ran clean', source: 'https://royalti.io/changelog', verdict: 'verified' },
+    ],
+    tone: { verdict: 'on-voice', basis: 'ok', model: 'claude-sonnet-4-5' },
+    verified_at: '2026-06-10T09:00:00.000Z',
+    verifier: 'draft-time',
+  };
+  const c = claimsVerdictCell(quality);
+  eq(c.value, '2/2', 'claims: all verified → value 2/2');
+  eq(c.tone, 'ok', 'claims: all verified → tone ok');
+  ok(c.sub.includes('2 verified'), 'claims: all verified → sub mentions 2 verified');
+}
+{
+  // 4. Any failed claim → fail tone.
+  const quality = {
+    claims: [
+      { text: 'claim A', source: null, verdict: 'failed' },
+      { text: 'claim B', source: 'https://royalti.io', verdict: 'verified' },
+    ],
+    tone: { verdict: 'off-voice', basis: 'wrong tone', model: 'claude-sonnet-4-5' },
+    verified_at: '2026-06-10T09:00:00.000Z',
+    verifier: 'draft-time',
+  };
+  const c = claimsVerdictCell(quality);
+  eq(c.tone, 'fail', 'claims: any failed → tone fail');
+  eq(c.value, '1/2', 'claims: 1 verified 1 failed → value 1/2');
+  ok(c.sub.includes('1 failed'), 'claims: failed → sub mentions failed');
+}
+{
+  // 5. Any unsourced, none failed → warn tone.
+  const quality = {
+    claims: [
+      { text: 'claim A', source: null, verdict: 'unsourced' },
+      { text: 'claim B', source: 'https://royalti.io', verdict: 'verified' },
+    ],
+    tone: { verdict: 'on-voice', basis: 'fine', model: 'claude-sonnet-4-5' },
+    verified_at: '2026-06-10T09:00:00.000Z',
+    verifier: 'draft-time',
+  };
+  const c = claimsVerdictCell(quality);
+  eq(c.tone, 'warn', 'claims: unsourced (no failed) → tone warn');
+  ok(c.sub.includes('1 unsourced'), 'claims: unsourced → sub mentions unsourced');
+}
+{
+  // 6. Zero factual claims (empty array) → ok tone, value "0", sub 'no factual claims'.
+  const quality = {
+    claims: [],
+    tone: { verdict: 'on-voice', basis: 'fine', model: 'claude-sonnet-4-5' },
+    verified_at: '2026-06-10T09:00:00.000Z',
+    verifier: 'draft-time',
+  };
+  const c = claimsVerdictCell(quality);
+  eq(c.value, '0', 'claims: zero claims → value 0');
+  eq(c.tone, 'ok', 'claims: zero claims → tone ok');
+  eq(c.sub, 'no factual claims', 'claims: zero claims → sub');
+}
+
+// ── toneVerdictCell (G-QUALITY, WP-13) ──────────────────────────────────────
+{
+  // 7. No quality stamp → '—', sub 'not assessed', tone 'warn'.
+  const c = toneVerdictCell(null);
+  eq(c.value, '—', 'tone: no stamp → value —');
+  eq(c.sub, 'not assessed', 'tone: no stamp → sub');
+  eq(c.tone, 'warn', 'tone: no stamp → tone warn');
+}
+{
+  // 8. quality without tone field → unstamped.
+  const c = toneVerdictCell({ claims: [] });
+  eq(c.value, '—', 'tone: no tone field → value —');
+  eq(c.tone, 'warn', 'tone: no tone field → tone warn');
+}
+{
+  // 9. on-voice → 'On-voice', tone 'ok', sub = basis.
+  const quality = {
+    claims: [],
+    tone: { verdict: 'on-voice', basis: 'Direct, no hype terms.', model: 'claude-sonnet-4-5' },
+    verified_at: '2026-06-10T09:00:00.000Z',
+    verifier: 'draft-time',
+  };
+  const c = toneVerdictCell(quality);
+  eq(c.value, 'On-voice', 'tone: on-voice → value On-voice');
+  eq(c.tone, 'ok', 'tone: on-voice → tone ok');
+  eq(c.sub, 'Direct, no hype terms.', 'tone: on-voice → sub is basis');
+}
+{
+  // 10. off-voice → 'Off-voice', tone 'warn'.
+  const quality = {
+    claims: [],
+    tone: { verdict: 'off-voice', basis: 'Too salesy.', model: 'claude-sonnet-4-5' },
+    verified_at: '2026-06-10T09:00:00.000Z',
+    verifier: 'draft-time',
+  };
+  const c = toneVerdictCell(quality);
+  eq(c.value, 'Off-voice', 'tone: off-voice → value Off-voice');
+  eq(c.tone, 'warn', 'tone: off-voice → tone warn');
+  eq(c.sub, 'Too salesy.', 'tone: off-voice → sub is basis');
+}
+{
+  // 11. basis longer than 80 chars → truncated to 80 chars in sub.
+  const longBasis = 'A'.repeat(100);
+  const quality = {
+    claims: [],
+    tone: { verdict: 'on-voice', basis: longBasis, model: 'claude-sonnet-4-5' },
+    verified_at: '2026-06-10T09:00:00.000Z',
+    verifier: 'draft-time',
+  };
+  const c = toneVerdictCell(quality);
+  eq(c.sub.length, 80, 'tone: basis truncated to 80 chars');
+}
+
+// ── quality threaded through mapEmailQueue + mapNewsletterQueue ──────────────
+{
+  // 12. mapEmailQueue threads item.quality onto the row.
+  const q = {
+    claims: [{ text: 'claim', source: null, verdict: 'verified' }],
+    tone: { verdict: 'on-voice', basis: 'ok', model: 'x' },
+    verified_at: '2026-06-10T00:00:00.000Z',
+    verifier: 'draft-time',
+  };
+  const m = mapEmailQueue(row({ item: { recipient: 'V', recipientEmail: 'v@a.b', subject: 'Hi', channel: 'smtp', quality: q } }));
+  ok(m.quality !== null && m.quality.verifier === 'draft-time', 'mapEmailQueue: quality threaded from item.quality');
+}
+{
+  // 13. mapEmailQueue row with no quality → quality is null.
+  const m = mapEmailQueue(row({ item: { recipient: 'V', recipientEmail: 'v@a.b', subject: 'Hi', channel: 'smtp' } }));
+  eq(m.quality, null, 'mapEmailQueue: no item.quality → quality null');
+}
+{
+  // 14. mapNewsletterQueue threads item.quality onto the row.
+  const q = {
+    claims: [],
+    tone: { verdict: 'on-voice', basis: 'ok', model: 'x' },
+    verified_at: '2026-06-10T00:00:00.000Z',
+    verifier: 'draft-time',
+  };
+  const m = mapNewsletterQueue(row({ channel: 'listmonk', item: { subject: 'Edition', channel: 'listmonk', quality: q } }));
+  ok(m.quality !== null && m.quality.verifier === 'draft-time', 'mapNewsletterQueue: quality threaded from item.quality');
+}
+{
+  // 15. mapNewsletterQueue row with no quality → quality is null.
+  const m = mapNewsletterQueue(row({ channel: 'listmonk', item: { subject: 'Edition', channel: 'listmonk' } }));
+  eq(m.quality, null, 'mapNewsletterQueue: no item.quality → quality null');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);
