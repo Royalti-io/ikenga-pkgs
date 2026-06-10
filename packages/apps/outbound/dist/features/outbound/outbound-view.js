@@ -3026,6 +3026,114 @@ function SocialSentView({ standalone }) {
 
 const CT_LABEL = { email: 'Email', newsletter: 'Newsletter', social: 'Social', sequences: 'Sequence' };
 
+// Standalone fixture for CrossChannelApprovalsView — mixed-channel rows at the
+// mapApprovalRow output shape (same field contract). One row per channel covers
+// the four filter pills; the `edited` row proves the edited-status branch; the
+// `quality` field on the email row is a forward-compat exemplar for verdict-cells
+// (ItemQuality — see derive.js typedef at §G-QUALITY). Live mode never uses this.
+const FIXTURE_APPROVALS = [
+  // ── Email (smtp) — awaiting, carries ItemQuality for verdict-cells WP ──────────
+  {
+    id: 'ap-em-1',
+    ct: 'email',
+    ct_label: 'Email',
+    status: 'awaiting',
+    raw_status: 'awaiting',
+    channel: 'smtp',
+    subject: 'Re: Royalti onboarding · file processing delay',
+    body: 'Hi,\n\nThanks for flagging this. The delay you saw was caused by a schema mismatch on the ingestion side — we patched it in 0.7.4 and the backfill ran clean this morning.\n\nYour tenant (id 590) should now show all statements. Let me know if anything looks off.\n\nBest,\nRuby',
+    recipient: 'valentim@soundlabel.pt',
+    drafted_by: 'pa',
+    scheduled_for: null,
+    error_text: null,
+    attempts: 0,
+    batch_id: null,
+    // ItemQuality exemplar (G-QUALITY / derive.js typedef). The Approvals view
+    // does not render quality cells yet — this data is forward-compat for WP-12+.
+    quality: {
+      claims: [
+        { text: 'patched in 0.7.4', source: 'https://royalti.io/changelog/0.7.4', verdict: 'verified' },
+        { text: 'backfill ran clean this morning', source: null, verdict: 'unsourced' },
+      ],
+      tone: { verdict: 'on-voice', basis: 'Direct, no hype terms, first-person Ruby voice.', model: 'claude-sonnet-4-5' },
+      verified_at: '2026-06-10T09:15:00.000Z',
+      verifier: 'draft-time',
+    },
+  },
+  // ── Newsletter (listmonk) — awaiting ─────────────────────────────────────────
+  {
+    id: 'ap-nl-1',
+    ct: 'newsletter',
+    ct_label: 'Newsletter',
+    status: 'awaiting',
+    raw_status: 'awaiting',
+    channel: 'listmonk',
+    subject: 'You can deliver from Royalti now',
+    body: 'Royalti now ships a full delivery pipeline.\n\nYou can send DDEX ERN4 messages directly from your workspace to DSPs that accept DDEX — no third-party aggregator account required for the initial batch.',
+    recipient: '2104 subscribers',
+    drafted_by: 'cmo',
+    scheduled_for: 'Today 10:00',
+    error_text: null,
+    attempts: 0,
+    batch_id: 'nl-deliver-batch-1',
+  },
+  // ── Social (buffer) — awaiting, carries media_url + hashtags ─────────────────
+  {
+    id: 'ap-so-1',
+    ct: 'social',
+    ct_label: 'Social',
+    status: 'awaiting',
+    raw_status: 'awaiting',
+    channel: 'buffer',
+    subject: 'Royalty calculator overhaul · launch post',
+    body: 'The royalty calculator overhaul shipped this week. Statements ingest in ~90s for a 30k-row CSV, and splits recompute live as you edit. #royalti #musicbusiness',
+    recipient: 'LinkedIn · X · Bluesky',
+    drafted_by: 'pa',
+    scheduled_for: '2026-06-10 12:48',
+    error_text: null,
+    attempts: 0,
+    batch_id: 'blog-01',
+    // Social-specific extras (not in mapApprovalRow today but carried so the
+    // approvals detail can render them once the Approvals view grows them in).
+    media_url: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=1200&h=627&fit=crop',
+    hashtags: ['#royalti', '#musicbusiness', '#labels'],
+  },
+  // ── Sequence (resend) — awaiting ─────────────────────────────────────────────
+  {
+    id: 'ap-sq-1',
+    ct: 'sequences',
+    ct_label: 'Sequence',
+    status: 'awaiting',
+    raw_status: 'awaiting',
+    channel: 'resend',
+    subject: 'Cold A&R outreach · distributor-q3',
+    body: 'Cold outbound to 14 distributor leads sourced from Q1 trade-show contacts. 4 steps over 21 days.',
+    recipient: 'distributor-leads-q1',
+    drafted_by: 'vp-sales-agent',
+    scheduled_for: null,
+    error_text: null,
+    attempts: 0,
+    batch_id: 'distributor-q3',
+  },
+  // ── Email (smtp) — edited status (proves the edited branch in the action footer)
+  {
+    id: 'ap-em-2',
+    ct: 'email',
+    ct_label: 'Email',
+    status: 'edited',
+    raw_status: 'edited',
+    channel: 'smtp',
+    subject: 'Following up on the Royalti deck · step 2 [edited]',
+    body: 'Hi [first name],\n\nWanted to circle back on the deck I sent last week — if you had a chance to look, happy to walk you through the ingestion demo on a 15-minute call.\n\nAlternatively I can send a Loom if async is easier. Just say the word.\n\nBest,\nChinedum',
+    recipient: 'ar@universalmusic.pt',
+    drafted_by: 'pa',
+    scheduled_for: 'Mon 09:00',
+    error_text: null,
+    attempts: 1,
+    batch_id: null,
+  },
+];
+
 // One row → a unified approval-row view-model (channel-agnostic).
 function mapApprovalRow(row) {
   const { item, meta, edited } = parseDraft(row);
@@ -3068,7 +3176,7 @@ function CrossChannelApprovalsView({ standalone }) {
     queryFn: fetchAllApprovals,
     enabled: !standalone,
     refetchInterval: 30_000,
-    placeholderData: [],
+    placeholderData: FIXTURE_APPROVALS,
   });
 
   const qc = useQueryClient();
