@@ -5,6 +5,9 @@
 	"scripts": {
 		"build": "pnpm -r build",
 		"test": "pnpm -r test --if-present",
+		"test:scripts": "node --test \"scripts/*.test.mjs\"",
+		"sign:manifests": "node scripts/sign-manifests.mjs",
+		"sign:manifests:check": "node scripts/sign-manifests.mjs --check",
 		"lift:requires": "node scripts/lift-requires.mjs",
 		"lift:requires:check": "node scripts/lift-requires.mjs --check",
 		"changeset": "changeset",
