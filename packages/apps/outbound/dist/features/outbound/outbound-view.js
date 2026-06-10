@@ -37,6 +37,7 @@ import {
   publishIykeState,
   hostNavigate,
   hostSendToActiveSession,
+  hostDbExec,
   hostPaActionsCommit,
   hostPaActionsReject,
   hostPaActionsRetry,
@@ -1432,7 +1433,33 @@ function TwoWeekCalendar({ items, renderPill }) {
 // Reply-intelligence panel — CRM context for an email recipient (design §B/C).
 // Collapses to "unknown sender" when the tenants table has no record (the live
 // case today: no CRM mirror in ikenga.db).
+// Park a per-recipient CRM refresh request (WP-15). The pkg holds no secrets, so
+// it can't hit Twenty directly — it writes a request row into iyke_kv that the
+// daemon's `twenty-mirror --drain` job (outbound:crm-refresh-drain, every 15m)
+// picks up and refreshes from Twenty. Fire-and-forget: a failure here must never
+// break the panel render. PK (scope,key) dedups repeat opens of the same email.
+// (When the trusted-pkg `host.fetch` lands, this becomes a synchronous live pull
+// and the queue can retire — see plans/outbound-pkg + the trusted-pkg ADR.)
+function requestCrmRefresh(email) {
+  if (!email) return;
+  hostDbExec(
+    `INSERT INTO iyke_kv (scope, key, value, updated_at)
+     VALUES ('crm_refresh', ?, '1', strftime('%s','now'))
+     ON CONFLICT(scope, key) DO UPDATE SET updated_at = strftime('%s','now')`,
+    [String(email).toLowerCase()],
+  ).catch(() => {
+    /* best-effort: the daily mirror still keeps contacts reasonably fresh */
+  });
+}
+
 function ReplyIntelligence({ email, sequenceId, standalone }) {
+  // On open (live mode only), ask the daemon to re-pull this recipient from
+  // Twenty so the grid is never stale-on-arrival. Keyed on email so switching
+  // recipients re-requests; standalone never touches the host DB.
+  useEffect(() => {
+    if (!standalone && email) requestCrmRefresh(email);
+  }, [email, standalone]);
+
   const { data: crm } = useQuery({
     queryKey: ['email', 'ri', email],
     // Standalone resolves synchronously from FIXTURE_CRM (or null → honest empty
