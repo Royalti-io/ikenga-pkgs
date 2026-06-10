@@ -72,6 +72,13 @@ run:
     draft review). On operator yes: return the confirmed draft as a structured
     artifact. Do NOT write to ikenga.db — the outbound pkg inserts the
     `social_queue` row on the confirmed artifact.
+
+    Stamp the structured fields the derive layer reads on the confirmed artifact:
+    `item.media_url` (the public image URL, or null for text-only) and
+    `item.hashtags` (array of `'#tag'` strings, or null when none — the same tags
+    that ride the content's `---hashtags---` / firstComment conventions). If a
+    social draft carries factual claims, also stamp `item.quality` per the
+    G-QUALITY shape documented in the outbound pkg's `dist/lib/derive.js`.
 triggers:
   - kind: manual
 depends_on:

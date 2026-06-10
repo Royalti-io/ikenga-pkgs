@@ -21,6 +21,35 @@ export const QUEUE_STATUSES = ['awaiting', 'edited', 'committed', 'sending', 'fa
 export const SENT_STATUSES = ['sent'];
 export const SCHEDULE_STATUSES = ['committed', 'awaiting', 'edited'];
 
+/**
+ * Draft-time quality verdict stamped onto a parked DraftItem by the producing
+ * agent (G-QUALITY, outbound-pkg WP-12 / D-10). Lives at `item.quality` inside
+ * `pa_action_drafts.payload_json` → `{ item, meta }`. New-drafts-only — backlog
+ * rows have no `quality` and render an honest '—' (the UI's coarse tone
+ * heuristic is retired; cells show a stamped verdict or '—', never a soft guess).
+ *
+ * @typedef {Object} QualityClaim
+ * @property {string}      text     One factual claim sentence from the draft body.
+ * @property {string|null} source   The URL/source checked, or null when none was reachable.
+ * @property {'verified'|'failed'|'unsourced'} verdict
+ *           'verified'  — claim checked against a reachable source and confirmed.
+ *           'failed'    — source contradicts the claim; body must be corrected
+ *                         BEFORE parking, then re-verified (a parked 'failed'
+ *                         should not survive — correct + re-verify first).
+ *           'unsourced' — no reachable source; never silently treated as verified.
+ *
+ * @typedef {Object} QualityTone
+ * @property {'on-voice'|'off-voice'} verdict  Self-assessed voice/tone match.
+ * @property {string} basis   One-line rationale for the tone verdict.
+ * @property {string} model   The model id that drafted + self-assessed.
+ *
+ * @typedef {Object} ItemQuality
+ * @property {QualityClaim[]} claims      Per-claim verdicts; [] when the draft has zero factual claims.
+ * @property {QualityTone}    tone        Voice/tone self-assessment.
+ * @property {string}         verified_at ISO-8601 timestamp of the draft-time check.
+ * @property {'draft-time'}   verifier    Provenance — always 'draft-time' for the producer-stamped path.
+ */
+
 // ── Content-type derive (G-DERIVE) ───────────────────────────────────────────
 // `kind` wins (producer/backfill stamp); else the heuristic chain. The one
 // unresolvable case (newsletter vs email via resend/smtp without `kind`) falls
