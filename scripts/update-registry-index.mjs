@@ -31,6 +31,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { readdirSync, statSync } from 'node:fs';
 
+import { publisherKeyFromPub } from './sign-manifest.mjs';
+
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const REGISTRY_REPO = 'Royalti-io/ikenga-registry';
 
@@ -41,6 +43,38 @@ for (const k of REQUIRED_ENV) {
     process.exit(1);
   }
 }
+
+/**
+ * Publisher PUBLIC key (ADR-017 / WP-06). DISTINCT from the registry index
+ * signing key: the index key (`REGISTRY_SIGNING_PRIVATE_KEY`) signs `index.json`
+ * — "this catalog is from us"; the publisher key signs each pkg's MANIFEST —
+ * "these declared capabilities are the bytes the publisher approved", which is
+ * what the shell's trust gate (`is_trusted_for_elevated`) verifies before
+ * granting elevated caps (host.fetch / named secrets / scoped invoke).
+ *
+ * This script only RECORDS the binding: the manifests were signed (the private
+ * key, in the separate `sign-manifests.mjs` step that runs BEFORE the tarball is
+ * packed), and here we bind the matching PUBLIC key into the release-key-signed
+ * index entry. So only the public key is needed.
+ *
+ * OPT-IN: when unset, a signed manifest publishes WITHOUT a `publisherKey`
+ * binding — the shell's verifier then returns `MissingPublisherKey` (fail-closed,
+ * Community tier). An unsigned manifest publishes unsigned regardless. This
+ * gates THIRD-PARTY trusted only; the builtin tier ships without any signature.
+ *
+ *   PUBLISHER_SIGNING_PUBLIC_KEY — the minisign `.pub` file CONTENTS; its base64
+ *                                  payload is recorded as the index entry's
+ *                                  `publisherKey`.
+ */
+const PUBLISHER_SIGNING_PUBLIC_KEY = process.env.PUBLISHER_SIGNING_PUBLIC_KEY ?? null;
+const PUBLISHER_KEY = PUBLISHER_SIGNING_PUBLIC_KEY
+  ? publisherKeyFromPub(PUBLISHER_SIGNING_PUBLIC_KEY)
+  : null;
+console.log(
+  PUBLISHER_KEY
+    ? `Publisher key configured (${PUBLISHER_KEY.slice(0, 12)}…) — signed manifests get a publisherKey binding.`
+    : 'No PUBLISHER_SIGNING_PUBLIC_KEY — signed manifests publish WITHOUT a publisherKey binding (Community tier).',
+);
 
 const published = JSON.parse(process.env.PUBLISHED);
 if (!Array.isArray(published) || published.length === 0) {
@@ -164,6 +198,28 @@ for (const { name, version } of published) {
   // expand it without fetching the tarball. `undefined` for non-bundles.
   const members = bundleMembers(pkgDir, manifest);
 
+  // ADR-017 / WP-06: if this manifest is signed, bind the publisher key. The
+  // shell's trust gate threads this into `InstallSource::Registry.publisher_key`,
+  // then re-derives the canonical bytes from the on-disk manifest.json (which
+  // carries the same `signature` string we read here, embedded at sign-time
+  // before the tarball was packed) and minisign-verifies. A manifest with a
+  // signature but no `publisherKey` in the catalog is fail-closed Rust-side
+  // (`MissingPublisherKey`), so we only bind the key when the manifest is signed
+  // AND a publisher key is configured. Recorded BOTH on the per-version detail
+  // (so the resolver carries it into the install step) and on the index entry
+  // (so the catalog row shows the binding without a detail fetch).
+  let publisherKey;
+  if (manifest.signature) {
+    if (!PUBLISHER_KEY) {
+      console.warn(
+        `⚠ ${name}@${version} carries a manifest signature but no PUBLISHER_SIGNING_PUBLIC_KEY is configured — publishing WITHOUT a publisherKey binding (untrusted-for-elevated). Configure PUBLISHER_SIGNING_* to bind it.`,
+      );
+    } else {
+      publisherKey = PUBLISHER_KEY;
+      console.log(`  ↳ signed manifest → publisherKey ${PUBLISHER_KEY.slice(0, 12)}… bound`);
+    }
+  }
+
   const detailPath = join(registryDir, 'pkgs', `${short}.json`);
   let detail;
   if (existsSync(detailPath)) {
@@ -183,6 +239,7 @@ for (const { name, version } of published) {
     manifest,
     deps,
     ...(members ? { members } : {}),
+    ...(publisherKey ? { publisherKey } : {}),
   });
   detail.updatedAt = nowIso;
   writeFileSync(detailPath, JSON.stringify(detail, null, 2) + '\n');
@@ -197,6 +254,7 @@ for (const { name, version } of published) {
     description: pkgJson.description,
     kind: manifest.kind,
     ...(members ? { members } : {}),
+    ...(publisherKey ? { publisherKey } : {}),
   };
   if (existing) {
     Object.assign(existing, entry);

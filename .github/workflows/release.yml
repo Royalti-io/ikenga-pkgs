@@ -41,6 +41,24 @@ jobs:
 
       - run: pnpm -r test --if-present
 
+      # minisign is needed BEFORE publish to sign manifests (ADR-017 / WP-06)
+      # and again after publish to re-sign the registry index — install once.
+      - name: Install minisign
+        run: sudo apt-get update && sudo apt-get install -y minisign
+
+      # ADR-017 / WP-06: embed a publisher signature into each elevated-cap pkg's
+      # manifest.json BEFORE changesets packs the tarball, so the published
+      # tarball ships a signed manifest the shell trust gate can verify. No-op
+      # (exit 0) when the PUBLISHER_SIGNING_* secrets aren't set — those pkgs
+      # then publish unsigned (Community tier), which is fine: this gates
+      # THIRD-PARTY trusted only; the builtin tier ships without a signature.
+      - name: Sign pkg manifests
+        env:
+          PUBLISHER_SIGNING_PRIVATE_KEY: ${{ secrets.PUBLISHER_SIGNING_PRIVATE_KEY }}
+          PUBLISHER_SIGNING_PUBLIC_KEY: ${{ secrets.PUBLISHER_SIGNING_PUBLIC_KEY }}
+          PUBLISHER_SIGNING_PASSWORD: ${{ secrets.PUBLISHER_SIGNING_PASSWORD }}
+        run: node scripts/sign-manifests.mjs
+
       - name: Create Release PR or publish
         id: changesets
         uses: changesets/action@v1
@@ -59,14 +77,14 @@ jobs:
           NPM_CONFIG_PROVENANCE: "true"
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Install minisign
-        if: steps.changesets.outputs.published == 'true'
-        run: sudo apt-get update && sudo apt-get install -y minisign
-
       - name: Update ikenga-registry
         if: steps.changesets.outputs.published == 'true'
         env:
           PUBLISHED: ${{ steps.changesets.outputs.publishedPackages }}
           REGISTRY_REPO_PAT: ${{ secrets.REGISTRY_REPO_PAT }}
           REGISTRY_SIGNING_PRIVATE_KEY: ${{ secrets.REGISTRY_SIGNING_PRIVATE_KEY }}
+          # ADR-017 / WP-06: only the PUBLIC key is needed here — to record the
+          # `publisherKey` binding on signed entries in the release-key-signed
+          # index. The private key signed the manifests in the step above.
+          PUBLISHER_SIGNING_PUBLIC_KEY: ${{ secrets.PUBLISHER_SIGNING_PUBLIC_KEY }}
         run: node scripts/update-registry-index.mjs

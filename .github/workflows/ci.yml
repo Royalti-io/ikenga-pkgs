@@ -26,6 +26,10 @@ jobs:
         with:
           bun-version: latest
 
+      # minisign is needed by the sign-manifest round-trip test (scripts/).
+      - name: Install minisign
+        run: sudo apt-get update && sudo apt-get install -y minisign
+
       - run: pnpm install --frozen-lockfile
 
       - run: pnpm -r build
@@ -42,3 +46,9 @@ jobs:
       - run: pnpm sync:versions:check
 
       - run: pnpm -r test --if-present
+
+      # Cross-language signing gate (ADR-017 / WP-06): canonicalize the frozen
+      # golden manifest and assert it equals the golden canonical.json
+      # byte-for-byte — proves sign-manifest.mjs agrees with the Rust verifier
+      # (pkg/signature.rs) so signed manifests verify in the shell.
+      - run: pnpm test:scripts

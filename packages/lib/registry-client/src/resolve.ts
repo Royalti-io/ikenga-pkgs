@@ -36,6 +36,16 @@ export interface InstallStep {
   manifest: PkgVersion['manifest'];
   /** True if the pkg is a dependency of the root request (not the root itself). */
   isDep: boolean;
+  /**
+   * ADR-017 / WP-06: the publisher key the signed registry bound to this signed
+   * pkg version. The installer threads this into
+   * `InstallSource::Registry.publisher_key`, and the shell re-derives the
+   * canonical manifest bytes and minisign-verifies the manifest's `signature`
+   * against it — the gate for trusted-for-elevated capabilities (host.fetch /
+   * named secrets / scoped invoke). `undefined` for unsigned/community pkgs:
+   * they install + run, just without elevated caps.
+   */
+  publisherKey?: string;
 }
 
 export interface ResolveOptions {
@@ -113,6 +123,12 @@ export async function resolveInstallPlan(
       pkgId: pv.manifest.id,
       manifest: pv.manifest,
       isDep,
+      // ADR-017 / WP-06: carry the publisher-key binding from the (signed,
+      // index-rooted) detail version into the install step. Read defensively —
+      // the field is only present on the registry `PkgVersion` once the
+      // contract schema admits it (lockstep with @ikenga/contract); until then
+      // it's undefined and the pkg installs untrusted-for-elevated.
+      publisherKey: (pv as { publisherKey?: string }).publisherKey,
     });
   };
 
