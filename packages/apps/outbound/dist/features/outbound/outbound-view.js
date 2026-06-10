@@ -457,26 +457,19 @@ function emailFromLabel(row) {
 //
 // WP-07 (trusted-pkg): we now try a LIVE pull from Twenty CRM first via the
 // trusted-tier `host.fetch` verb — single-person lookup by primaryEmail, mapped
-// into the reply-intelligence shape below. On ANY failure (host.fetch absent on
-// an old/untrusted shell, network error, or no CRM match) we FALL BACK to the
-// local `contacts` + `receivables` mirror path (`fetchReplyIntelligenceLocal`).
-//
-// This makes the rewire safe to ship BEFORE the trusted shell deploys: until
-// host.fetch is live-verified the live branch just throws and we degrade to the
-// existing mirror. Once host.fetch is proven live, the fallback below AND the
-// whole mirror/drain/iyke_kv queue (twenty-mirror.mjs/.sh, twenty-mirror-drain,
-// the jobs.json cron entries, and requestCrmRefresh) get DELETED in a follow-up.
+// Live-only via host.fetch (D-04: local mirror retired, host.fetch live-verified).
+// On host.fetch throw (Twenty down / old shell) → null (→ "Unknown sender" empty
+// state). On clean no-match → also null. Never crashes the panel.
+// NOTE: mirror scripts (twenty-mirror.mjs/.sh, twenty-mirror-drain, jobs.json
+// cron entries) are deleted separately on the ops side.
 async function fetchReplyIntelligence(email) {
   if (!email) return null;
   try {
-    const live = await fetchReplyIntelligenceLive(email);
-    if (live) return live;
-    // Live reached the host but returned no CRM match → fall through to the
-    // local mirror (it may still hold a stale/enriched row for this email).
+    return await fetchReplyIntelligenceLive(email);
   } catch {
-    /* host.fetch unavailable (old/untrusted shell) or network error → fallback */
+    /* host.fetch unavailable (Twenty down / shell without the verb) → graceful null */
+    return null;
   }
-  return fetchReplyIntelligenceLocal(email);
 }
 
 // Twenty REST base + the single-person query the mirror uses
@@ -503,14 +496,16 @@ async function fetchReplyIntelligenceLive(email) {
     throw new Error('host.fetch: Twenty response body was not JSON');
   }
   const person = parsed?.data?.people?.[0] ?? null;
-  if (!person) return null; // no CRM match → caller may try the local mirror
-  return mapTwentyPersonToReplyIntel(person, email);
+  if (!person) return null; // no CRM match → null (→ "Unknown sender" empty state)
+  return await mapTwentyPersonToReplyIntel(person, email);
 }
 
 // Map a Twenty `/rest/people` person (with embedded `company` at depth=1) into
-// the exact reply-intelligence return shape the local path produces. Field
-// derivation mirrors twenty-mirror.mjs's mapping helpers (personName/personOrg).
-function mapTwentyPersonToReplyIntel(p, email) {
+// the exact reply-intelligence return shape. Field derivation mirrors
+// twenty-mirror.mjs's mapping helpers (personName/personOrg). Twenty supplies
+// person/org/health/last-touch; local `receivables` supplies open_balance (joined
+// best-effort — a failure here leaves balance as '—' and never crashes the panel).
+async function mapTwentyPersonToReplyIntel(p, email) {
   const first = p?.name?.firstName ?? '';
   const last = p?.name?.lastName ?? '';
   const fullName = [first, last].filter(Boolean).join(' ').trim() || null;
@@ -522,6 +517,23 @@ function mapTwentyPersonToReplyIntel(p, email) {
   const ageDays = Number.isFinite(lastMs) ? (Date.now() - lastMs) / 86_400_000 : null;
   const health = ageDays == null ? '—' : ageDays < 30 ? 'Active' : ageDays < 90 ? 'Cooling' : 'Dormant';
 
+  // Join local receivables for open balance + overdue count (same query the
+  // former local path used; best-effort so host DB absence degrades gracefully).
+  let bal = null;
+  let overdue = 0;
+  try {
+    const br = await hostDbQuery(
+      `SELECT SUM(CAST(balance_left AS REAL)) AS bal,
+              SUM(CASE WHEN invoice_status = 'overdue' THEN 1 ELSE 0 END) AS od
+       FROM receivables WHERE LOWER(customer_email) = LOWER(?)`,
+      [email]
+    );
+    bal = br?.[0]?.bal ?? null;
+    overdue = Number(br?.[0]?.od ?? 0);
+  } catch {
+    /* receivables lookup is best-effort */
+  }
+
   return {
     tenant_name: org || fullName || email,
     tenant_sub: 'crm', // Twenty source classification (mirrors contact_type='crm')
@@ -531,74 +543,13 @@ function mapTwentyPersonToReplyIntel(p, email) {
     health_sub: ageDays == null ? null : `${Math.round(ageDays)}d since contact`,
     catalog: '—',
     catalog_sub: 'no catalog link',
-    // Open balance lives in local `receivables`, not Twenty — left honest at '—'
-    // on the live path (the post-deploy follow-up can join receivables here too).
-    open_balance: '—',
-    balance_sub: null,
+    open_balance: bal == null ? '—' : `$${Math.round(bal).toLocaleString()}`,
+    balance_sub: overdue > 0 ? `${overdue} overdue` : bal != null ? 'current' : null,
     owner: '—',
     owner_sub: null,
-    risk_flag: 'None',
-    risk_color: 'var(--live)',
+    risk_flag: overdue > 0 ? 'Overdue invoice' : 'None',
+    risk_color: overdue > 0 ? 'var(--danger)' : 'var(--live)',
   };
-}
-
-// LOCAL FALLBACK (pre-WP-07 path). The local `contacts` table IS the CRM mirror
-// (maintained by twenty-mirror.mjs) — joined here by email, with a real open
-// balance pulled from `receivables` by customer_email. Returns null (→ "unknown
-// sender" empty state) when no contact matches. DELETED in the post-deploy
-// follow-up once the live host.fetch path is verified.
-async function fetchReplyIntelligenceLocal(email) {
-  if (!email) return null;
-  try {
-    const rows = await hostDbQuery(
-      `SELECT email, name, organization, contact_type, last_seen_at, interaction_count, notes
-       FROM contacts WHERE LOWER(email) = LOWER(?) LIMIT 1`,
-      [email]
-    );
-    const c = rows?.[0];
-    if (!c) return null;
-
-    // Real open balance + overdue flag from receivables for this email.
-    let bal = null;
-    let overdue = 0;
-    try {
-      const br = await hostDbQuery(
-        `SELECT SUM(CAST(balance_left AS REAL)) AS bal,
-                SUM(CASE WHEN invoice_status = 'overdue' THEN 1 ELSE 0 END) AS od
-         FROM receivables WHERE LOWER(customer_email) = LOWER(?)`,
-        [email]
-      );
-      bal = br?.[0]?.bal ?? null;
-      overdue = Number(br?.[0]?.od ?? 0);
-    } catch {
-      /* receivables lookup is best-effort */
-    }
-
-    // Health derived from contact recency (no stored health column).
-    const lastMs = c.last_seen_at ? Date.parse(c.last_seen_at) : NaN;
-    const ageDays = Number.isFinite(lastMs) ? (Date.now() - lastMs) / 86_400_000 : null;
-    const health = ageDays == null ? '—' : ageDays < 30 ? 'Active' : ageDays < 90 ? 'Cooling' : 'Dormant';
-    const ic = c.interaction_count == null ? null : Number(c.interaction_count);
-
-    return {
-      tenant_name: c.organization || c.name || email,
-      tenant_sub: c.contact_type || null,
-      last_touch: c.last_seen_at ? relDays(c.last_seen_at) : '—',
-      last_touch_sub: ic == null ? null : `${ic} interaction${ic === 1 ? '' : 's'}`,
-      health,
-      health_sub: ageDays == null ? null : `${Math.round(ageDays)}d since contact`,
-      catalog: '—',
-      catalog_sub: 'no catalog link',
-      open_balance: bal == null ? '—' : `$${Math.round(bal).toLocaleString()}`,
-      balance_sub: overdue > 0 ? `${overdue} overdue` : bal != null ? 'current' : null,
-      owner: '—',
-      owner_sub: null,
-      risk_flag: overdue > 0 ? 'Overdue invoice' : 'None',
-      risk_color: overdue > 0 ? 'var(--danger)' : 'var(--live)',
-    };
-  } catch {
-    return null;
-  }
 }
 
 // ─── Social queries ─────────────────────────────────────────────────────────────
@@ -1521,35 +1472,9 @@ function TwoWeekCalendar({ items, renderPill }) {
 // ─── Email views ────────────────────────────────────────────────────────────────
 
 // Reply-intelligence panel — CRM context for an email recipient (design §B/C).
-// Collapses to "unknown sender" when the tenants table has no record (the live
-// case today: no CRM mirror in ikenga.db).
-// Park a per-recipient CRM refresh request (WP-15). The pkg holds no secrets, so
-// it can't hit Twenty directly — it writes a request row into iyke_kv that the
-// daemon's `twenty-mirror --drain` job (outbound:crm-refresh-drain, every 15m)
-// picks up and refreshes from Twenty. Fire-and-forget: a failure here must never
-// break the panel render. PK (scope,key) dedups repeat opens of the same email.
-// (When the trusted-pkg `host.fetch` lands, this becomes a synchronous live pull
-// and the queue can retire — see plans/outbound-pkg + the trusted-pkg ADR.)
-function requestCrmRefresh(email) {
-  if (!email) return;
-  hostDbExec(
-    `INSERT INTO iyke_kv (scope, key, value, updated_at)
-     VALUES ('crm_refresh', ?, '1', strftime('%s','now'))
-     ON CONFLICT(scope, key) DO UPDATE SET updated_at = strftime('%s','now')`,
-    [String(email).toLowerCase()],
-  ).catch(() => {
-    /* best-effort: the daily mirror still keeps contacts reasonably fresh */
-  });
-}
-
+// Collapses to "unknown sender" when no CRM match (host.fetch live-only, D-04).
+// Standalone resolves from FIXTURE_CRM; live pulls Twenty + joins receivables.
 function ReplyIntelligence({ email, sequenceId, standalone }) {
-  // On open (live mode only), ask the daemon to re-pull this recipient from
-  // Twenty so the grid is never stale-on-arrival. Keyed on email so switching
-  // recipients re-requests; standalone never touches the host DB.
-  useEffect(() => {
-    if (!standalone && email) requestCrmRefresh(email);
-  }, [email, standalone]);
-
   const { data: crm } = useQuery({
     queryKey: ['email', 'ri', email],
     // Standalone resolves synchronously from FIXTURE_CRM (or null → honest empty

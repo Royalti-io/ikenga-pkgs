@@ -106,10 +106,8 @@
     ],
     "sqlite.tables": [
       "pa_action_drafts",
-      "contacts",
       "receivables",
-      "newsletter_sends",
-      "iyke_kv"
+      "newsletter_sends"
     ],
     "vault.keys": [
       "TWENTY_API_KEY"
