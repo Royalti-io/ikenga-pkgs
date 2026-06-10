@@ -11,6 +11,7 @@ import {
   mapSequenceQueue,
   splitByContentType,
   countByContentType,
+  newsletterHistorySignals,
 } from '../dist/lib/derive.js';
 
 let pass = 0;
@@ -157,6 +158,173 @@ eq(designStatus(row({ status: 'awaiting' }), 'email'), 'pending', 'awaiting → 
   eq(counts, { email: 1, newsletter: 1, social: 1, sequences: 1 }, 'countByContentType splits 4 ways');
   const split = splitByContentType(rows, mapEmailSent);
   ok(split.social.length === 1 && split.newsletter.length === 1, 'splitByContentType groups by derived type');
+}
+
+// ── newsletterHistorySignals (WP-11) ─────────────────────────────────────────
+// Helpers
+function histRow(over = {}) {
+  return {
+    subject: over.subject ?? 'Default subject',
+    draft_slug: over.draft_slug ?? null,
+    edition: over.edition ?? null,
+    sent_at: over.sent_at ?? '2026-01-01 10:00:00',
+    body: over.body ?? null,
+  };
+}
+
+// Anchor "now" for deterministic 60-day window tests.
+// Use a fixed past date so relative comparisons are stable.
+// All "inside 60d" dates are set to within 60 days of 2026-06-10.
+const INSIDE_60D = '2026-06-01 10:00:00';   // 9 days before 2026-06-10
+const OUTSIDE_60D = '2026-03-01 10:00:00';  // ~101 days before 2026-06-10
+
+{
+  // 1. Empty history → honest '—' freshness + '—' previously-featured.
+  const { freshness, previouslyFeatured } = newsletterHistorySignals(
+    { subject: 'Hello', body: 'Hello https://royalti.io/blog/a', section: 'slug-a' },
+    []
+  );
+  eq(freshness.value, '—', 'empty history: freshness value is —');
+  eq(freshness.sub, 'no sent history', 'empty history: freshness sub correct');
+  eq(freshness.tone, 'warn', 'empty history: freshness tone warn');
+  eq(previouslyFeatured.value, '—', 'empty history: previouslyFeatured value is —');
+  eq(previouslyFeatured.sub, 'no sent history', 'empty history: previouslyFeatured sub correct');
+}
+
+{
+  // 2. Repeat subject inside 60 days → warn with date in sub.
+  const rows = [histRow({ subject: 'You can deliver from Royalti now', sent_at: INSIDE_60D })];
+  const { freshness } = newsletterHistorySignals(
+    { subject: 'You can deliver from Royalti now' },
+    rows
+  );
+  eq(freshness.tone, 'warn', 'repeat inside 60d: tone is warn');
+  eq(freshness.value, 'Repeat', 'repeat inside 60d: value is Repeat');
+  ok(freshness.sub.includes('2026-06-01'), 'repeat inside 60d: sub includes sent date');
+}
+
+{
+  // 3. Repeat subject OUTSIDE 60 days → ok (fresh).
+  const rows = [histRow({ subject: 'You can deliver from Royalti now', sent_at: OUTSIDE_60D })];
+  const { freshness } = newsletterHistorySignals(
+    { subject: 'You can deliver from Royalti now' },
+    rows
+  );
+  eq(freshness.tone, 'ok', 'repeat outside 60d: tone is ok');
+  eq(freshness.value, 'Fresh', 'repeat outside 60d: value is Fresh');
+  eq(freshness.sub, 'no repeat <60d', 'repeat outside 60d: sub is no repeat <60d');
+}
+
+{
+  // 4. No subject match at all → ok (Fresh).
+  const rows = [histRow({ subject: 'Different subject entirely', sent_at: INSIDE_60D })];
+  const { freshness } = newsletterHistorySignals(
+    { subject: 'Schema patches that unblocked tenant 590' },
+    rows
+  );
+  eq(freshness.tone, 'ok', 'no subject match: tone ok');
+  eq(freshness.value, 'Fresh', 'no subject match: value Fresh');
+}
+
+{
+  // 5. Subject comparison is case+whitespace normalised.
+  const rows = [histRow({ subject: '  YOU CAN DELIVER FROM ROYALTI NOW  ', sent_at: INSIDE_60D })];
+  const { freshness } = newsletterHistorySignals(
+    { subject: 'you can deliver from royalti now' },
+    rows
+  );
+  eq(freshness.tone, 'warn', 'normalised subject: still matches');
+}
+
+{
+  // 6. Link overlap → previously featured (1 edition).
+  const sharedUrl = 'https://royalti.io/blog/schema-patches';
+  const rows = [histRow({ body: `Check this out: ${sharedUrl} and more.`, sent_at: OUTSIDE_60D })];
+  const { previouslyFeatured } = newsletterHistorySignals(
+    { subject: 'New edition', body: `Read more: ${sharedUrl}\n`, section: null },
+    rows
+  );
+  eq(previouslyFeatured.tone, 'warn', 'link overlap: tone warn');
+  eq(previouslyFeatured.value, '1', 'link overlap: value is 1');
+  ok(previouslyFeatured.sub.includes('1 prior edition'), 'link overlap: sub mentions 1 prior edition');
+}
+
+{
+  // 7. Slug overlap → previously featured (1 edition).
+  const rows = [histRow({ draft_slug: 'royalti-deliver', sent_at: OUTSIDE_60D, body: null })];
+  const { previouslyFeatured } = newsletterHistorySignals(
+    { subject: 'New edition', body: '', section: 'royalti-deliver' },
+    rows
+  );
+  eq(previouslyFeatured.tone, 'warn', 'slug overlap: tone warn');
+  eq(previouslyFeatured.value, '1', 'slug overlap: 1 match');
+}
+
+{
+  // 8. Multiple overlapping editions.
+  const url = 'https://royalti.io/deliver';
+  const rows = [
+    histRow({ body: `Visit ${url}`, sent_at: OUTSIDE_60D }),
+    histRow({ body: `Also at ${url} today`, sent_at: INSIDE_60D }),
+  ];
+  const { previouslyFeatured } = newsletterHistorySignals(
+    { subject: 'New', body: `See ${url} for details`, section: null },
+    rows
+  );
+  eq(previouslyFeatured.value, '2', 'multiple overlapping: count is 2');
+  ok(previouslyFeatured.sub.includes('2 prior editions'), 'multiple overlapping: sub says 2 editions');
+}
+
+{
+  // 9. All history rows have no body and no slug → '—' (no body in history).
+  // Per spec: "Zero history rows with bodies → honest '—'".
+  const rows = [histRow({ body: null, draft_slug: null, sent_at: OUTSIDE_60D })];
+  const url = 'https://royalti.io/blog/something';
+  const { previouslyFeatured } = newsletterHistorySignals(
+    { subject: 'New', body: `See ${url}`, section: 'my-slug' },
+    rows
+  );
+  eq(previouslyFeatured.value, '—', 'all rows no body+slug: value is — (cannot check)');
+  eq(previouslyFeatured.sub, 'no body in history', 'all rows no body+slug: sub says no body in history');
+  eq(previouslyFeatured.tone, 'warn', 'all rows no body+slug: tone warn');
+}
+
+{
+  // 10. Draft has no body and no slug → '—' (no links/slug to check).
+  const rows = [histRow({ body: 'https://royalti.io/blog/a', sent_at: OUTSIDE_60D })];
+  const { previouslyFeatured } = newsletterHistorySignals(
+    { subject: 'New', body: '', section: '' },
+    rows
+  );
+  eq(previouslyFeatured.value, '—', 'no draft body/slug: value —');
+  eq(previouslyFeatured.sub, 'no links/slug to check', 'no draft body/slug: sub correct');
+}
+
+{
+  // 11. URL query string + trailing slash stripped — same canonical URL matches.
+  const canonical = 'https://royalti.io/blog/a';
+  const rows = [histRow({ body: `${canonical}?utm_source=email#section`, sent_at: OUTSIDE_60D })];
+  const { previouslyFeatured } = newsletterHistorySignals(
+    { subject: 'New', body: `${canonical}/`, section: null },
+    rows
+  );
+  eq(previouslyFeatured.value, '1', 'URL normalisation: query+slash stripped, still matches');
+}
+
+{
+  // 12. No-body history rows and non-empty history → honest '—' sub says 'no body in history'.
+  // (all rows lack body AND draft_slug)
+  const rows = [
+    histRow({ body: null, draft_slug: null }),
+    histRow({ body: null, draft_slug: null }),
+  ];
+  const { previouslyFeatured } = newsletterHistorySignals(
+    { subject: 'S', body: 'https://royalti.io/a', section: 'slug-x' },
+    rows
+  );
+  // rowsWithBody = 0 → honest '—'
+  eq(previouslyFeatured.value, '—', 'all rows no body+slug: value —');
+  eq(previouslyFeatured.sub, 'no body in history', 'all rows no body+slug: sub correct');
 }
 
 console.log(`\n${pass} passed, ${fail} failed`);

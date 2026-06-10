@@ -56,6 +56,7 @@ import {
   mapSocialQueue,
   mapSocialSent,
   mapSequenceQueue,
+  newsletterHistorySignals,
 } from '../../lib/derive.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -257,6 +258,86 @@ async function fetchNewsletterSent() {
   const m = pick(await loadDrafts(SENT_STATUSES), 'newsletter', mapNewsletterSent);
   return m.length ? m : FIXTURE_NL_SENT;
 }
+
+// ── Newsletter sent-history (WP-11) ──────────────────────────────────────────
+// Merges newsletter_sends rows + pa_action_drafts sent listmonk rows into a
+// uniform shape: { subject, draft_slug, edition, sent_at, body }.
+// Both sources are best-effort — errors in either leg are silently swallowed
+// so a missing table never breaks the queue view.
+async function fetchNewsletterHistory() {
+  let sendsRows = [];
+  let draftsRows = [];
+  try {
+    sendsRows = await hostDbQuery(
+      `SELECT draft_slug, edition, subject, subject_alt, sent_at FROM newsletter_sends ORDER BY sent_at DESC LIMIT 200`,
+      []
+    );
+  } catch {
+    /* newsletter_sends absent or unreadable — degrade gracefully */
+  }
+  try {
+    draftsRows = await hostDbQuery(
+      `SELECT payload_json, sent_at FROM pa_action_drafts
+       WHERE channel = 'listmonk' AND status = 'sent'
+       ORDER BY sent_at DESC LIMIT 200`,
+      []
+    );
+  } catch {
+    /* pa_action_drafts read failure — degrade gracefully */
+  }
+
+  const out = [];
+
+  // newsletter_sends rows are already normalised.
+  for (const r of sendsRows) {
+    out.push({
+      subject: r.subject || r.subject_alt || null,
+      draft_slug: r.draft_slug || null,
+      edition: r.edition || null,
+      sent_at: r.sent_at || null,
+      body: null, // newsletter_sends has no body column
+    });
+  }
+
+  // pa_action_drafts (listmonk, sent): extract item.subject + item.body from payload_json.
+  for (const r of draftsRows) {
+    let item = {};
+    try {
+      const payload = typeof r.payload_json === 'string' ? JSON.parse(r.payload_json) : r.payload_json || {};
+      item = payload.item || payload || {};
+    } catch {
+      item = {};
+    }
+    out.push({
+      subject: item.subject || null,
+      draft_slug: item.section || null,
+      edition: null,
+      sent_at: r.sent_at || null,
+      body: item.body || null,
+    });
+  }
+
+  return out;
+}
+
+// Fixture history for standalone mode — one repeated subject + one shared link.
+// Allows the scorecard cells to demo non-stub values without a live DB.
+const FIXTURE_NL_HISTORY = [
+  {
+    subject: 'You can deliver from Royalti now',
+    draft_slug: 'royalti-deliver',
+    edition: 'April 2026',
+    sent_at: '2026-04-15 10:00:00',
+    body: 'Royalti now ships a full delivery pipeline.\n\nhttps://royalti.io/deliver\n\nRuby',
+  },
+  {
+    subject: 'Schema patches that unblocked tenant 590',
+    draft_slug: 'schema-patches-590',
+    edition: 'May 2026',
+    sent_at: '2026-05-06 10:00:00',
+    body: 'Tenant 590 hit a wall last month.\nhttps://royalti.io/blog/schema-patches\n\nRuby',
+  },
+];
 
 // ── Sequences (flat first slice; cohort grid + funnel are Phase 2) ─────────────
 // A "sequence" = pa_action_drafts rows whose item.sequence is set, grouped by name.
@@ -1058,11 +1139,13 @@ const SEQ_REJECT_REASONS = ['Cadence too aggressive', 'Wrong segment', 'Copy nee
 
 // Build the 8 newsletter quality cells from the draft row (B.6). quality_score
 // is a stored column; word count, anti-patterns, section variety and CTAs are
-// computed directly from the body text (real signals). Claims, Freshness and
-// Previously-featured need a claims-verifier / sent-history join that doesn't
-// exist yet — they stay honest placeholders rather than fabricated numbers. Each
-// cell: { label, value, sub, pct, tone } (tone = 'ok' | 'warn' | 'fail').
-function newsletterQualityCells(row) {
+// computed directly from the body text (real signals). Claims needs a verifier
+// pipeline (stays honest placeholder). Freshness + Previously-featured are now
+// real via newsletterHistorySignals (WP-11). Each cell:
+// { label, value, sub, pct, tone } (tone = 'ok' | 'warn' | 'fail').
+// historySignals = { freshness, previouslyFeatured } from newsletterHistorySignals,
+// or null when the query hasn't resolved yet (renders honest '—' placeholders).
+function newsletterQualityCells(row, historySignals) {
   const score = row.quality_score;
   const body = row.body;
   const wc = wordCount(body);
@@ -1112,10 +1195,10 @@ function newsletterQualityCells(row) {
       pct: hasBody ? Math.min(100, sections * 25) : 0,
       tone: !hasBody ? 'warn' : sections >= 3 ? 'ok' : sections >= 2 ? 'warn' : 'fail',
     },
-    // History-dependent — needs a sent-newsletter join (newsletter_sends /
-    // outbound_sent_log) to be real. Honest placeholder until then.
-    { label: 'Freshness', value: '—', sub: 'needs sent-history join', pct: 0, tone: 'warn' },
-    { label: 'Previously featured', value: '—', sub: 'needs sent-history join', pct: 0, tone: 'warn' },
+    // History-dependent — resolved via newsletterHistorySignals + sent-history join (WP-11).
+    // Falls back to honest '—' when historySignals is null (query still loading).
+    historySignals?.freshness ?? { label: 'Freshness', value: '—', sub: 'loading…', pct: 0, tone: 'warn' },
+    historySignals?.previouslyFeatured ?? { label: 'Previously featured', value: '—', sub: 'loading…', pct: 0, tone: 'warn' },
     {
       label: 'CTAs · exclamations',
       value: hasBody ? `${ctas} · ${bangs}!` : '—',
@@ -1751,6 +1834,18 @@ function NewsletterQueueView({ standalone }) {
     placeholderData: FIXTURE_NL_QUEUE,
   });
 
+  // Sent-history query (WP-11): supplies Freshness + Previously-featured cells.
+  // Keyed separately from the queue so it doesn't block the queue render.
+  // Standalone resolves from FIXTURE_NL_HISTORY; live calls both DB sources.
+  const { data: historyRows } = useQuery({
+    queryKey: ['newsletter', 'history'],
+    queryFn: () => {
+      if (standalone) return Promise.resolve(FIXTURE_NL_HISTORY);
+      return fetchNewsletterHistory();
+    },
+    placeholderData: [],
+  });
+
   const qc = useQueryClient();
   const invalidate = () => { qc.invalidateQueries({ queryKey: ['newsletter'] }); qc.invalidateQueries({ queryKey: ['counts'] }); };
   const commitMut = useMutation({
@@ -1778,7 +1873,12 @@ function NewsletterQueueView({ standalone }) {
   const canApprove = isApprovable(sel) && !isCooling;
   const armedRow = undo.armed ? rows.find((r) => r.id === undo.armed) : null;
   const pick = (row) => { setSelected(row); setAbChoice(null); setRejectOpen(false); };
-  const qualityCells = sel ? newsletterQualityCells(sel) : [];
+
+  // Compute history signals for the selected row (pure, uses historyRows from query).
+  const historySignals = sel
+    ? newsletterHistorySignals({ subject: sel.subject, body: sel.body, section: sel.draft_slug }, historyRows ?? [])
+    : null;
+  const qualityCells = sel ? newsletterQualityCells(sel, historySignals) : [];
 
   const sendToChat = () => {
     if (!sel) return;

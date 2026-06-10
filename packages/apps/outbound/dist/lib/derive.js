@@ -374,6 +374,166 @@ export function mapSequenceSent(row) {
   };
 }
 
+// ── Newsletter sent-history signals (WP-11) ──────────────────────────────────
+// historyRows = merged rows from newsletter_sends + pa_action_drafts (sent listmonk).
+// Expected shape per row: { subject?, draft_slug?, edition?, sent_at?, body? }
+// (all fields optional — null/undefined tolerated throughout).
+//
+// Returns { freshness: cell, previouslyFeatured: cell } where cell =
+// { label, value, sub, pct, tone }.  A null cell field signals "cannot compute".
+
+function normalizeSubject(s) {
+  if (!s) return '';
+  return String(s).trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// Extract http/https URLs from a string, stripping query-strings + trailing slashes.
+function extractUrls(text) {
+  if (!text) return [];
+  const raw = String(text).match(/https?:\/\/[^\s"'<>()[\]{}]+/gi) || [];
+  return raw.map((u) => {
+    try {
+      const p = new URL(u);
+      // Drop query + hash; strip trailing slash from pathname.
+      return (p.origin + p.pathname.replace(/\/+$/, '')).toLowerCase();
+    } catch {
+      return u.toLowerCase().replace(/[?#].*$/, '').replace(/\/+$/, '');
+    }
+  }).filter(Boolean);
+}
+
+// Normalise a draft_slug token: lowercase, trim.
+function normalizeSlug(s) {
+  if (!s) return '';
+  return String(s).trim().toLowerCase();
+}
+
+// 60-day window in ms.
+const SIXTY_DAYS_MS = 60 * 24 * 60 * 60 * 1000;
+
+// Format a sent_at epoch as a short date string e.g. '2026-05-06'.
+function shortDate(epochMs) {
+  const d = new Date(epochMs);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Derive Freshness + Previously-featured quality cells from sent-history rows.
+ *
+ * @param {Object} item        - The draft's item object (from parseDraft).
+ *   item.subject  - newsletter subject being drafted
+ *   item.body     - newsletter body text (may be absent)
+ *   item.section  - draft_slug token
+ * @param {Array}  historyRows - merged sent history rows, shape:
+ *   { subject?, draft_slug?, edition?, sent_at?, body? }
+ * @returns {{ freshness: Object, previouslyFeatured: Object }}
+ */
+export function newsletterHistorySignals(item, historyRows) {
+  const it = item || {};
+  const rows = Array.isArray(historyRows) ? historyRows : [];
+
+  // ── Freshness ─────────────────────────────────────────────────────────────
+  // A repeat is a history row whose normalised subject equals this draft's subject
+  // AND whose sent_at is within 60 days of now.
+  const draftSubj = normalizeSubject(it.subject);
+  const now = Date.now();
+
+  let freshness;
+  if (rows.length === 0) {
+    freshness = { label: 'Freshness', value: '—', sub: 'no sent history', pct: 0, tone: 'warn' };
+  } else if (!draftSubj) {
+    freshness = { label: 'Freshness', value: '—', sub: 'no subject to check', pct: 0, tone: 'warn' };
+  } else {
+    // Find most recent repeat within 60 days.
+    let repeatDate = null;
+    for (const r of rows) {
+      const histSubj = normalizeSubject(r.subject);
+      if (!histSubj || histSubj !== draftSubj) continue;
+      const sentMs = toEpoch(r.sent_at);
+      if (!Number.isFinite(sentMs)) continue;
+      const ageDays = (now - sentMs) / 86_400_000;
+      if (ageDays <= 60) {
+        if (repeatDate === null || sentMs > repeatDate) repeatDate = sentMs;
+      }
+    }
+    if (repeatDate !== null) {
+      freshness = {
+        label: 'Freshness',
+        value: 'Repeat',
+        sub: `same subject sent ${shortDate(repeatDate)}`,
+        pct: 10,
+        tone: 'warn',
+      };
+    } else {
+      freshness = { label: 'Freshness', value: 'Fresh', sub: 'no repeat <60d', pct: 100, tone: 'ok' };
+    }
+  }
+
+  // ── Previously featured ───────────────────────────────────────────────────
+  // Counts history editions sharing ≥1 link or draft_slug with this draft.
+  // Works from: draft body URLs + draft_slug vs history row body URLs + draft_slug.
+  // Rows with no body (and no matching slug) simply don't match — honest.
+
+  let previouslyFeatured;
+  const draftSlug = normalizeSlug(it.section);
+  const draftBody = it.body || '';
+  const draftUrls = new Set(extractUrls(draftBody));
+  // Add the draft's own slug as a "virtual URL" matchable in history rows.
+  if (draftSlug) draftUrls.add('slug:' + draftSlug);
+
+  const rowsWithBody = rows.filter((r) => r.body || r.draft_slug);
+
+  if (rowsWithBody.length === 0) {
+    previouslyFeatured = {
+      label: 'Previously featured',
+      value: '—',
+      sub: rows.length === 0 ? 'no sent history' : 'no body in history',
+      pct: 0,
+      tone: 'warn',
+    };
+  } else if (draftUrls.size === 0) {
+    previouslyFeatured = {
+      label: 'Previously featured',
+      value: '—',
+      sub: 'no links/slug to check',
+      pct: 0,
+      tone: 'warn',
+    };
+  } else {
+    let matchCount = 0;
+    for (const r of rows) {
+      const rowUrls = new Set(extractUrls(r.body || ''));
+      const rowSlug = normalizeSlug(r.draft_slug);
+      if (rowSlug) rowUrls.add('slug:' + rowSlug);
+      // Check for any overlap with draftUrls.
+      let overlap = false;
+      for (const u of draftUrls) {
+        if (rowUrls.has(u)) { overlap = true; break; }
+      }
+      if (overlap) matchCount++;
+    }
+    if (matchCount === 0) {
+      previouslyFeatured = {
+        label: 'Previously featured',
+        value: 'No',
+        sub: 'not previously featured',
+        pct: 100,
+        tone: 'ok',
+      };
+    } else {
+      previouslyFeatured = {
+        label: 'Previously featured',
+        value: `${matchCount}`,
+        sub: `featured in ${matchCount} prior edition${matchCount !== 1 ? 's' : ''}`,
+        pct: Math.max(0, 100 - matchCount * 20),
+        tone: 'warn',
+      };
+    }
+  }
+
+  return { freshness, previouslyFeatured };
+}
+
 // ── Batch loader → per-channel/per-view split ─────────────────────────────────
 // One pass over a set of rows: parse + derive + map by (contentType, mapper).
 export function splitByContentType(rows, mapper) {

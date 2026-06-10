@@ -76,7 +76,8 @@
     "sqlite.tables": [
       "pa_action_drafts",
       "contacts",
-      "receivables"
+      "receivables",
+      "newsletter_sends"
     ],
     "vault.keys": []
   },
