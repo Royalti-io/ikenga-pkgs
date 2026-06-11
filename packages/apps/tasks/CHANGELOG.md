@@ -1,5 +1,13 @@
 # @ikenga/pkg-tasks
 
+## 0.8.2
+
+### Patch Changes
+
+- [#18](https://github.com/Royalti-io/ikenga-pkgs/pull/18) [`913f78f`](https://github.com/Royalti-io/ikenga-pkgs/commit/913f78f1dbf289868eb3de8c653d291131e99ac4) Thanks [@nedjamez](https://github.com/nedjamez)! - Wire `requires: [{ kind: "skill", name: "skill-<domain>" }]` into the finance / sales / outbound / content / tasks pane manifests so each pane's in-shell action bar surfaces its domain skill's actions via `list_skill_actions` → the Ọba store. Extends WP-25's mail-only proof to all six domain panes.
+
+- [`e0f89ad`](https://github.com/Royalti-io/ikenga-pkgs/commit/e0f89adc7b0e522e3d50d8dc9fd39ad00b8206d1) Thanks [@nedjamez](https://github.com/nedjamez)! - Publish the mounted view + open-task selection to the shell's iyke iframe-state registry (`{__iyke, kind:'state'}` postMessage), so `iyke state` / `iyke iframe-state` report what's open in the pane without DB spelunking. New `publishIykeState(key, value)` helper in lib/bridge.js.
+
 ## 0.8.1
 
 ### Patch Changes

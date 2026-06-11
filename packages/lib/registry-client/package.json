@@ -1,6 +1,6 @@
 {
   "name": "@ikenga/registry-client",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Read-side client for the Ikenga registry. Fetches the signed index and per-pkg detail files, verifies minisign signatures, and resolves dep install plans. Used by the shell and the ikenga CLI.",
   "license": "Apache-2.0",
   "repository": {
