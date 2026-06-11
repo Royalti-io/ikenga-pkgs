@@ -32,7 +32,6 @@
     "skills/"
   ],
   "scripts": {
-    "sync:from-dev": "node ./scripts/sync-from-dev.mjs",
-    "build:mirror": "node ./scripts/build-mirror.mjs"
+    "sync:from-canonical": "node ./scripts/sync-from-canonical.mjs"
   }
 }

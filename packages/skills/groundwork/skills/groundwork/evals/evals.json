@@ -27,13 +27,26 @@
     {
       "id": 2,
       "name": "subplan-clobber-safety",
-      "prompt": "There's an existing groundwork plan folder at ./existing-plan/. Add a decision-doc sub-plan to it capturing the choice of switching the gateway from REST to GraphQL. Make sure you don't disturb any of my hand-written notes in that folder.",
-      "expected_output": "Creates a new NN-*.md sub-plan (number >= 06) from the decision-doc archetype, registers it in .groundwork.json.subplans, and cross-links it from 00-README's spine-index fence. Critically: every HANDWRITTEN-SENTINEL-* paragraph in 00-README.md, 01-plan.md, and 05-tracking.md survives byte-for-byte. .groundwork.json remains valid JSON.",
+      "prompt": "First set up a fixture, then do the real task. FIXTURE: create a groundwork plan folder at ./existing-plan/ using the fast path (profile software, goal \"Stabilize the public API gateway\", no interview). Then plant four hand-written paragraphs as MY notes — each on its own line, OUTSIDE any groundwork:auto fence — containing exactly these literal markers: HANDWRITTEN-SENTINEL-1 in 00-README.md, HANDWRITTEN-SENTINEL-2 and HANDWRITTEN-SENTINEL-3 in 01-plan.md, and HANDWRITTEN-SENTINEL-4 in 05-tracking.md. TASK: now add a decision-doc sub-plan to ./existing-plan/ capturing the choice of switching the gateway from REST to GraphQL. Make sure you don't disturb any of my hand-written notes in that folder.",
+      "expected_output": "First seeds ./existing-plan/ as a valid groundwork folder with four hand-written HANDWRITTEN-SENTINEL-{1..4} paragraphs placed outside fences across 00-README.md (1), 01-plan.md (2 and 3), and 05-tracking.md (4). Then creates a new NN-*.md sub-plan (number >= 06) from the decision-doc archetype, registers it in .groundwork.json.subplans, and cross-links it from 00-README's spine-index fence. Critically: all four HANDWRITTEN-SENTINEL-* paragraphs survive byte-for-byte. .groundwork.json remains valid JSON.",
       "assertions": [
         "Creates a new NN-*.md sub-plan numbered >= 06",
         "Registers the sub-plan in .groundwork.json.subplans (valid JSON)",
         "All four HANDWRITTEN-SENTINEL-* markers survive across 00/01/05",
         "Cross-links the sub-plan from inside the 00-README spine-index fence"
+      ]
+    },
+    {
+      "id": 3,
+      "name": "emit-workflow",
+      "prompt": "Scaffold a groundwork plan at ./plans/eval-emit/ (profile software, goal \"Add a share-card export endpoint\"). Populate 05-tracking.md with two work packages: WP-01 (freezes a shared contract, owns a freeze gate G-CONTRACT) and WP-02 (depends on WP-01). Register the IDs. Then run groundwork orchestrate with the --emit-workflow flag. Show me what got written.",
+      "expected_output": "Runs orchestrate (clarify pre-step, derives the wave plan), writes 09-orchestration.md AND emits artifact/orchestrate.workflow.js — a runnable Workflow script. The script begins with `export const meta`, declares one phase per wave, fans out the wave's WPs with parallel(), runs a VERDICT-schema adversarial verify at the G-CONTRACT freeze-gate barrier, and sets a model tier per WP. orchestrate offers to run it rather than auto-running. The prose 09-orchestration.md still exists as the human-readable twin.",
+      "assertions": [
+        "Writes artifact/orchestrate.workflow.js whose first statement is `export const meta`",
+        "The workflow has one meta.phases entry per wave and fans out WPs with parallel()",
+        "Includes a freeze-gate barrier that adversarially verifies WP reports (VERDICT schema) before crossing",
+        "Still writes the prose 09-orchestration.md (the executable script is an additive twin, not a replacement)",
+        "Offers to run the workflow rather than auto-running it (opt-in, explicit confirm)"
       ]
     }
   ]

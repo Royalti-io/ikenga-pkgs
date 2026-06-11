@@ -652,16 +652,49 @@ def _plan_title(plan: str, anchor: dict) -> str:
     return anchor.get("goal", "")
 
 
+def _extract_wp_briefs(plan: str) -> dict:
+    """Parse 09-orchestration.md for `### WP-NN — title` sections; return {WP-NN: brief-body}.
+
+    A brief runs from its `### WP-` header to the next `### `/`## ` header or a `---` rule.
+    Returns {} if 09 is absent. Used by `board-data --with-briefs` so the workflow
+    generator can inline each self-contained brief as a string constant at emit time.
+    """
+    f = os.path.join(plan, "09-orchestration.md")
+    if not os.path.exists(f):
+        return {}
+    briefs, cur, buf = {}, None, []
+    hdr = re.compile(r"^### (WP-\d+[a-z]?)(?![\w])")  # letter slices (WP-18a) — \b fails between digit+letter
+    for line in read_file(f).splitlines():
+        m = hdr.match(line)
+        if m:
+            if cur:
+                briefs[cur] = "\n".join(buf).strip()
+            cur, buf = m.group(1), [line]
+        elif cur is not None:
+            if line.startswith("## ") or re.match(r"^---\s*$", line) or hdr.match(line):
+                briefs[cur] = "\n".join(buf).strip()
+                cur, buf = None, []
+            else:
+                buf.append(line)
+    if cur:
+        briefs[cur] = "\n".join(buf).strip()
+    return briefs
+
+
 def cmd_board_data(args):
     plan = args.plan
     anchor = load_anchor(plan)
     ids = anchor.get("ids", {})
+    briefs = _extract_wp_briefs(plan) if getattr(args, "with_briefs", False) else {}
     wps, gates = [], []
     for k, v in ids.items():
         if k.startswith("WP-"):
-            wps.append({"id": k, "title": v.get("title", ""), "wave": v.get("wave"),
-                        "deps": v.get("depends_on", []), "status": v.get("status", "queued"),
-                        "gate": v.get("gate")})
+            wp = {"id": k, "title": v.get("title", ""), "wave": v.get("wave"),
+                  "deps": v.get("depends_on", []), "status": v.get("status", "queued"),
+                  "gate": v.get("gate"), "tier": v.get("tier")}
+            if getattr(args, "with_briefs", False):
+                wp["brief"] = briefs.get(k)
+            wps.append(wp)
         elif k.startswith("G-") and v.get("kind") == "freeze_gate":
             gates.append({"id": k, "wp": v.get("wp"), "status": v.get("status", "pending")})
     designs = [{"path": p, "phase": d.get("phase"), "wp": d.get("wp"), "locked": d.get("locked", False)}
@@ -1064,6 +1097,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     g = sub.add_parser("board-data", help="emit the board data model")
     g.add_argument("--plan", required=True)
+    g.add_argument("--with-briefs", action="store_true",
+                   help="include per-WP brief (parsed from 09-orchestration.md) + tier; "
+                        "feeds the orchestrate --emit-workflow generator")
     g.set_defaults(func=cmd_board_data)
 
     g = sub.add_parser("status-data", help="emit the computed status model")

@@ -1,4 +1,4 @@
-<!-- GENERATED — edit scripts/sync-from-dev.mjs (writePortabilityNote) instead. -->
+<!-- GENERATED — edit the canonical repo royalti-io/groundwork instead. Synced by sync-from-canonical.mjs. -->
 # Portability notes
 
 `groundwork` is built to scaffold a plan folder into **any** Claude Code

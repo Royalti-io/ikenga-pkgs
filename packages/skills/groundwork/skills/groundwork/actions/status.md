@@ -1,4 +1,4 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
+<!-- GENERATED — edit the canonical repo royalti-io/groundwork instead. Synced by sync-from-canonical.mjs. -->
 # action: `status` — read-only health report
 
 **Loaded when**: the user asks "where are we" / runs `groundwork status`.

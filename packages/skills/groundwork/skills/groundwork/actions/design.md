@@ -1,4 +1,4 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
+<!-- GENERATED — edit the canonical repo royalti-io/groundwork instead. Synced by sync-from-canonical.mjs. -->
 # action: `design` — produce ≥2 comparable mockups, lock one
 
 **Loaded when**: the user wants to mock up UI/UX options for a phase, compare them, and lock a direction.
