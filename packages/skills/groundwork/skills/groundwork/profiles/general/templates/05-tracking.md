@@ -1,4 +1,4 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
+<!-- GENERATED — edit the canonical repo royalti-io/groundwork instead. Synced by sync-from-canonical.mjs. -->
 # {{goal}} — tracking
 
 Workstreams, dependencies, critical path. Source of truth for execution status (survives sessions).

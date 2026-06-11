@@ -159,6 +159,23 @@ try:
     check("board-data emits plan", "plan" in json.loads(run("board-data","--plan",plan).stdout))
     check("status-data emits docs", "docs" in json.loads(run("status-data","--plan",plan,"--profiles-root",PROFILES).stdout))
 
+    # ---- board-data --with-briefs (workflow-emit feed) ----
+    print("board-data --with-briefs:")
+    run("register-id","--plan",plan,"--id","WP-01","--doc","05-tracking.md",
+        "--field","title=Contract freeze","--field","wave=0","--field","tier=opus")
+    # bare board-data carries tier but no brief key
+    wp_bare = json.loads(run("board-data","--plan",plan).stdout)["wps"][0]
+    check("board-data WP carries tier", wp_bare.get("tier")=="opus")
+    check("board-data (bare) omits brief", "brief" not in wp_bare)
+    # write a 09 with a WP-01 section; --with-briefs should attach its body
+    open(os.path.join(plan,"09-orchestration.md"),"w").write(
+        "# Plan — orchestration\n\n## Work-package matrix\n\n"
+        "### WP-01 — Contract freeze\n- **GOAL**: freeze the schema\n- **DEFINITION OF DONE**: types compile\n\n"
+        "---\n\n## Tracking protocol\nblah\n")
+    wp_b = json.loads(run("board-data","--plan",plan,"--with-briefs").stdout)["wps"][0]
+    check("--with-briefs attaches brief", "GOAL" in (wp_b.get("brief") or ""))
+    check("--with-briefs stops brief at rule", "Tracking protocol" not in (wp_b.get("brief") or ""))
+
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)
 finally:

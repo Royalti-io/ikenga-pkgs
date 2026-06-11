@@ -1,4 +1,4 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
+<!-- GENERATED — edit the canonical repo royalti-io/groundwork instead. Synced by sync-from-canonical.mjs. -->
 # action: `refresh-board` — (re)generate `artifact/board.html`
 
 **Loaded when**: the user wants to (re)render the plan-board artifact reflecting current `05` / `09` / `.groundwork.json` state.

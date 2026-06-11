@@ -1,4 +1,4 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
+<!-- GENERATED — edit the canonical repo royalti-io/groundwork instead. Synced by sync-from-canonical.mjs. -->
 # `artifact/data/` — external data sources for the artifact
 
 Optional. Files here are JSON / Markdown / CSV / etc. referenced by the artifact (`artifact/index.html` or `artifact/board.html`) via the Ikenga artifact manifest's `dataSources` field.
@@ -30,7 +30,7 @@ The artifact's bridge polyfill (or the real Ikenga AppBridge `sources` API) load
 
 ## When NOT to use this folder
 
-- **Tiny mock data** — inline it in a `<script type="application/json" id="…-mock-data">` block in the HTML itself. Studio's living spec uses inline; the tracking board uses inline.
+- **Tiny mock data** — inline it in a `<script type="application/json" id="…-mock-data">` block in the HTML itself (the tracking board ships its fallback this way).
 - **Live data** — that's an AppBridge `sources.subscribe()` call against a sidecar / MCP server, not a static file.
 
 ## Refresh modes
