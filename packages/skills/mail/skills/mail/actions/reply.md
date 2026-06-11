@@ -33,6 +33,29 @@ run:
     Compose a complete, ready-to-send reply: a clear subject and a full body. Match the tone of
     the thread. Do not leave placeholders.
 
+    ## Step 2b — verify before parking (G-QUALITY)
+
+    Before handing the draft to the gate, quality-check it and stamp the result on `item.quality`:
+
+    1. **Claims** — list every factual claim in the body. Re-check each against its source:
+       fetch/read the source (URL or thread message) and record a verdict. A claim with
+       **no reachable source = `"unsourced"`** (never silently `"verified"`). A claim
+       **contradicted by its source = `"failed"`** — correct the draft body, then re-verify
+       (the parked body must already be corrected). A reply with zero factual claims gets
+       `"claims": []`.
+    2. **Tone** — self-assess voice/tone against the thread's register and the voice you
+       drafted with: `"on-voice"` or `"off-voice"`, a one-line `basis`, and your `model` id.
+    3. Stamp the parked `item` with EXACTLY this shape:
+
+    ```json
+    "quality": {
+      "claims": [ { "text": "<claim sentence>", "source": "<url or null>", "verdict": "verified" } ],
+      "tone": { "verdict": "on-voice", "basis": "<one-line rationale>", "model": "<model id>" },
+      "verified_at": "<ISO-8601>",
+      "verifier": "draft-time"
+    }
+    ```
+
     ## Step 3 — pause at the gate (DO NOT SEND)
 
     Call the **`iyke_pa_actions_pause`** tool to hand the draft to the gate. Pass:
@@ -55,7 +78,8 @@ run:
           "channel": "smtp",
           "senderAddress": "you@yourdomain.com",
           "fromProvider": "SMTP · Fastmail",
-          "scheduledLabel": "now"
+          "scheduledLabel": "now",
+          "quality": { "claims": [], "tone": { "verdict": "on-voice", "basis": "<one-line rationale>", "model": "<model id>" }, "verified_at": "<ISO-8601>", "verifier": "draft-time" }
         },
         "meta": {
           "actionId": "com.ikenga.skill-mail/reply",

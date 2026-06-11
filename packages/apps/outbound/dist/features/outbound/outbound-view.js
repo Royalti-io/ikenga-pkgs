@@ -13,7 +13,9 @@
 //   - .ob-chip.* (domain-local channel identity + status chips)
 //
 // Design reference: plans/atelier/designs/atelier-outbound*.html (locked R10/R12/R13)
-// Data: ikenga.db via host.dbQuery (real tables) + 0044_outbound_domain.sql tables
+// Data: SINGLE SOURCE — pa_action_drafts (approve-gate + mutation-worker seam) via
+//       host.dbQuery, mapped per content type by dist/lib/derive.js (G-DERIVE).
+//       plans/outbound-pkg/01-plan.md.
 
 import {
   html,
@@ -23,19 +25,43 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useCallback,
   useQuery,
   useMutation,
   useQueryClient,
 } from '../../lib/ui.js';
 import {
   hostDbQuery,
-  hostDbExec,
+  hostFetch,
   setMenu,
   isStandalone,
   publishIykeState,
   hostNavigate,
   hostSendToActiveSession,
+  hostDbExec,
+  hostPaActionsCommit,
+  hostPaActionsReject,
+  hostPaActionsRetry,
+  hostPaActionsUpdate,
 } from '../../lib/bridge.js';
+import {
+  QUEUE_STATUSES,
+  SENT_STATUSES,
+  SCHEDULE_STATUSES,
+  deriveContentType,
+  parseDraft,
+  countByContentType,
+  mapEmailQueue,
+  mapEmailSent,
+  mapNewsletterQueue,
+  mapNewsletterSent,
+  mapSocialQueue,
+  mapSocialSent,
+  mapSequenceQueue,
+  newsletterHistorySignals,
+  claimsVerdictCell,
+  toneVerdictCell,
+} from '../../lib/derive.js';
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -80,6 +106,47 @@ const AGENT_ITEMS = [
   { id: 'f:cbo', label: 'CBO', section: 'By agent' },
 ];
 
+// ─── Initial channel/view resolution (deep-link, WP-07) ─────────────────────────
+// The shell deep-links /outbox/{email,newsletter,social,sequences,approvals} into
+// this pkg and pre-seeds usePkgMenuStore activeFeature as 'v:<view>' (F9). The
+// iframe is also mounted at the matching sub-route (pathname '/email' etc.). We
+// honour BOTH: the pre-seeded activeFeature wins, the pathname is the fallback.
+// 'approvals' is the cross-channel folded approve-gate; the channels map 1:1 to
+// the per-channel Approval queue. Returns { channel, view } where view is one of
+// 'queue' | 'approvals' (deep-links only ever land on a queue/approvals surface).
+
+function viewFromToken(token) {
+  if (!token) return null;
+  // 'approvals' → cross-channel; a channel name → that channel's queue.
+  if (token === 'approvals') return { channel: 'newsletter', view: 'approvals' };
+  if (CHANNELS.includes(token)) return { channel: token, view: 'queue' };
+  return null;
+}
+
+function parseInitialTarget(activeFeature) {
+  // 1. Pre-seeded activeFeature: 'ch:<channel>' or 'v:<view>'.
+  if (typeof activeFeature === 'string') {
+    if (activeFeature.startsWith('ch:')) {
+      const r = viewFromToken(activeFeature.slice(3));
+      if (r) return r;
+    }
+    if (activeFeature.startsWith('v:')) {
+      const r = viewFromToken(activeFeature.slice(2));
+      if (r) return r;
+    }
+  }
+  // 2. Pathname fallback: the last segment of /pkg/com.ikenga.outbound/<seg>.
+  try {
+    const segs = (window.location?.pathname || '').split('/').filter(Boolean);
+    const last = segs[segs.length - 1];
+    const r = viewFromToken(last);
+    if (r) return r;
+  } catch {
+    /* no window/location in some embeds — fall through to default */
+  }
+  return null;
+}
+
 // ─── Menu builder ───────────────────────────────────────────────────────────────
 
 /**
@@ -122,312 +189,247 @@ function buildOutboundMenu(channel, view, counts = {}, agents = {}) {
   return [...channelItems, ...agentItems];
 }
 
-// ─── Queries ───────────────────────────────────────────────────────────────────
+// ─── Queries — single source: pa_action_drafts (approve-gate + worker seam) ──
+// All channel surfaces derive from ONE table via dist/lib/derive.js. `channel` is
+// the provider; deriveContentType() splits email/newsletter/social/sequences.
+// host.dbQuery reads are NOT table-scoped, so no manifest change is needed here.
+
+const SEL_COLS = `id, batch_id, action_id, status, channel, payload_json, edited_json,
+  scheduled_at, created_at, committed_at, sent_at, attempts, error_text, external_id, delivery_status`;
+
+async function loadDrafts(statuses, { limit = 300 } = {}) {
+  const ph = statuses.map(() => '?').join(',');
+  try {
+    return await hostDbQuery(
+      `SELECT ${SEL_COLS} FROM pa_action_drafts WHERE status IN (${ph})
+       ORDER BY COALESCE(sent_at, scheduled_at, created_at) DESC LIMIT ${limit}`,
+      statuses
+    );
+  } catch {
+    return [];
+  }
+}
+
+// Filter loaded rows to one content type + map to the renderer's view shape.
+function pick(rows, ct, mapper) {
+  const out = [];
+  for (const r of rows || []) {
+    if (deriveContentType(parseDraft(r).item) === ct) out.push(mapper(r));
+  }
+  return out;
+}
+const hasSchedule = (r) => !!r.scheduled_at;
 
 async function fetchChannelCounts() {
-  // Returns queue counts from the new + existing tables.
-  // Real tables: outbound_email_approvals, fundraising_outreach (email),
-  //              outbound_newsletter_drafts (newsletter),
-  //              outbound_sequences (sequences — active status),
-  //              social_queue (social — pending/in_review).
-  // Falls back to 0 on error so the pane renders even before the migration.
-  const results = { email: 0, newsletter: 0, sequences: 0, social: 0 };
-
-  try {
-    // Email: outbound_email_approvals pending + fundraising_outreach pending
-    const emailRows = await hostDbQuery(
-      `SELECT (SELECT COUNT(*) FROM outbound_email_approvals WHERE status = 'pending') +
-              (SELECT COUNT(*) FROM fundraising_outreach WHERE status = 'pending') AS cnt`
-    );
-    results.email = emailRows?.[0]?.cnt ?? 0;
-  } catch { /* table may not exist yet — use 0 */ }
-
-  try {
-    // Newsletter: outbound_newsletter_drafts pending
-    const nlRows = await hostDbQuery(
-      `SELECT COUNT(*) AS cnt FROM outbound_newsletter_drafts WHERE status = 'pending'`
-    );
-    results.newsletter = nlRows?.[0]?.cnt ?? 0;
-  } catch { /* table may not exist yet — use 0 */ }
-
-  try {
-    // Sequences: outbound_sequences active (per-recipient chains in flight)
-    const seqRows = await hostDbQuery(
-      `SELECT COUNT(*) AS cnt FROM outbound_sequences WHERE status = 'active'`
-    );
-    results.sequences = seqRows?.[0]?.cnt ?? 0;
-  } catch { /* table may not exist yet — use 0 */ }
-
-  try {
-    // Social: social_queue items pending review / in-review
-    const socRows = await hostDbQuery(
-      `SELECT COUNT(*) AS cnt FROM social_queue WHERE status IN ('pending','in_review')`
-    );
-    results.social = socRows?.[0]?.cnt ?? 0;
-  } catch { /* social_queue may be empty */ }
-
-  return results;
+  return countByContentType(await loadDrafts(QUEUE_STATUSES));
 }
 
 async function fetchAgentCounts(channel) {
-  // Returns by-agent queue counts for the current channel.
-  // drafted_by values: 'pa', 'cmo', 'cbo' (or agent id strings).
   const results = { pa: 0, cmo: 0, cbo: 0 };
-  try {
-    let sql;
-    if (channel === 'email') {
-      sql = `SELECT COALESCE(LOWER(drafted_by),'pa') AS agent, COUNT(*) AS cnt
-             FROM outbound_email_approvals WHERE status = 'pending'
-             GROUP BY drafted_by`;
-    } else if (channel === 'newsletter') {
-      sql = `SELECT COALESCE(LOWER(drafted_by),'cmo') AS agent, COUNT(*) AS cnt
-             FROM outbound_newsletter_drafts WHERE status = 'pending'
-             GROUP BY drafted_by`;
-    } else {
-      return results;
-    }
-    const rows = await hostDbQuery(sql);
-    for (const row of rows ?? []) {
-      const key = String(row.agent ?? '').toLowerCase();
-      if (key in results) results[key] = row.cnt ?? 0;
-    }
-  } catch { /* table not yet migrated — use fixture defaults */ }
+  for (const r of await loadDrafts(QUEUE_STATUSES)) {
+    const { item, meta } = parseDraft(r);
+    if (deriveContentType(item) !== channel) continue;
+    const key = String(meta.agent || 'pa').toLowerCase();
+    if (key in results) results[key] += 1;
+  }
   return results;
 }
 
-// ─── Email channel queries ───────────────────────────────────────────────────────
-
+// ── Email ────────────────────────────────────────────────────────────────────
 async function fetchEmailQueue() {
-  // Approval queue: outbound_email_approvals + fundraising_outreach (cold)
-  const rows = [];
-
-  try {
-    const approval = await hostDbQuery(
-      `SELECT id, subject, body, recipient_email, recipient_name, channel,
-              status, ux_mode, drafted_by, sequence_id, scheduled_for, is_overdue,
-              'approval' AS src
-       FROM outbound_email_approvals
-       WHERE status = 'pending'
-       ORDER BY is_overdue DESC, scheduled_for ASC
-       LIMIT 50`
-    );
-    rows.push(...(approval ?? []));
-  } catch { /* not yet migrated */ }
-
-  try {
-    const cold = await hostDbQuery(
-      `SELECT id, subject, '' AS recipient_email, '' AS recipient_name,
-              channel, status, 'approve' AS ux_mode, drafted_by,
-              NULL AS scheduled_for, 0 AS is_overdue, 'cold' AS src,
-              deal_id
-       FROM fundraising_outreach
-       WHERE status = 'pending'
-       ORDER BY id DESC
-       LIMIT 20`
-    );
-    rows.push(...(cold ?? []));
-  } catch { /* table may be empty */ }
-
-  // Fallback fixture if no real data
-  if (rows.length === 0) {
-    return FIXTURE_EMAIL_QUEUE;
-  }
-  return rows;
+  const m = pick(await loadDrafts(QUEUE_STATUSES), 'email', mapEmailQueue);
+  return m.length ? m : FIXTURE_EMAIL_QUEUE;
 }
 
 async function fetchEmailSchedule() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, subject, recipient_email, recipient_name, channel,
-              status, scheduled_for, ux_mode
-       FROM outbound_email_approvals
-       WHERE status IN ('scheduled','approved') AND ux_mode = 'silent'
-       ORDER BY scheduled_for ASC
-       LIMIT 30`
-    );
-    return rows?.length ? rows : FIXTURE_EMAIL_SCHEDULE;
-  } catch {
-    return FIXTURE_EMAIL_SCHEDULE;
-  }
+  const rows = (await loadDrafts(SCHEDULE_STATUSES)).filter(hasSchedule);
+  const m = pick(rows, 'email', mapEmailQueue);
+  return m.length ? m : FIXTURE_EMAIL_SCHEDULE;
 }
 
 async function fetchEmailSent() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, subject, recipient_email, channel,
-              delivery_system, sent_at, open_rate, click_rate
-       FROM outbound_sent_log
-       WHERE channel = 'email'
-       ORDER BY sent_at DESC
-       LIMIT 50`
-    );
-    return rows?.length ? rows : FIXTURE_EMAIL_SENT;
-  } catch {
-    return FIXTURE_EMAIL_SENT;
-  }
+  const m = pick(await loadDrafts(SENT_STATUSES), 'email', mapEmailSent);
+  return m.length ? m : FIXTURE_EMAIL_SENT;
 }
 
-// ─── Newsletter queries ─────────────────────────────────────────────────────────
-
+// ── Newsletter ────────────────────────────────────────────────────────────────
 async function fetchNewsletterQueue() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, subject, subject_b, draft_slug, edition, status,
-              cooling_until, quality_score, recipient_count,
-              delivery_system, drafted_by, has_ab, body
-       FROM outbound_newsletter_drafts
-       WHERE status IN ('pending','cooling','approved')
-       ORDER BY CASE status WHEN 'cooling' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END,
-                quality_score DESC
-       LIMIT 20`
-    );
-    return rows?.length ? rows : FIXTURE_NL_QUEUE;
-  } catch {
-    return FIXTURE_NL_QUEUE;
-  }
+  const m = pick(await loadDrafts(QUEUE_STATUSES), 'newsletter', mapNewsletterQueue);
+  return m.length ? m : FIXTURE_NL_QUEUE;
 }
 
 async function fetchNewsletterSent() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, draft_slug, edition, subject, delivery_system,
-              sent_at, recipient_count, open_rate, click_rate
-       FROM newsletter_sends
-       ORDER BY sent_at DESC
-       LIMIT 30`
-    );
-    return rows?.length ? rows : FIXTURE_NL_SENT;
-  } catch {
-    return FIXTURE_NL_SENT;
-  }
+  const m = pick(await loadDrafts(SENT_STATUSES), 'newsletter', mapNewsletterSent);
+  return m.length ? m : FIXTURE_NL_SENT;
 }
 
-// ─── Sequences queries ──────────────────────────────────────────────────────────
+// ── Newsletter sent-history (WP-11) ──────────────────────────────────────────
+// Merges newsletter_sends rows + pa_action_drafts sent listmonk rows into a
+// uniform shape: { subject, draft_slug, edition, sent_at, body }.
+// Both sources are best-effort — errors in either leg are silently swallowed
+// so a missing table never breaks the queue view.
+async function fetchNewsletterHistory() {
+  let sendsRows = [];
+  let draftsRows = [];
+  try {
+    sendsRows = await hostDbQuery(
+      `SELECT draft_slug, edition, subject, subject_alt, sent_at FROM newsletter_sends ORDER BY sent_at DESC LIMIT 200`,
+      []
+    );
+  } catch {
+    /* newsletter_sends absent or unreadable — degrade gracefully */
+  }
+  try {
+    draftsRows = await hostDbQuery(
+      `SELECT payload_json, sent_at FROM pa_action_drafts
+       WHERE channel = 'listmonk' AND status = 'sent'
+       ORDER BY sent_at DESC LIMIT 200`,
+      []
+    );
+  } catch {
+    /* pa_action_drafts read failure — degrade gracefully */
+  }
+
+  const out = [];
+
+  // newsletter_sends rows are already normalised.
+  for (const r of sendsRows) {
+    out.push({
+      subject: r.subject || r.subject_alt || null,
+      draft_slug: r.draft_slug || null,
+      edition: r.edition || null,
+      sent_at: r.sent_at || null,
+      body: null, // newsletter_sends has no body column
+    });
+  }
+
+  // pa_action_drafts (listmonk, sent): extract item.subject + item.body from payload_json.
+  for (const r of draftsRows) {
+    let item = {};
+    try {
+      const payload = typeof r.payload_json === 'string' ? JSON.parse(r.payload_json) : r.payload_json || {};
+      item = payload.item || payload || {};
+    } catch {
+      item = {};
+    }
+    out.push({
+      subject: item.subject || null,
+      draft_slug: item.section || null,
+      edition: null,
+      sent_at: r.sent_at || null,
+      body: item.body || null,
+    });
+  }
+
+  return out;
+}
+
+// Fixture history for standalone mode — one repeated subject + one shared link.
+// Allows the scorecard cells to demo non-stub values without a live DB.
+const FIXTURE_NL_HISTORY = [
+  {
+    subject: 'You can deliver from Royalti now',
+    draft_slug: 'royalti-deliver',
+    edition: 'April 2026',
+    sent_at: '2026-04-15 10:00:00',
+    body: 'Royalti now ships a full delivery pipeline.\n\nhttps://royalti.io/deliver\n\nRuby',
+  },
+  {
+    subject: 'Schema patches that unblocked tenant 590',
+    draft_slug: 'schema-patches-590',
+    edition: 'May 2026',
+    sent_at: '2026-05-06 10:00:00',
+    body: 'Tenant 590 hit a wall last month.\nhttps://royalti.io/blog/schema-patches\n\nRuby',
+  },
+];
+
+// ── Sequences (flat first slice; cohort grid + funnel are Phase 2) ─────────────
+// A "sequence" = pa_action_drafts rows whose item.sequence is set, grouped by name.
+function seqGroups(rows) {
+  const groups = new Map();
+  for (const r of rows || []) {
+    const { item } = parseDraft(r);
+    if (deriveContentType(item) !== 'sequences') continue;
+    const name = (item.sequence && item.sequence.name) || item.subject || '(sequence)';
+    if (!groups.has(name)) groups.set(name, []);
+    groups.get(name).push({ r, item });
+  }
+  return groups;
+}
 
 async function fetchSequenceDefs() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, name, slug, segment, total_steps,
-              delivery_system, status
-       FROM email_sequences
-       ORDER BY name ASC`
-    );
-    return rows?.length ? rows : FIXTURE_SEQ_DEFS;
-  } catch {
-    return FIXTURE_SEQ_DEFS;
+  const defs = [];
+  for (const [name, members] of seqGroups(await loadDrafts([...QUEUE_STATUSES, ...SENT_STATUSES]))) {
+    const { r, item } = members[0];
+    const seq = item.sequence || {};
+    defs.push({ id: r.batch_id || r.id, name, slug: r.batch_id || null, segment: item.recipient || null,
+                total_steps: seq.total ?? null, delivery_system: r.channel, status: 'active' });
   }
+  return defs.length ? defs : FIXTURE_SEQ_DEFS;
 }
 
 async function fetchActiveSequences() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT os.id, os.sequence_id, os.contact_email, os.segment,
-              os.current_step, os.total_steps, os.next_send_date,
-              os.status, os.sent_count,
-              es.name AS sequence_name, es.slug AS sequence_slug,
-              es.delivery_system
-       FROM outbound_sequences os
-       LEFT JOIN email_sequences es ON es.id = os.sequence_id
-       WHERE os.status = 'active'
-       ORDER BY os.next_send_date ASC
-       LIMIT 50`
-    );
-    return rows?.length ? rows : FIXTURE_ACTIVE_SEQS;
-  } catch {
-    return FIXTURE_ACTIVE_SEQS;
+  const out = [];
+  for (const r of await loadDrafts(QUEUE_STATUSES)) {
+    const { item } = parseDraft(r);
+    if (deriveContentType(item) !== 'sequences') continue;
+    const seq = item.sequence || {};
+    out.push({ id: r.id, sequence_id: r.batch_id || r.id, contact_email: item.recipientEmail || item.recipient || 'batch',
+               segment: item.recipient || null, current_step: seq.step ?? 1, total_steps: seq.total ?? null,
+               next_send_date: r.scheduled_at || null, status: 'active', sent_count: seq.recipients ?? 0,
+               sequence_name: seq.name || item.subject, sequence_slug: r.batch_id || null, delivery_system: r.channel });
   }
+  return out.length ? out : FIXTURE_ACTIVE_SEQS;
 }
 
-// Sequences awaiting approval — defs whose status is 'pending'/'draft'/'in_review'.
-// The step-rail master/detail reads these. Falls back to active defs as a stand-in
-// when no review queue exists yet (so the rail renders rather than empty-stating).
 async function fetchSequenceQueue() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, name, slug, description, segment, total_steps,
-              delivery_system, status, created_by, created_at
-       FROM email_sequences
-       WHERE status IN ('pending','draft','in_review','review')
-       ORDER BY created_at DESC
-       LIMIT 30`
-    );
-    return rows?.length ? rows : FIXTURE_SEQ_QUEUE;
-  } catch {
-    return FIXTURE_SEQ_QUEUE;
-  }
+  const m = pick(await loadDrafts(QUEUE_STATUSES), 'sequences', mapSequenceQueue);
+  return m.length ? m : FIXTURE_SEQ_QUEUE;
 }
 
-// Step definitions for one sequence (the vertical step-rail in the detail pane).
-// outbound_sequence_steps may be empty (0 rows live) → caller falls back to a
-// graceful empty state rather than fabricating steps.
+// Per-step rail + per-recipient cohort are Phase 2 (steps/recipients aren't modeled
+// as distinct rows yet) — return empty so the renderer empty-states honestly.
 async function fetchSequenceSteps(sequenceId) {
-  if (!sequenceId) return [];
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, sequence_id, step_number, subject, body,
-              delay_value, delay_unit, channel, status
-       FROM outbound_sequence_steps
-       WHERE sequence_id = ?
-       ORDER BY step_number ASC`,
-      [sequenceId]
-    );
-    return rows ?? [];
-  } catch {
-    return [];
-  }
+  return sequenceId ? [] : [];
 }
 
-// Per-recipient rows for one running sequence (the cohort grid in the Active view).
-// Derives tile state from status + current_step + last_reply_at.
 async function fetchSequenceRecipients(sequenceId) {
-  if (!sequenceId) return [];
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, contact_email, segment, current_step, total_steps,
-              status, sent_count, last_reply_at, pause_reason, next_send_date
-       FROM outbound_sequences
-       WHERE sequence_id = ?
-       ORDER BY current_step DESC, id ASC
-       LIMIT 200`,
-      [sequenceId]
-    );
-    return rows ?? [];
-  } catch {
-    return [];
-  }
+  return sequenceId ? [] : [];
 }
 
-// Completed/closed sequence cohorts for the Sent funnel view.
 async function fetchSentSequences() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT os.sequence_id,
-              es.name AS sequence_name, es.slug AS sequence_slug,
-              es.total_steps,
-              COUNT(*) AS enrolled,
-              SUM(CASE WHEN os.status = 'completed' THEN 1 ELSE 0 END) AS completed,
-              SUM(CASE WHEN os.last_reply_at IS NOT NULL THEN 1 ELSE 0 END) AS replied,
-              SUM(CASE WHEN os.status = 'bounced' THEN 1 ELSE 0 END) AS bounced,
-              SUM(os.sent_count) AS sent_total,
-              MAX(os.updated_at) AS closed_at
-       FROM outbound_sequences os
-       LEFT JOIN email_sequences es ON es.id = os.sequence_id
-       WHERE os.status IN ('completed','bounced','stopped')
-       GROUP BY os.sequence_id
-       ORDER BY closed_at DESC
-       LIMIT 30`
-    );
-    return rows?.length ? rows : FIXTURE_SENT_SEQS;
-  } catch {
-    return FIXTURE_SENT_SEQS;
+  const out = [];
+  for (const [name, members] of seqGroups(await loadDrafts(SENT_STATUSES))) {
+    const { r, item } = members[0];
+    const seq = item.sequence || {};
+    const enrolled = members.length;
+    const bounced = members.filter((m) => m.r.delivery_status === 'bounced').length;
+    out.push({ sequence_id: r.batch_id || r.id, sequence_name: name, sequence_slug: r.batch_id || null,
+               total_steps: seq.total ?? null, enrolled, completed: enrolled, replied: 0, bounced,
+               sent_total: enrolled, closed_at: r.sent_at || null });
   }
+  return out.length ? out : FIXTURE_SENT_SEQS;
 }
 
 // Relative-age label for the reply-intelligence "last touch" cell.
-function relDays(iso) {
+// compact:true → terse top-right form for email rows ("15m", "6h", "2d", "just now").
+function relDays(iso, { compact = false } = {}) {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return '—';
-  const d = Math.round((Date.now() - t) / 86_400_000);
+  const ms = Date.now() - t;
+  if (ms < 0) return compact ? '' : '—'; // future
+  const mins = Math.round(ms / 60_000);
+  if (compact && mins < 2) return 'just now';
+  const d = Math.round(ms / 86_400_000);
+  if (compact) {
+    if (mins < 60) return `${mins}m`;
+    const h = Math.round(ms / 3_600_000);
+    if (h < 24) return `${h}h`;
+    if (d < 7) return `${d}d`;
+    if (d < 30) return `${Math.round(d / 7)}w`;
+    if (d < 365) return `${Math.round(d / 30)}mo`;
+    return `${Math.round(d / 365)}y`;
+  }
   if (d <= 0) return 'today';
   if (d < 7) return `${d}d ago`;
   if (d < 30) return `${Math.round(d / 7)}w ago`;
@@ -435,202 +437,346 @@ function relDays(iso) {
   return `${Math.round(d / 365)}y ago`;
 }
 
-// Reply-intelligence: CRM context for an email recipient (B.5). There is no
-// dedicated `tenants`/Twenty mirror in ikenga.db, but the local `contacts` table
-// IS the CRM mirror — joined here by email, with a real open balance pulled from
-// `receivables` by customer_email. Returns null (→ "unknown sender" empty state)
-// when no contact matches, so nothing is fabricated for unknown recipients.
+// From-label for email queue grouped rows (spec 01-email-grouping.md §5).
+function emailFromLabel(row) {
+  if (row.emailGroup === 'sequence') {
+    const who = row.drafted_by ?? '—';
+    const seq = row.sequence_id ?? '—';
+    return `${who} → ${seq}`;
+  }
+  if (row.emailGroup === 'reply') {
+    return row.recipient_name || row.recipient_email || '—';
+  }
+  // manual
+  const who = row.drafted_by ?? '—';
+  const recip = row.recipient_name || row.recipient_email;
+  return recip ? `${who} → ${recip}` : who;
+}
+
+// Reply-intelligence: CRM context for an email recipient (B.5).
+//
+// WP-07 (trusted-pkg): we now try a LIVE pull from Twenty CRM first via the
+// trusted-tier `host.fetch` verb — single-person lookup by primaryEmail, mapped
+// Live-only via host.fetch (D-04: local mirror retired, host.fetch live-verified).
+// On host.fetch throw (Twenty down / old shell) → null (→ "Unknown sender" empty
+// state). On clean no-match → also null. Never crashes the panel.
+// NOTE: mirror scripts (twenty-mirror.mjs/.sh, twenty-mirror-drain, jobs.json
+// cron entries) are deleted separately on the ops side.
 async function fetchReplyIntelligence(email) {
   if (!email) return null;
   try {
-    const rows = await hostDbQuery(
-      `SELECT email, name, organization, contact_type, last_seen_at, interaction_count, notes
-       FROM contacts WHERE LOWER(email) = LOWER(?) LIMIT 1`,
-      [email]
-    );
-    const c = rows?.[0];
-    if (!c) return null;
-
-    // Real open balance + overdue flag from receivables for this email.
-    let bal = null;
-    let overdue = 0;
-    try {
-      const br = await hostDbQuery(
-        `SELECT SUM(CAST(balance_left AS REAL)) AS bal,
-                SUM(CASE WHEN invoice_status = 'overdue' THEN 1 ELSE 0 END) AS od
-         FROM receivables WHERE LOWER(customer_email) = LOWER(?)`,
-        [email]
-      );
-      bal = br?.[0]?.bal ?? null;
-      overdue = Number(br?.[0]?.od ?? 0);
-    } catch {
-      /* receivables lookup is best-effort */
-    }
-
-    // Health derived from contact recency (no stored health column).
-    const lastMs = c.last_seen_at ? Date.parse(c.last_seen_at) : NaN;
-    const ageDays = Number.isFinite(lastMs) ? (Date.now() - lastMs) / 86_400_000 : null;
-    const health = ageDays == null ? '—' : ageDays < 30 ? 'Active' : ageDays < 90 ? 'Cooling' : 'Dormant';
-    const ic = c.interaction_count == null ? null : Number(c.interaction_count);
-
-    return {
-      tenant_name: c.organization || c.name || email,
-      tenant_sub: c.contact_type || null,
-      last_touch: c.last_seen_at ? relDays(c.last_seen_at) : '—',
-      last_touch_sub: ic == null ? null : `${ic} interaction${ic === 1 ? '' : 's'}`,
-      health,
-      health_sub: ageDays == null ? null : `${Math.round(ageDays)}d since contact`,
-      catalog: '—',
-      catalog_sub: 'no catalog link',
-      open_balance: bal == null ? '—' : `$${Math.round(bal).toLocaleString()}`,
-      balance_sub: overdue > 0 ? `${overdue} overdue` : bal != null ? 'current' : null,
-      owner: '—',
-      owner_sub: null,
-      risk_flag: overdue > 0 ? 'Overdue invoice' : 'None',
-      risk_color: overdue > 0 ? 'var(--danger)' : 'var(--live)',
-    };
+    return await fetchReplyIntelligenceLive(email);
   } catch {
+    /* host.fetch unavailable (Twenty down / shell without the verb) → graceful null */
     return null;
   }
+}
+
+// Twenty REST base + the single-person query the mirror uses
+// (twenty-mirror.mjs::fetchPersonByEmail). `depth=1` so the person's company is
+// embedded for the organization label. Allowlisted via permissions.net.
+const TWENTY_REST_BASE = 'https://twenty.royalti.io/rest';
+
+// Live single-recipient pull from Twenty CRM via host.fetch. Returns the
+// reply-intelligence shape, or null if Twenty has no match for this email.
+// Throws (caller catches → fallback) when host.fetch is unavailable / errors.
+async function fetchReplyIntelligenceLive(email) {
+  // Mirror twenty-mirror.mjs::fetchPersonByEmail's filter; depth=1 embeds company.
+  const filter = `emails.primaryEmail[eq]:${encodeURIComponent(email)}`;
+  const url = `${TWENTY_REST_BASE}/people?filter=${filter}&depth=1&limit=1`;
+  const res = await hostFetch({ url, method: 'GET' });
+  if (!res || res.ok !== true) {
+    throw new Error(res?.reason ?? `host.fetch failed (status ${res?.status ?? '?'})`);
+  }
+  // `body` is a STRING — JSON.parse it (the auth secret is host-side only).
+  let parsed;
+  try {
+    parsed = JSON.parse(res.body ?? 'null');
+  } catch {
+    throw new Error('host.fetch: Twenty response body was not JSON');
+  }
+  const person = parsed?.data?.people?.[0] ?? null;
+  if (!person) return null; // no CRM match → null (→ "Unknown sender" empty state)
+  return await mapTwentyPersonToReplyIntel(person, email);
+}
+
+// Map a Twenty `/rest/people` person (with embedded `company` at depth=1) into
+// the exact reply-intelligence return shape. Field derivation mirrors
+// twenty-mirror.mjs's mapping helpers (personName/personOrg). Twenty supplies
+// person/org/health/last-touch; local `receivables` supplies open_balance (joined
+// best-effort — a failure here leaves balance as '—' and never crashes the panel).
+async function mapTwentyPersonToReplyIntel(p, email) {
+  const first = p?.name?.firstName ?? '';
+  const last = p?.name?.lastName ?? '';
+  const fullName = [first, last].filter(Boolean).join(' ').trim() || null;
+  // depth=1 embeds the related company object on the person.
+  const org = p?.company?.name ?? null;
+  const lastSeen = p?.updatedAt ?? null;
+
+  const lastMs = lastSeen ? Date.parse(lastSeen) : NaN;
+  const ageDays = Number.isFinite(lastMs) ? (Date.now() - lastMs) / 86_400_000 : null;
+  const health = ageDays == null ? '—' : ageDays < 30 ? 'Active' : ageDays < 90 ? 'Cooling' : 'Dormant';
+
+  // Join local receivables for open balance + overdue count (same query the
+  // former local path used; best-effort so host DB absence degrades gracefully).
+  let bal = null;
+  let overdue = 0;
+  try {
+    const br = await hostDbQuery(
+      `SELECT SUM(CAST(balance_left AS REAL)) AS bal,
+              SUM(CASE WHEN invoice_status = 'overdue' THEN 1 ELSE 0 END) AS od
+       FROM receivables WHERE LOWER(customer_email) = LOWER(?)`,
+      [email]
+    );
+    bal = br?.[0]?.bal ?? null;
+    overdue = Number(br?.[0]?.od ?? 0);
+  } catch {
+    /* receivables lookup is best-effort */
+  }
+
+  return {
+    tenant_name: org || fullName || email,
+    tenant_sub: 'crm', // Twenty source classification (mirrors contact_type='crm')
+    last_touch: lastSeen ? relDays(lastSeen) : '—',
+    last_touch_sub: null, // Twenty has no interaction_count on the person record
+    health,
+    health_sub: ageDays == null ? null : `${Math.round(ageDays)}d since contact`,
+    catalog: '—',
+    catalog_sub: 'no catalog link',
+    open_balance: bal == null ? '—' : `$${Math.round(bal).toLocaleString()}`,
+    balance_sub: overdue > 0 ? `${overdue} overdue` : bal != null ? 'current' : null,
+    owner: '—',
+    owner_sub: null,
+    risk_flag: overdue > 0 ? 'Overdue invoice' : 'None',
+    risk_color: overdue > 0 ? 'var(--danger)' : 'var(--live)',
+  };
 }
 
 // ─── Social queries ─────────────────────────────────────────────────────────────
 
 async function fetchSocialQueue() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, platform, account, content, status,
-              scheduled_for, approved_at, approved_by, source, slug, title
-       FROM social_queue
-       WHERE status IN ('pending','in_review')
-       ORDER BY scheduled_for ASC
-       LIMIT 30`
-    );
-    return rows?.length ? rows : FIXTURE_SOCIAL_QUEUE;
-  } catch {
-    return FIXTURE_SOCIAL_QUEUE;
-  }
+  const m = pick(await loadDrafts(QUEUE_STATUSES), 'social', mapSocialQueue);
+  return m.length ? m : FIXTURE_SOCIAL_QUEUE;
 }
 
 async function fetchSocialSchedule() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, platform, account, content, status,
-              scheduled_for, approved_at, source
-       FROM social_queue
-       WHERE status IN ('scheduled','approved')
-       ORDER BY scheduled_for ASC
-       LIMIT 30`
-    );
-    return rows?.length ? rows : FIXTURE_SOCIAL_SCHEDULE;
-  } catch {
-    return FIXTURE_SOCIAL_SCHEDULE;
-  }
+  const rows = (await loadDrafts(SCHEDULE_STATUSES)).filter(hasSchedule);
+  const m = pick(rows, 'social', mapSocialQueue);
+  return m.length ? m : FIXTURE_SOCIAL_SCHEDULE;
 }
 
 async function fetchSocialSent() {
-  try {
-    const rows = await hostDbQuery(
-      `SELECT id, platform, account, content, status,
-              scheduled_for, posted_at, source
-       FROM social_queue
-       WHERE status = 'posted'
-       ORDER BY posted_at DESC
-       LIMIT 30`
-    );
-    return rows?.length ? rows : FIXTURE_SOCIAL_SENT;
-  } catch {
-    return FIXTURE_SOCIAL_SENT;
+  const m = pick(await loadDrafts(SENT_STATUSES), 'social', mapSocialSent);
+  return m.length ? m : FIXTURE_SOCIAL_SENT;
+}
+
+// ── Approval mutations — the FOLDED approve-gate write path (WP-04, G-PAACTIONS) ──
+// SINGLE SOURCE: every channel's approve/reject/retry/edit operates on the
+// pa_action_drafts row `id` via the new host.paActions* verbs (Strategy B —
+// thin shell wrappers over the tested pa_actions_* Rust commands). The legacy
+// `src` branching is GONE: ids are now pa_action_drafts ids, identical across
+// channels, so there is one commit path. Approve uses a 10s LOCAL undo window
+// (no DB write during the window — see useUndoCommit); these fns fire only after
+// the timer elapses (commit) or immediately (reject/retry/edit).
+//
+//   approve → host.paActions.commit  (status → committed → worker sends)
+//   reject  → host.paActions.reject  (will not send)
+//   retry   → host.paActions.retry   (failed → committed; clears claim/error + wakes)
+//   edit    → host.paActions.update  ({subject,body} → edited_json, awaiting→edited)
+//
+// NOTE: reject reason text is captured in the pkg UI for the writer-agent training
+// set, but the shell pa_actions_reject verb takes only the draftId (it does not
+// persist a free-text reason on the row) — the reason is surfaced to chat/handoff,
+// not written to pa_action_drafts. So the channel-specific reject fns ignore the
+// reason for the write and just call the verb.
+
+async function approveDraft(id) {
+  // Defense-in-depth (review G-01): only commit a row that is still awaiting/edited.
+  // pa_actions_commit guards on its SELECT (status IN awaiting/edited) but the UPDATE
+  // has no status predicate — this FE pre-check closes the TOCTOU window before the
+  // verb round-trip. Committing an already committed/sending/sent row would otherwise
+  // flip it back to 'committed' and the worker could DOUBLE-SEND. This also closes the
+  // 10s-undo-window race (if the row changed while the timer ran).
+  const rows = await hostDbQuery('SELECT status FROM pa_action_drafts WHERE id = ?', [id]);
+  const st = rows?.[0]?.status;
+  if (st !== 'awaiting' && st !== 'edited') {
+    throw new Error(`cannot approve: draft is '${st ?? 'missing'}' (only awaiting/edited can be sent)`);
   }
+  await hostPaActionsCommit(id);
 }
 
-// ─── Approval mutations ────────────────────────────────────────────────────────
+async function rejectDraft(id, _reason = null) {
+  await hostPaActionsReject(id);
+}
 
-async function approveEmailDraft(id, src) {
-  const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-  if (src === 'cold') {
-    await hostDbExec(
-      `UPDATE fundraising_outreach SET status='approved', approved_by='operator', approved_at=? WHERE id=?`,
-      [now, id]
+async function retryDraft(id) {
+  await hostPaActionsRetry(id);
+}
+
+async function updateDraft(id, patch) {
+  await hostPaActionsUpdate(id, patch);
+}
+
+// ── 10-second undo before commit (WP-04) ──────────────────────────────────────
+// Ported from shell/src/shell/atelier/surfaces/approve-gate-panel.tsx:177-197.
+// Approve ARMS a countdown (default 10s); NO DB write happens during the window.
+// When the counter reaches 0 it calls `onCommit(id)` (→ host.paActions.commit).
+// `cancel()` clears the timer so commit never fires. Pure-React, zero host
+// involvement during the window. One armed draft at a time (matches the single-
+// detail approve UX); arming a new one replaces the prior pending undo.
+//
+// Returns { armed, secondsLeft, arm, cancel, isArmed }:
+//   armed       — the draft id currently counting down (or null)
+//   secondsLeft — remaining whole seconds for the armed draft
+//   arm(id, ms) — start the countdown for `id` (ms defaults to 10000)
+//   cancel()    — abort the pending commit
+//   isArmed(id) — convenience predicate for per-row rendering
+function useUndoCommit(onCommit) {
+  const [undo, setUndo] = useState(null); // { draftId, secondsLeft } | null
+
+  const arm = useCallback((draftId, undoMs = 10000) => {
+    setUndo({ draftId, secondsLeft: Math.round((undoMs ?? 10000) / 1000) });
+  }, []);
+
+  const cancel = useCallback(() => setUndo(null), []);
+
+  // Drive the countdown; commit (onCommit + clear) at 0. Mirrors approve-gate.
+  useEffect(() => {
+    if (!undo) return;
+    if (undo.secondsLeft <= 0) {
+      onCommit(undo.draftId);
+      setUndo(null);
+      return;
+    }
+    const t = setTimeout(
+      () => setUndo((u) => (u ? { ...u, secondsLeft: u.secondsLeft - 1 } : null)),
+      1000
     );
-  } else {
-    await hostDbExec(
-      `UPDATE outbound_email_approvals SET status='approved', approved_by='operator', approved_at=? WHERE id=?`,
-      [now, id]
-    );
-  }
+    return () => clearTimeout(t);
+  }, [undo, onCommit]);
+
+  return {
+    armed: undo?.draftId ?? null,
+    secondsLeft: undo?.secondsLeft ?? 0,
+    arm,
+    cancel,
+    isArmed: (id) => undo?.draftId === id,
+  };
 }
 
-async function rejectEmailDraft(id, src, reason = null) {
-  if (src === 'cold') {
-    await hostDbExec(`UPDATE fundraising_outreach SET status='rejected' WHERE id=?`, [id]);
-  } else {
-    await hostDbExec(
-      `UPDATE outbound_email_approvals SET status='rejected', rejected_reason=? WHERE id=?`,
-      [reason, id]
-    );
-  }
+// Inline undo banner — shown while a commit is armed. Cancel aborts the send.
+function UndoBar({ secondsLeft, onCancel, label = 'Sending' }) {
+  return html`
+    <div class="ob-undo-bar" role="status">
+      <span class="ob-undo-text">
+        ${label} in <strong>${secondsLeft}s</strong> — change your mind?
+      </span>
+      <button class="ob-btn-sm" onClick=${onCancel}>Undo</button>
+    </div>
+  `;
 }
 
-async function approveNewsletterDraft(id) {
-  const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-  await hostDbExec(
-    `UPDATE outbound_newsletter_drafts SET status='approved', approved_by='operator', approved_at=? WHERE id=?`,
-    [now, id]
-  );
+// C-2: only an awaiting/edited draft can be approved (the verb's SELECT guard).
+// committed/sending/sent rows render a disabled status chip instead of Approve.
+const isApprovable = (r) => !!r && (r.raw_status === 'awaiting' || r.raw_status === 'edited');
+
+// C-2: disabled status chip shown in the action footer when a row is NOT
+// approvable (already committed/sending/etc.) and NOT failed.
+const RAW_STATUS_LABEL = {
+  committed: 'Queued to send',
+  sending: 'Sending…',
+  sent: 'Sent',
+  rejected: 'Rejected',
+};
+function StatusChip({ rawStatus }) {
+  const label = RAW_STATUS_LABEL[rawStatus] ?? (rawStatus ? `Status · ${rawStatus}` : 'Not approvable');
+  return html`
+    <div class="ob-status-chip" role="status" aria-disabled="true" title=${label}>
+      ${label}
+    </div>
+  `;
 }
 
-async function rejectNewsletterDraft(id, reason = null) {
-  await hostDbExec(
-    `UPDATE outbound_newsletter_drafts SET status='rejected', rejected_reason=? WHERE id=?`,
-    [reason, id]
-  );
+// C-5: inline error chip surfaced near the action footer when a commit is refused
+// (e.g. "Already committed — nothing sent.").
+function CommitError({ message }) {
+  if (!message) return null;
+  return html`
+    <div class="atelier-state is-error ob-commit-error" role="alert">${message}</div>
+  `;
 }
 
-async function approveSocialPost(id) {
-  const now = new Date().toISOString().replace('T', ' ').slice(0, 19);
-  await hostDbExec(
-    `UPDATE social_queue SET status='approved', approved_at=?, approved_by='operator' WHERE id=?`,
-    [now, id]
-  );
+// F-7: before-click consequence line populated from the selected draft, shown
+// ABOVE the Approve button so the operator sees the effect before committing.
+function ConsequenceLine({ recipient, channel, scheduled }) {
+  const when = scheduled || 'now';
+  const parts = [
+    `→ sends to ${recipient || 'segment'}`,
+    channel || 'channel',
+    when,
+    'undo 10s',
+  ];
+  return html`
+    <div class="ob-consequence ob-act-meta">${parts.join(' · ')}</div>
+  `;
 }
 
-async function rejectSocialPost(id, reason = null) {
-  // social_queue has no rejected_reason column — record the reason in `error`
-  // (the row's free-text status field) so the writer-agent dataset still captures it.
-  await hostDbExec(
-    `UPDATE social_queue SET status='rejected', error=? WHERE id=?`,
-    [reason, id]
-  );
+// C-3: FLOATING undo banner — rendered at the view root keyed on the ARMED
+// draftId (not the selected row), so an armed send stays cancellable no matter
+// which row the operator selects. Arming a new draft replaces the prior pending
+// one (single-armed invariant lives in useUndoCommit); the timer is cleaned up
+// on unmount there too.
+function FloatingUndoBar({ armed, secondsLeft, onCancel, subject, label = 'Sending' }) {
+  if (!armed) return null;
+  const what = subject ? `“${subject}”` : 'draft';
+  return html`
+    <div class="ob-undo-bar ob-undo-floating" role="status">
+      <span class="ob-undo-text">
+        ${label} ${what} in <strong>${secondsLeft}s</strong> — change your mind?
+      </span>
+      <button class="ob-btn-sm" onClick=${onCancel}>Undo</button>
+    </div>
+  `;
 }
 
-async function rejectSequence(id, reason = null) {
-  // email_sequences may lack a rejected_reason column; try it, fall back to
-  // status-only so a missing column never throws the reject path.
-  try {
-    await hostDbExec(
-      `UPDATE email_sequences SET status='rejected', rejected_reason=? WHERE id=?`,
-      [reason, id]
-    );
-  } catch {
-    await hostDbExec(`UPDATE email_sequences SET status='rejected' WHERE id=?`, [id]);
-  }
+// Edit-in-place panel — patch subject/body, writes via host.paActions.update.
+// onSave(patch) receives { subject, body } and resolves to advance edited→.
+function EditPanel({ subject, body, onSave, onCancel, pending }) {
+  const [subj, setSubj] = useState(subject ?? '');
+  const [bod, setBod] = useState(body ?? '');
+  return html`
+    <div class="ob-edit-panel">
+      <span class="ob-edit-label">Edit before approving</span>
+      <label class="ob-edit-field">
+        <span>Subject</span>
+        <input type="text" value=${subj} onInput=${(e) => setSubj(e.target.value)} />
+      </label>
+      <label class="ob-edit-field">
+        <span>Body</span>
+        <textarea rows="6" value=${bod} onInput=${(e) => setBod(e.target.value)}></textarea>
+      </label>
+      <div class="ob-edit-row">
+        <button class="ob-btn-sm" onClick=${onCancel}>Cancel</button>
+        <button
+          class="ob-btn-sm is-primary"
+          disabled=${pending}
+          onClick=${() => onSave({ subject: subj, body: bod })}
+        >${pending ? 'Saving…' : 'Save edit'}</button>
+      </div>
+    </div>
+  `;
 }
 
-// Fan-out siblings: rows sharing the selected post's `slug` (one approved post
-// fans out to N platform rows). social_queue has no group_id, so slug is the
-// natural grouping key. Returns [] when slug is null (one-off post).
+// Fan-out siblings: pa_action_drafts rows sharing the selected post's batch_id
+// (one approved social post fans out to N provider rows). batch_id is the group key.
 async function fetchSocialFanout(slug) {
   if (!slug) return [];
   try {
     const rows = await hostDbQuery(
-      `SELECT id, platform, content, status, scheduled_for, error
-       FROM social_queue
-       WHERE slug = ?
-       ORDER BY platform ASC`,
+      `SELECT ${SEL_COLS} FROM pa_action_drafts WHERE batch_id = ? ORDER BY channel ASC`,
       [slug]
     );
-    return rows ?? [];
+    return (rows || []).map(mapSocialSent);
   } catch {
     return [];
   }
@@ -639,10 +785,107 @@ async function fetchSocialFanout(slug) {
 // ─── Fixture data (fallback until real rows exist) ──────────────────────────────
 
 const FIXTURE_EMAIL_QUEUE = [
-  { id: 'eq-1', subject: 'Re: Royalti onboarding · file processing', recipient_name: 'Valentim de Carvalho', recipient_email: 'valentim@example.com', channel: 'smtp', status: 'pending', ux_mode: 'approve', is_overdue: 1, src: 'approval', scheduled_for: null, drafted_by: 'cmo' },
-  { id: 'eq-2', subject: 'Welcome — your Royalti tenant is ready', recipient_name: '{{first_name}}', recipient_email: '', channel: 'resend', status: 'pending', ux_mode: 'approve', is_overdue: 0, src: 'approval', scheduled_for: 'Today 14:30', drafted_by: 'pa' },
-  { id: 'eq-3', subject: 'Q2 product roundup · for label admins', recipient_name: 'label admins segment', recipient_email: '', channel: 'listmonk', status: 'pending', ux_mode: 'approve', is_overdue: 0, src: 'approval', scheduled_for: 'Today 16:00', drafted_by: 'cmo' },
-  { id: 'eq-4', subject: 'Quick check-in · still using Royalti?', recipient_name: 'no-catalog signups', recipient_email: '', channel: 'listmonk', status: 'pending', ux_mode: 'approve', is_overdue: 0, src: 'approval', scheduled_for: 'Mon 09:00', drafted_by: 'pa' },
+  // ── Replies group (emailGroup: 'reply') ─────────────────────────────────────
+  // eq-r1 recipient is keyed into FIXTURE_CRM → drives the full 8-cell ri-grid
+  // in standalone. Auto-selected first (rows[0]) so the showcase opens on it.
+  // quality: fully-verified stamp (all claims verified, on-voice) → Claims 2/2 ok,
+  // Tone match On-voice ok.
+  {
+    id: 'eq-r1',
+    subject: 'Re: Royalti onboarding · file processing delay',
+    body: `Hi,\n\nThanks for flagging this. The delay you saw was caused by a schema mismatch on the ingestion side — we patched it in 0.7.4 and the backfill ran clean this morning.\n\nYour tenant (id 590) should now show all statements. Let me know if anything looks off.\n\nBest,\nRuby`,
+    recipient_name: 'Valentim de Carvalho',
+    recipient_email: 'valentim@soundlabel.pt',
+    channel: 'smtp',
+    status: 'pending',
+    raw_status: 'awaiting',
+    ux_mode: 'approve',
+    is_overdue: 1,
+    hours_late: 17,
+    src: 'approval',
+    scheduled_for: null,
+    drafted_by: 'pa',
+    tenant_id: 590,
+    emailGroup: 'reply',
+    // ItemQuality stamp — fully verified + on-voice (G-QUALITY / WP-13).
+    quality: {
+      claims: [
+        { text: 'patched in 0.7.4', source: 'https://royalti.io/changelog/0.7.4', verdict: 'verified' },
+        { text: 'backfill ran clean this morning', source: 'https://royalti.io/changelog/0.7.4', verdict: 'verified' },
+      ],
+      tone: { verdict: 'on-voice', basis: 'Direct, no hype terms, first-person Ruby voice.', model: 'claude-sonnet-4-5' },
+      verified_at: '2026-06-10T09:15:00.000Z',
+      verifier: 'draft-time',
+    },
+  },
+  {
+    id: 'eq-r2',
+    subject: 'Re: Pricing question for enterprise tier',
+    body: `Hi Amara,\n\nGreat question — enterprise pricing is bespoke and based on catalog size and team seats.\n\nHappy to jump on a 20-minute call this week to walk through the numbers. Does Thursday 15:00 WAT work?\n\nBest,\nChinedum`,
+    recipient_name: 'Amara Okafor',
+    recipient_email: 'amara.okafor@afrobeats-dist.com',
+    channel: 'smtp',
+    status: 'pending',
+    raw_status: 'awaiting',
+    ux_mode: 'approve',
+    is_overdue: 0,
+    src: 'approval',
+    scheduled_for: 'Today 16:00',
+    drafted_by: 'cbo',
+    topic_tag: 'enterprise',
+    emailGroup: 'reply',
+    // ItemQuality stamp — failed claim + off-voice (G-QUALITY / WP-13).
+    // Demonstrates: Claims cell → fail tone; Tone match cell → Off-voice warn.
+    quality: {
+      claims: [
+        { text: 'enterprise pricing is bespoke and based on catalog size and team seats', source: null, verdict: 'failed' },
+        { text: 'Thursday 15:00 WAT', source: null, verdict: 'unsourced' },
+      ],
+      tone: { verdict: 'off-voice', basis: 'Proposal language too casual for an enterprise ask.', model: 'claude-sonnet-4-5' },
+      verified_at: '2026-06-10T09:20:00.000Z',
+      verifier: 'draft-time',
+    },
+  },
+  // ── Manual outreach group (emailGroup: 'manual') ────────────────────────────
+  // eq-m1 has NO quality stamp → Claims '—' + Tone match '—' (honest, D-10).
+  {
+    id: 'eq-m1',
+    subject: 'Welcome — your Royalti tenant is ready',
+    body: `Hi {{first_name}},\n\nYour Royalti workspace is live. Here is what you can do in the first 48 hours:\n\n1. Ingest your first statement from the Statements tab.\n2. Set up your split templates under Settings → Splits.\n3. Invite your accountant or distributor contact.\n\nIf anything is unclear the docs are at docs.royalti.io and I am available on this email.\n\nRuby`,
+    recipient_name: '{{first_name}}',
+    recipient_email: '',
+    channel: 'resend',
+    status: 'pending',
+    raw_status: 'awaiting',
+    ux_mode: 'approve',
+    is_overdue: 0,
+    src: 'approval',
+    scheduled_for: 'Today 14:30',
+    drafted_by: 'pa',
+    emailGroup: 'manual',
+    // No quality field — renders '—' for Claims + Tone match (honest, D-10).
+  },
+  // ── Sequence step group (emailGroup: 'sequence') ────────────────────────────
+  {
+    id: 'eq-s1',
+    subject: 'Following up on the Royalti deck · step 2',
+    body: `Hi [first name],\n\nWanted to circle back on the deck I sent last week — if you had a chance to look, happy to walk you through the ingestion demo on a 15-minute call.\n\nAlternatively I can send a Loom if async is easier. Just say the word.\n\nBest,\nChinedum`,
+    recipient_name: 'ar@universalmusic.pt',
+    recipient_email: 'ar@universalmusic.pt',
+    channel: 'smtp',
+    status: 'pending',
+    raw_status: 'awaiting',
+    ux_mode: 'approve',
+    is_overdue: 0,
+    src: 'approval',
+    scheduled_for: 'Mon 09:00',
+    drafted_by: 'pa',
+    emailGroup: 'sequence',
+    sequence_id: 'Cold A&R outreach',
+    sequence_step: 2,
+    sequence_total: 4,
+    // No quality field — renders '—' for Claims + Tone match (honest, D-10).
+  },
 ];
 
 const FIXTURE_EMAIL_SCHEDULE = [
@@ -656,8 +899,27 @@ const FIXTURE_EMAIL_SENT = [
 ];
 
 const FIXTURE_NL_QUEUE = [
-  { id: 'nl-1', subject: 'You can deliver from Royalti now', subject_b: null, draft_slug: 'royalti-deliver', status: 'cooling', cooling_until: '47m', quality_score: 92, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 0 },
-  { id: 'nl-2', subject: 'Schema patches that unblocked tenant 590', subject_b: 'The shape disparity that was eating royalty data', draft_slug: 'schema-patches-590', status: 'pending', cooling_until: null, quality_score: 86, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 1 },
+  { id: 'nl-1', subject: 'You can deliver from Royalti now', subject_b: null, draft_slug: 'royalti-deliver', status: 'cooling', raw_status: 'awaiting', cooling_until: '47m', quality_score: 92, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 0,
+    preheader: 'Send DDEX messages from your workspace — no aggregator required.',
+    from_line: 'Ruby <ruby@royalti.io>',
+    body: `Royalti now ships a full delivery pipeline.\n\nYou can send DDEX ERN4 messages directly from your workspace to DSPs that accept DDEX — no third-party aggregator account required for the initial batch.\n\nHere is what that means in practice:\n\n## What changed\n\nThe delivery seam was the last piece of the puzzle. Before this release, labels using Royalti could ingest statements and calculate royalties, but the outbound leg still meant exporting a spreadsheet and handing it to a distributor.\n\nNow the loop is closed. A single approval in the Outbound pane sends a DDEX message to your connected DSPs.\n\n## What you need to do\n\nIf you are already on Royalti, your tenant is DDEX-ready. Go to Settings → Delivery, connect your first DSP endpoint, and submit a test release. The confirmation takes 24 hours.\n\nIf you are not on Royalti yet, you can request early access at royalti.io/deliver.\n\n## What is next\n\nWe are working on a MEAD profile for sync licensing and a batch-release scheduler. Both are on the public roadmap.\n\nAs always, reply to this email with questions — Ruby reads every one.\n\nRuby\nRoyalti`,
+    // ItemQuality stamp — fully verified + on-voice (G-QUALITY / WP-13).
+    quality: {
+      claims: [
+        { text: 'no third-party aggregator account required for the initial batch', source: 'https://royalti.io/deliver', verdict: 'verified' },
+        { text: 'The confirmation takes 24 hours', source: 'https://docs.royalti.io/delivery', verdict: 'verified' },
+      ],
+      tone: { verdict: 'on-voice', basis: 'Clear, direct, no hype terms, Ruby first-person voice.', model: 'claude-sonnet-4-5' },
+      verified_at: '2026-06-10T08:00:00.000Z',
+      verifier: 'draft-time',
+    },
+  },
+  { id: 'nl-2', subject: 'Schema patches that unblocked tenant 590', subject_b: 'The shape disparity that was eating royalty data', draft_slug: 'schema-patches-590', status: 'pending', raw_status: 'awaiting', cooling_until: null, quality_score: 86, recipient_count: 2104, delivery_system: 'listmonk', drafted_by: 'cmo', has_ab: 1,
+    preheader: 'A two-line migration fix that took three days to find — and how we made it automatic.',
+    from_line: 'Ruby <ruby@royalti.io>',
+    body: `Tenant 590 hit a wall last month.\n\nWhen they uploaded their first statement batch, the ingestion pipeline rejected 312 rows because the revenue model field was an enum the schema didn't recognise.\n\nThe fix was a two-line migration, but finding it took three days of log triage.\n\nWe are writing about it because the same shape problem shows up across 8% of new tenants in their first month. This is the kind of thing that erodes trust before a product has a chance to prove itself.\n\nThe patch is in 0.7.3. If you are running an older version, the upgrade path is in the docs.\n\nRuby`,
+    // No quality field → Claims '—' + honest unstamped state (D-10 backlog rows).
+  },
 ];
 
 const FIXTURE_NL_SENT = [
@@ -680,8 +942,8 @@ const FIXTURE_ACTIVE_SEQS = [
 ];
 
 const FIXTURE_SEQ_QUEUE = [
-  { id: 'seq-q1', name: 'distributor-q3', slug: 'distributor-q3', description: 'Cold outbound to 14 distributor leads sourced from Q1 trade-show contacts. 4 steps over 21 days.', segment: 'distributor-leads-q1', total_steps: 4, delivery_system: 'resend', status: 'in_review', created_by: 'vp-sales-agent', created_at: '2026-04-28' },
-  { id: 'seq-q2', name: 'label-onboarding-v3', slug: 'label-onboarding-v3', description: 'Replaces v2. New labels get 5 emails over 14 days walking them from signup → first statement ingested.', segment: 'new-labels', total_steps: 5, delivery_system: 'listmonk', status: 'in_review', created_by: 'pa', created_at: '2026-04-27' },
+  { id: 'seq-q1', name: 'distributor-q3', slug: 'distributor-q3', description: 'Cold outbound to 14 distributor leads sourced from Q1 trade-show contacts. 4 steps over 21 days.', segment: 'distributor-leads-q1', total_steps: 4, delivery_system: 'resend', status: 'in_review', raw_status: 'awaiting', created_by: 'vp-sales-agent', created_at: '2026-04-28' },
+  { id: 'seq-q2', name: 'label-onboarding-v3', slug: 'label-onboarding-v3', description: 'Replaces v2. New labels get 5 emails over 14 days walking them from signup → first statement ingested.', segment: 'new-labels', total_steps: 5, delivery_system: 'listmonk', status: 'in_review', raw_status: 'awaiting', created_by: 'pa', created_at: '2026-04-27' },
 ];
 
 const FIXTURE_SEQ_STEPS = [
@@ -714,8 +976,21 @@ const FIXTURE_SEQ_RECIPIENTS = [
 ];
 
 const FIXTURE_SOCIAL_QUEUE = [
-  { id: 'sq-1', platform: 'linkedin', account: 'Royalti', content: 'Royalti.io is now live for music labels — handle your full royalty pipeline from one workspace.', status: 'in_review', scheduled_for: '2026-06-07 09:00', source: 'C-07' },
-  { id: 'sq-2', platform: 'twitter', account: 'royalti_io', content: 'Thread 1/7: The royalty data problem nobody talks about. \n\nMusic labels spend 40+ hours per month reconciling statements from distributors. Here\'s how we fixed it.', status: 'pending', scheduled_for: '2026-06-10 09:00', source: 'C-08' },
+  // ── Blog announcement · fan-out batch (LinkedIn + X + Bluesky share blog-01) ──
+  // Three siblings collapse to ONE display row carrying all three platform pills.
+  { id: 'sq-b1-li', slug: 'blog-01', platform: 'linkedin', account: 'Royalti', source_group: 'blog', blog_slug: 'royalty-calc-overhaul', content: 'The royalty calculator overhaul shipped this week. Statements ingest in ~90s for a 30k-row CSV, and splits recompute live as you edit. #royalti #musicbusiness', status: 'in_review', raw_status: 'awaiting', scheduled_for: '2026-06-10 12:48', source: 'C-07', title: 'Royalty calculator overhaul · launch post', drafted_by: 'pa', thread_index: null, thread_total: null, tone_check: false, media_url: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=1200&h=627&fit=crop', hashtags: ['#royalti', '#musicbusiness', '#labels'], platforms: ['linkedin'], thread: null },
+  { id: 'sq-b1-x', slug: 'blog-01', platform: 'x', account: 'royalti_io', source_group: 'blog', blog_slug: 'royalty-calc-overhaul', content: 'The royalty calculator overhaul shipped this week. Statements ingest in ~90s for a 30k-row CSV…', status: 'in_review', raw_status: 'awaiting', scheduled_for: '2026-06-10 12:48', source: 'C-07', title: 'Royalty calculator overhaul · launch post', drafted_by: 'pa', thread_index: null, thread_total: null, tone_check: false, media_url: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=1200&h=627&fit=crop', hashtags: ['#royalti', '#musicbusiness', '#labels'], platforms: ['x'], thread: null },
+  { id: 'sq-b1-bs', slug: 'blog-01', platform: 'bluesky', account: 'royalti.io', source_group: 'blog', blog_slug: 'royalty-calc-overhaul', content: 'The royalty calculator overhaul shipped this week. Statements ingest in ~90s for a 30k-row CSV…', status: 'in_review', raw_status: 'awaiting', scheduled_for: '2026-06-10 12:48', source: 'C-07', title: 'Royalty calculator overhaul · launch post', drafted_by: 'pa', thread_index: null, thread_total: null, tone_check: false, media_url: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=1200&h=627&fit=crop', hashtags: ['#royalti', '#musicbusiness', '#labels'], platforms: ['bluesky'], thread: null },
+  // ── Blog announcement · singleton (no batch, no blog_slug path) ───────────────
+  { id: 'sq-b2', slug: null, platform: 'linkedin', account: 'Royalti', source_group: 'blog', blog_slug: null, content: 'New blog post: "Why we rewrote the splits engine in 6 weeks" — the trade-offs we made on accuracy vs speed, and what we\'d do differently.', status: 'pending', raw_status: 'awaiting', scheduled_for: '2026-06-10 14:00', source: 'C-09', title: 'Splits engine rewrite · explainer', drafted_by: 'pa', thread_index: null, thread_total: null, tone_check: false, media_url: null, hashtags: ['#engineering'], platforms: ['linkedin'], thread: null },
+  // ── AI generation · tone-check row (renders the tone-check warn chip) ─────────
+  { id: 'sq-ai1', slug: null, platform: 'linkedin', account: 'Royalti', source_group: 'ai', blog_slug: null, content: 'If you\'ve ever fought with split sheets in Excel for a 6-feature track, you\'ll find this familiar. We turned that fight into one ledger.', status: 'in_review', raw_status: 'awaiting', scheduled_for: '2026-06-09 09:00', source: 'C-10', title: 'Split sheet story', drafted_by: 'ruby', thread_index: null, thread_total: null, tone_check: true, media_url: null, hashtags: [], platforms: ['linkedin'], thread: null },
+  // ── AI generation · thread row (thread · 4 of 4 chip) ─────────────────────────
+  { id: 'sq-ai2', slug: null, platform: 'x', account: 'royalti_io', source_group: 'ai', blog_slug: null, content: 'The least glamorous part of running a label: chasing a $124 cheque across three statement formats. Royalti unifies them into one ledger. 1/4', status: 'in_review', raw_status: 'awaiting', scheduled_for: '2026-06-09 11:00', source: 'C-11', title: 'Thread · chasing the cheque', drafted_by: 'cmo-agent', thread_index: 4, thread_total: 4, tone_check: false, media_url: null, hashtags: ['#royaltyaccounting', '#ddex'], platforms: ['x', 'bluesky'], thread: [
+    '2/4: The root cause is the format war. Every distributor sends a different CSV shape — columns named differently, currency sometimes implicit, territory codes inconsistent.',
+    '3/4: The fix is not a parser for each distributor. It is a schema all distributors can map to. That is what Royalti does under the hood.',
+    '4/4: If you run a label and you are still reconciling by hand — try Royalti. Link in bio.',
+  ] },
 ];
 
 const FIXTURE_SOCIAL_SCHEDULE = [
@@ -723,8 +998,36 @@ const FIXTURE_SOCIAL_SCHEDULE = [
 ];
 
 const FIXTURE_SOCIAL_SENT = [
-  { id: 'sq-0', platform: 'linkedin', account: 'Royalti', content: 'We\'ve built a workspace that puts royalty data, outreach, and reporting in one place.', status: 'posted', scheduled_for: '2026-06-01 09:00', posted_at: '2026-06-01 09:01', source: 'C-06' },
+  { id: 'sq-0', platform: 'linkedin', account: 'Royalti', content: 'We\'ve built a workspace that puts royalty data, outreach, and reporting in one place.', status: 'posted', scheduled_for: '2026-06-01 09:00', posted_at: '2026-06-01 09:01', source: 'C-06', media_url: 'https://royalti.io/og/workspace-card.jpg', hashtags: ['#royalti', '#musicbusiness'] },
 ];
+
+// Fixture CRM records — keyed by LOWERCASED recipient_email. Provides the 8-cell
+// ri-grid data (and the email scorecard's thread/personalization signals) in
+// STANDALONE mode only; live mode resolves these from the host DB via
+// fetchReplyIntelligence. Shape mirrors fetchReplyIntelligence's return.
+// eq-r1 (valentim@soundlabel.pt) is the auto-selected first Replies row, so the
+// showcase opens straight onto a populated grid.
+const FIXTURE_CRM = {
+  'valentim@soundlabel.pt': {
+    tenant_name: 'Sound Label Lda.',
+    tenant_sub: 'Distributor',
+    last_touch: '3d ago',
+    last_touch_sub: '14 interactions',
+    health: 'Active',
+    health_sub: '3d since contact',
+    sequence: '— none — (direct reply)',
+    sequence_sub: 'not part of a sequence run',
+    catalog: '880 tracks',
+    catalog_sub: 'Afropop / Fado blend · ingested 2026-03-12',
+    open_balance: '$0',
+    balance_sub: 'current',
+    owner: 'Chinedum O.',
+    owner_sub: 'CEO · direct relationship',
+    risk_flag: 'None',
+    risk_color: 'var(--live)',
+    thread_count: 3,
+  },
+};
 
 // ─── Small helpers ─────────────────────────────────────────────────────────────
 
@@ -755,8 +1058,10 @@ function CoolingChip({ until }) {
   return html`<span class="ob-chip cooling">cooling ${until}</span>`;
 }
 
-function OverdueChip() {
-  return html`<span class="ob-chip overdue">overdue</span>`;
+function OverdueChip({ hoursLate } = {}) {
+  // Honest: only show lateness detail when the worker stamped a real hours_late.
+  const detail = hoursLate > 0 ? ` · ${hoursLate}h late` : '';
+  return html`<span class="ob-chip overdue">overdue${detail}</span>`;
 }
 
 function formatPct(v) {
@@ -768,6 +1073,33 @@ function formatDate(v) {
   if (!v) return '—';
   return String(v);
 }
+
+// Compact relative-time for social queue rows ("now" / "12m" / "6h" / "3d").
+// Honest: no signal → '—'. Treats the stored "YYYY-MM-DD HH:MM" as UTC.
+function relativeTime(v) {
+  if (!v) return '—';
+  const t = new Date(String(v).replace(' ', 'T') + 'Z').getTime();
+  if (!Number.isFinite(t)) return '—';
+  const abs = Math.abs(Date.now() - t);
+  if (abs < 60e3) return 'now';
+  if (abs < 3600e3) return Math.round(abs / 60e3) + 'm';
+  if (abs < 86400e3) return Math.round(abs / 3600e3) + 'h';
+  return Math.round(abs / 86400e3) + 'd';
+}
+
+// Compact platform pill for the social-queue master rows — the design-system
+// `.plat` family (mono, tinted, compact), NOT the full-width .ob-platform-badge.
+const PLAT_KEY = { linkedin: 'li', twitter: 'x', x: 'x', bluesky: 'bs', bsky: 'bs', instagram: 'ig', facebook: 'fb' };
+function PlatPill({ platform }) {
+  const k = PLAT_KEY[platform] ?? platform;
+  return html`<span class=${'plat plat-' + k}>${String(k).toUpperCase()}</span>`;
+}
+
+// Social source-group → verbatim design label + fixed render order (omit empties).
+const SOURCE_GROUP_LABEL = { blog: 'Blog announcement', ai: 'AI generation', manual: 'Manual', reply: 'Reply' };
+const SOCIAL_GROUP_ORDER = ['blog', 'ai', 'manual', 'reply'];
+// Platform badge order within a fan-out row: li → x → bs → ig → fb.
+const SOCIAL_PLAT_ORDER = ['linkedin', 'twitter', 'x', 'bluesky', 'bsky', 'instagram', 'facebook'];
 
 function wordCount(text) {
   if (!text) return 0;
@@ -890,11 +1222,13 @@ const SEQ_REJECT_REASONS = ['Cadence too aggressive', 'Wrong segment', 'Copy nee
 
 // Build the 8 newsletter quality cells from the draft row (B.6). quality_score
 // is a stored column; word count, anti-patterns, section variety and CTAs are
-// computed directly from the body text (real signals). Claims, Freshness and
-// Previously-featured need a claims-verifier / sent-history join that doesn't
-// exist yet — they stay honest placeholders rather than fabricated numbers. Each
-// cell: { label, value, sub, pct, tone } (tone = 'ok' | 'warn' | 'fail').
-function newsletterQualityCells(row) {
+// computed directly from the body text (real signals). Claims reads the
+// draft-time ItemQuality stamp (G-QUALITY, WP-13) — honest '—' when unstamped.
+// Freshness + Previously-featured are real via newsletterHistorySignals (WP-11).
+// Each cell: { label, value, sub, pct, tone } (tone = 'ok' | 'warn' | 'fail').
+// historySignals = { freshness, previouslyFeatured } from newsletterHistorySignals,
+// or null when the query hasn't resolved yet (renders honest '—' placeholders).
+function newsletterQualityCells(row, historySignals) {
   const score = row.quality_score;
   const body = row.body;
   const wc = wordCount(body);
@@ -904,7 +1238,6 @@ function newsletterQualityCells(row) {
   const anti = countAntiPatterns(body);
   const sections = countSections(body);
   const { ctas, bangs } = countCtas(body);
-  const claims = countClaims(body);
 
   return [
     {
@@ -921,15 +1254,9 @@ function newsletterQualityCells(row) {
       pct: wc ? Math.min(100, Math.round((wc / 500) * 100)) : 0,
       tone: wcOk == null ? 'warn' : wcOk ? 'ok' : 'warn',
     },
-    {
-      label: 'Claims',
-      value: hasBody ? `${claims}` : '—',
-      sub: hasBody ? 'detected · unverified' : 'no body',
-      pct: hasBody ? Math.min(100, claims * 12) : 0,
-      // Honest: we can detect claims in the text but not verify them — a
-      // verifier pipeline would flip this to ok/fail.
-      tone: 'warn',
-    },
+    // Claims: reads draft-time ItemQuality stamp (G-QUALITY, WP-13).
+    // Stamped rows show verified/total counts; unstamped rows show honest '—'.
+    claimsVerdictCell(row.quality),
     {
       label: 'Anti-patterns',
       value: hasBody ? `${anti}` : '—',
@@ -944,10 +1271,10 @@ function newsletterQualityCells(row) {
       pct: hasBody ? Math.min(100, sections * 25) : 0,
       tone: !hasBody ? 'warn' : sections >= 3 ? 'ok' : sections >= 2 ? 'warn' : 'fail',
     },
-    // History-dependent — needs a sent-newsletter join (newsletter_sends /
-    // outbound_sent_log) to be real. Honest placeholder until then.
-    { label: 'Freshness', value: '—', sub: 'needs sent-history join', pct: 0, tone: 'warn' },
-    { label: 'Previously featured', value: '—', sub: 'needs sent-history join', pct: 0, tone: 'warn' },
+    // History-dependent — resolved via newsletterHistorySignals + sent-history join (WP-11).
+    // Falls back to honest '—' when historySignals is null (query still loading).
+    historySignals?.freshness ?? { label: 'Freshness', value: '—', sub: 'loading…', pct: 0, tone: 'warn' },
+    historySignals?.previouslyFeatured ?? { label: 'Previously featured', value: '—', sub: 'loading…', pct: 0, tone: 'warn' },
     {
       label: 'CTAs · exclamations',
       value: hasBody ? `${ctas} · ${bangs}!` : '—',
@@ -955,6 +1282,73 @@ function newsletterQualityCells(row) {
       pct: hasBody ? Math.min(100, ctas * 25) : 0,
       tone: !hasBody ? 'warn' : bangs <= 3 && ctas >= 1 ? 'ok' : 'warn',
     },
+  ];
+}
+
+// ─── Email draft quality cells (5-cell, design §B email) ─────────────────────
+// Mirrors newsletterQualityCells shape: { label, value, sub, pct, tone } so the
+// cells render through the exact same nl-quality-cell markup. crm = resolved CRM
+// record from fetchReplyIntelligence, or null. Every cell is honest about its
+// signal limits — '—' value and 'warn' tone when no real data exists.
+// Claims + Tone match read the draft-time ItemQuality stamp (G-QUALITY, WP-13);
+// unstamped rows show honest '—', never a soft heuristic guess (D-10).
+function emailQualityCells(row, crm) {
+  const body = row.body ?? '';
+  const hasBody = !!body;
+  const agent = row.drafted_by ?? null;
+
+  // --- LENGTH --- direct body signal (line count).
+  const lines = hasBody ? body.split('\n').filter((s) => s.trim()).length : 0;
+
+  // --- PERSONALIZATION --- merge-field count + CRM presence.
+  const mergeCount = hasBody
+    ? (body.match(/\{\{[^}]+\}\}|\[first[\s_]name\]/gi) || []).length
+    : 0;
+  const hasCrm = !!crm;
+  const persLevel = mergeCount >= 3 ? 'High' : (mergeCount >= 1 || hasCrm) ? 'Med' : 'Low';
+  const crmNote = hasCrm ? ' · via CRM' : (mergeCount ? '' : ' · no CRM');
+
+  // --- THREAD CONTEXT --- CRM thread_count → full; sequence membership → partial;
+  // nothing → honest "No thread · —". Never fabricates a count.
+  const threadCount = crm?.thread_count;
+  const hasSeq = !!row.sequence_id;
+  const hasThread = threadCount != null && threadCount > 0;
+  const threadLevel = hasThread && threadCount >= 3 ? 'Full'
+                    : hasThread                     ? 'Partial'
+                    : hasSeq                        ? 'Sequence'
+                    :                                 'No thread';
+  const priorLabel = hasThread
+    ? `${threadCount} prior msg${threadCount !== 1 ? 's' : ''}`
+    : '—';
+
+  return [
+    {
+      label: 'Length',
+      value: lines ? `${lines}` : '—',
+      sub: lines ? 'lines' : 'no body',
+      pct: lines ? Math.min(100, Math.round((lines / 8) * 100)) : 0,
+      tone: !lines ? 'warn' : lines >= 2 && lines <= 8 ? 'ok' : 'warn',
+    },
+    // Claims: reads draft-time ItemQuality stamp (G-QUALITY, WP-13).
+    // Stamped rows show verified/total counts; unstamped rows show honest '—'.
+    claimsVerdictCell(row.quality),
+    {
+      label: 'Personalization',
+      value: persLevel,
+      sub: `${mergeCount} merge field${mergeCount !== 1 ? 's' : ''}${crmNote}`,
+      pct: persLevel === 'High' ? 90 : persLevel === 'Med' ? 55 : 20,
+      tone: persLevel === 'High' ? 'ok' : 'warn',
+    },
+    {
+      label: 'Thread context',
+      value: threadLevel,
+      sub: priorLabel,
+      pct: threadLevel === 'Full' ? 100 : threadLevel === 'Partial' ? 60 : threadLevel === 'Sequence' ? 40 : 0,
+      tone: threadLevel === 'Full' ? 'ok' : 'warn',
+    },
+    // Tone match: reads draft-time ItemQuality stamp (G-QUALITY, WP-13).
+    // Stamped rows show 'On-voice'/'Off-voice' + basis; unstamped rows show honest '—'.
+    toneVerdictCell(row.quality),
   ];
 }
 
@@ -1078,13 +1472,23 @@ function TwoWeekCalendar({ items, renderPill }) {
 // ─── Email views ────────────────────────────────────────────────────────────────
 
 // Reply-intelligence panel — CRM context for an email recipient (design §B/C).
-// Collapses to "unknown sender" when the tenants table has no record (the live
-// case today: no CRM mirror in ikenga.db).
+// Collapses to "unknown sender" when no CRM match (host.fetch live-only, D-04).
+// Standalone resolves from FIXTURE_CRM; live pulls Twenty + joins receivables.
 function ReplyIntelligence({ email, sequenceId, standalone }) {
   const { data: crm } = useQuery({
     queryKey: ['email', 'ri', email],
-    queryFn: () => fetchReplyIntelligence(email),
-    enabled: !standalone && !!email,
+    // Standalone resolves synchronously from FIXTURE_CRM (or null → honest empty
+    // state); live mode calls the host DB. typeof-guard so the standalone path
+    // degrades to null if the fixtures layer is absent. Query runs whenever
+    // `email` is truthy in both modes (same dedup key as the email scorecard).
+    queryFn: () => {
+      if (standalone) {
+        const map = typeof FIXTURE_CRM !== 'undefined' ? FIXTURE_CRM : {};
+        return Promise.resolve(map[email?.toLowerCase()] ?? null);
+      }
+      return fetchReplyIntelligence(email);
+    },
+    enabled: !!email,
     placeholderData: null,
   });
 
@@ -1112,7 +1516,7 @@ function ReplyIntelligence({ email, sequenceId, standalone }) {
     <div class="ri-panel">
       <div class="ri-panel-head">
         <span>Reply intelligence</span>
-        <span class="ob-chip seq" style=${{ marginLeft: 'auto' }}>CRM · contacts</span>
+        <span class="ob-chip seq" style=${{ marginLeft: 'auto' }}>CRM · Twenty</span>
       </div>
       <div class="ri-grid">
         ${cell('Tenant', crm.tenant_name ?? crm.name, crm.tenant_sub)}
@@ -1131,6 +1535,8 @@ function ReplyIntelligence({ email, sequenceId, standalone }) {
 function EmailQueueView({ standalone }) {
   const [selected, setSelected] = useState(null);
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [commitError, setCommitError] = useState(null);
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['email', 'queue'],
@@ -1140,13 +1546,47 @@ function EmailQueueView({ standalone }) {
   });
 
   const qc = useQueryClient();
-  const approveMut = useMutation({
-    mutationFn: ({ id, src }) => approveEmailDraft(id, src),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['email'] }); qc.invalidateQueries({ queryKey: ['counts'] }); },
+  const invalidate = () => { qc.invalidateQueries({ queryKey: ['email'] }); qc.invalidateQueries({ queryKey: ['counts'] }); };
+  const commitMut = useMutation({
+    mutationFn: ({ id }) => approveDraft(id),
+    onSuccess: () => { setCommitError(null); invalidate(); },
+    onError: (e) => { const m = String(e?.message ?? e); console.error('[outbound] commit refused:', m); setCommitError(m); },
   });
+  const undo = useUndoCommit((id) => { setCommitError(null); commitMut.mutate({ id }); });
   const rejectMut = useMutation({
-    mutationFn: ({ id, src, reason }) => rejectEmailDraft(id, src, reason),
-    onSuccess: () => { setRejectOpen(false); qc.invalidateQueries({ queryKey: ['email'] }); qc.invalidateQueries({ queryKey: ['counts'] }); },
+    mutationFn: ({ id, reason }) => rejectDraft(id, reason),
+    onSuccess: () => { setRejectOpen(false); invalidate(); },
+  });
+  const retryMut = useMutation({
+    mutationFn: ({ id }) => retryDraft(id),
+    onSuccess: invalidate,
+  });
+  const editMut = useMutation({
+    mutationFn: ({ id, patch }) => updateDraft(id, patch),
+    onSuccess: () => { setEditOpen(false); invalidate(); },
+  });
+
+  // Resolved selection (must be computed pre-return so the crm hook can key on it,
+  // without violating rules-of-hooks). selected wins; else first queue row.
+  const rowsAll = data ?? [];
+  const selResolved = selected ?? rowsAll[0] ?? null;
+  // Sibling CRM query for the 5-cell email quality scorecard's THREAD/PERSONALIZATION
+  // signals. Same queryKey as ReplyIntelligence → request is deduplicated. Standalone
+  // resolves synchronously from the email fixture map; live calls the host DB.
+  const { data: crm } = useQuery({
+    queryKey: ['email', 'ri', selResolved?.recipient_email],
+    queryFn: () => {
+      const email = selResolved?.recipient_email;
+      if (standalone) {
+        // FIXTURE_CRM is supplied by the fixtures layer; typeof-guard so the
+        // standalone path degrades to null (→ honest empty cells) if it's absent.
+        const map = typeof FIXTURE_CRM !== 'undefined' ? FIXTURE_CRM : {};
+        return Promise.resolve(map[email?.toLowerCase()] ?? null);
+      }
+      return fetchReplyIntelligence(email);
+    },
+    enabled: !!selResolved?.recipient_email,
+    placeholderData: null,
   });
 
   if (isLoading) return html`<${StateDisplay} state="loading" message="Loading email queue…" />`;
@@ -1155,8 +1595,12 @@ function EmailQueueView({ standalone }) {
 
   const rows = data ?? [];
   const sel = selected ?? rows[0];
+  const isFailed = sel?.raw_status === 'failed';
+  const canApprove = isApprovable(sel);
+  const armedRow = undo.armed ? rows.find((r) => r.id === undo.armed) : null;
+  const emailCells = sel ? emailQualityCells(sel, crm ?? null) : [];
 
-  const pick = (row) => { setSelected(row); setRejectOpen(false); };
+  const pick = (row) => { setSelected(row); setRejectOpen(false); setEditOpen(false); };
 
   const sendToChat = () => {
     if (!sel) return;
@@ -1166,22 +1610,67 @@ function EmailQueueView({ standalone }) {
   };
 
   return html`
+    <${FloatingUndoBar} armed=${undo.armed} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} subject=${armedRow?.subject ?? sel?.subject} />
     <div class="nl-split">
       <div class="nl-master">
-        ${rows.map(row => html`
-          <div
-            key=${row.id}
-            class=${cn('nl-row', { 'is-on': sel?.id === row.id })}
-            onClick=${() => pick(row)}
-          >
-            <div class="nl-row-head">
-              <${ChannelChip} channel=${row.channel} />
-              ${row.is_overdue ? html`<${OverdueChip} />` : null}
-            </div>
-            <div class="nl-row-subj">${row.subject}</div>
-            <div class="nl-row-pre">${row.recipient_name || row.recipient_email || '—'}</div>
-          </div>
-        `)}
+        ${(() => {
+          // Grouped master list: REPLIES → MANUAL → SEQUENCE STEP (design email §B).
+          // Empty groups are omitted entirely (no empty header). Agent rows surface
+          // under their inferred emailGroup; never hard-code a fixed group count.
+          const groups = [
+            { key: 'reply', label: 'REPLIES' },
+            { key: 'manual', label: 'MANUAL' },
+            { key: 'sequence', label: 'SEQUENCE STEP' },
+          ];
+          // Any rows whose emailGroup is missing/unknown fall into MANUAL so they
+          // are never silently dropped from the list.
+          const known = new Set(groups.map((g) => g.key));
+          const bucket = (r) => (known.has(r.emailGroup) ? r.emailGroup : 'manual');
+          return groups.map(({ key, label }) => {
+            const group = rows.filter((r) => bucket(r) === key);
+            if (!group.length) return null;
+            return html`
+              <div class="nl-master-group-head" key=${'gh-' + key}>
+                ${label} · ${group.length}
+              </div>
+              ${group.map((row) => {
+                const fromLabel = emailFromLabel(row);
+                const timeLabel = relDays(row.scheduled_for, { compact: true });
+                const snip = row.body
+                  ? `"${row.body.replace(/\s+/g, ' ').trim().slice(0, 80).trimEnd()}…"`
+                  : null;
+                return html`
+                  <div
+                    key=${row.id}
+                    class=${cn('nl-row', { 'is-on': sel?.id === row.id })}
+                    onClick=${() => pick(row)}
+                  >
+                    <div class="em-row-line1">
+                      <span class="em-row-from">${fromLabel}</span>
+                      ${timeLabel && timeLabel !== '—'
+                        ? html`<span class="em-row-time">${timeLabel}</span>`
+                        : null}
+                    </div>
+                    <div class="nl-row-subj">${row.subject}</div>
+                    ${snip ? html`<div class="em-row-snip">${snip}</div>` : null}
+                    <div class="em-row-foot">
+                      <${ChannelChip} channel=${row.channel} />
+                      ${row.is_overdue ? html`<${OverdueChip} hoursLate=${row.hours_late} />` : null}
+                      ${row.tenant_id ? html`<span class="ob-chip seq">tenant ${row.tenant_id}</span>` : null}
+                      ${row.topic_tag ? html`<span class="ob-chip tint">${row.topic_tag}</span>` : null}
+                      ${key === 'sequence' && row.sequence_step != null
+                        ? html`<span class="ob-chip seq">sequence · step ${row.sequence_step}/${row.sequence_total ?? '?'}</span>`
+                        : null}
+                      ${key === 'sequence' && row.sequence_id
+                        ? html`<span class="ob-chip tint">${row.sequence_id}</span>`
+                        : null}
+                    </div>
+                  </div>
+                `;
+              })}
+            `;
+          });
+        })()}
       </div>
       <div class="nl-detail">
         ${sel ? html`
@@ -1201,6 +1690,18 @@ function EmailQueueView({ standalone }) {
 
             <${ReplyIntelligence} email=${sel.recipient_email} sequenceId=${sel.sequence_id} standalone=${standalone} />
 
+            ${emailCells.length ? html`
+              <div class="nl-quality-grid eq-quality-grid">
+                ${emailCells.map((c, i) => html`
+                  <div key=${i} class=${cn('nl-quality-cell', c.tone)}>
+                    <div class="qlabel">${c.label}</div>
+                    <div class="qvalue">${c.value} <span class="qsub">${c.sub}</span></div>
+                    <div class="qbar"><div style=${{ width: `${c.pct}%` }}></div></div>
+                  </div>
+                `)}
+              </div>
+            ` : null}
+
             <div class="ip-body" style=${{ flex: 1, padding: '1rem', color: 'var(--fg-muted)', fontSize: '0.8125rem' }}>
               <p style=${{ margin: 0 }}>
                 To: <strong style=${{ color: 'var(--fg)' }}>${sel.recipient_name || sel.recipient_email || 'segment'}</strong>
@@ -1219,27 +1720,67 @@ function EmailQueueView({ standalone }) {
               ` : null}
             </div>
 
+            ${sel.error_text ? html`
+              <div class="ob-chip overdue" style=${{ display: 'inline-flex', margin: '0 1rem' }}>
+                Last attempt failed · ${sel.error_text}
+              </div>
+            ` : null}
+
+            ${editOpen ? html`
+              <${EditPanel}
+                subject=${sel.subject}
+                body=${sel.body}
+                pending=${editMut.isPending}
+                onCancel=${() => setEditOpen(false)}
+                onSave=${(patch) => editMut.mutate({ id: sel.id, patch })}
+              />
+            ` : null}
+
             ${rejectOpen ? html`
               <${RejectPanel}
                 canned=${EMAIL_REJECT_REASONS}
                 pending=${rejectMut.isPending}
                 placeholder="Optional · why? (feeds the writer-agent training set)"
                 onCancel=${() => setRejectOpen(false)}
-                onConfirm=${(reason) => rejectMut.mutate({ id: sel.id, src: sel.src, reason })}
+                onConfirm=${(reason) => rejectMut.mutate({ id: sel.id, reason })}
               />
             ` : null}
 
+            <${CommitError} message=${commitError} />
+            ${canApprove ? html`
+              <${ConsequenceLine}
+                recipient=${sel.recipient_name || sel.recipient_email}
+                channel=${sel.channel}
+                scheduled=${sel.scheduled_for}
+              />
+            ` : null}
             <div class="ob-actions">
               <div class="ob-actions-primary">
-                <button
-                  class="btn"
-                  style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
-                  onClick=${() => approveMut.mutate({ id: sel.id, src: sel.src })}
-                  disabled=${approveMut.isPending}
-                >
-                  ${approveMut.isPending ? 'Approving…' : 'Approve & Send'}
+                ${isFailed ? html`
+                  <button
+                    class="btn"
+                    style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                    onClick=${() => retryMut.mutate({ id: sel.id })}
+                    disabled=${retryMut.isPending}
+                  >
+                    ${retryMut.isPending ? 'Retrying…' : 'Retry send'}
+                  </button>
+                ` : canApprove ? html`
+                  <button
+                    class="btn"
+                    style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                    onClick=${() => undo.arm(sel.id)}
+                    disabled=${commitMut.isPending || undo.isArmed(sel.id)}
+                  >
+                    ${commitMut.isPending ? 'Sending…' : undo.isArmed(sel.id) ? 'Sending…' : 'Approve & schedule'}
+                  </button>
+                ` : html`
+                  <${StatusChip} rawStatus=${sel.raw_status} />
+                `}
+                <button class="btn btn-ghost" onClick=${() => setEditOpen((o) => !o)}>
+                  Edit
                 </button>
-                <button class="btn btn-ghost" onClick=${() => setRejectOpen((o) => !o)}>
+                <button class="btn btn-ghost is-danger" onClick=${() => setRejectOpen((o) => !o)}>
                   Reject
                 </button>
               </div>
@@ -1345,6 +1886,7 @@ function NewsletterQueueView({ standalone }) {
   const [selected, setSelected] = useState(null);
   const [abChoice, setAbChoice] = useState(null);
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [commitError, setCommitError] = useState(null);
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['newsletter', 'queue'],
@@ -1353,14 +1895,29 @@ function NewsletterQueueView({ standalone }) {
     placeholderData: FIXTURE_NL_QUEUE,
   });
 
-  const qc = useQueryClient();
-  const approveMut = useMutation({
-    mutationFn: ({ id }) => approveNewsletterDraft(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['newsletter'] }); qc.invalidateQueries({ queryKey: ['counts'] }); },
+  // Sent-history query (WP-11): supplies Freshness + Previously-featured cells.
+  // Keyed separately from the queue so it doesn't block the queue render.
+  // Standalone resolves from FIXTURE_NL_HISTORY; live calls both DB sources.
+  const { data: historyRows } = useQuery({
+    queryKey: ['newsletter', 'history'],
+    queryFn: () => {
+      if (standalone) return Promise.resolve(FIXTURE_NL_HISTORY);
+      return fetchNewsletterHistory();
+    },
+    placeholderData: [],
   });
+
+  const qc = useQueryClient();
+  const invalidate = () => { qc.invalidateQueries({ queryKey: ['newsletter'] }); qc.invalidateQueries({ queryKey: ['counts'] }); };
+  const commitMut = useMutation({
+    mutationFn: ({ id }) => approveDraft(id),
+    onSuccess: () => { setCommitError(null); invalidate(); },
+    onError: (e) => { const m = String(e?.message ?? e); console.error('[outbound] commit refused:', m); setCommitError(m); },
+  });
+  const undo = useUndoCommit((id) => { setCommitError(null); commitMut.mutate({ id }); });
   const rejectMut = useMutation({
-    mutationFn: ({ id, reason }) => rejectNewsletterDraft(id, reason),
-    onSuccess: () => { setRejectOpen(false); qc.invalidateQueries({ queryKey: ['newsletter'] }); qc.invalidateQueries({ queryKey: ['counts'] }); },
+    mutationFn: ({ id, reason }) => rejectDraft(id, reason),
+    onSuccess: () => { setRejectOpen(false); invalidate(); },
   });
 
   if (isLoading) return html`<${StateDisplay} state="loading" message="Loading newsletter queue…" />`;
@@ -1374,8 +1931,15 @@ function NewsletterQueueView({ standalone }) {
   const sel = selected ?? pending[0] ?? cooling[0] ?? approved[0] ?? null;
 
   const isCooling = sel?.status === 'cooling';
+  const canApprove = isApprovable(sel) && !isCooling;
+  const armedRow = undo.armed ? rows.find((r) => r.id === undo.armed) : null;
   const pick = (row) => { setSelected(row); setAbChoice(null); setRejectOpen(false); };
-  const qualityCells = sel ? newsletterQualityCells(sel) : [];
+
+  // Compute history signals for the selected row (pure, uses historyRows from query).
+  const historySignals = sel
+    ? newsletterHistorySignals({ subject: sel.subject, body: sel.body, section: sel.draft_slug }, historyRows ?? [])
+    : null;
+  const qualityCells = sel ? newsletterQualityCells(sel, historySignals) : [];
 
   const sendToChat = () => {
     if (!sel) return;
@@ -1388,6 +1952,7 @@ function NewsletterQueueView({ standalone }) {
   const altLen = (sel?.subject_b ?? '').length;
 
   return html`
+    <${FloatingUndoBar} armed=${undo.armed} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} subject=${armedRow?.subject ?? sel?.subject} label="Scheduling" />
     <div class="nl-split">
       <div class="nl-master">
         ${cooling.length ? html`
@@ -1501,18 +2066,37 @@ function NewsletterQueueView({ standalone }) {
               />
             ` : null}
 
+            <${CommitError} message=${commitError} />
+            ${canApprove ? html`
+              <${ConsequenceLine}
+                recipient=${sel.recipient_count ? `${sel.recipient_count.toLocaleString()} recipients` : 'segment'}
+                channel=${sel.delivery_system ?? 'listmonk'}
+                scheduled=${sel.scheduled_for}
+              />
+            ` : null}
             <div class="ob-actions">
               <div class="ob-actions-primary">
-                <button
-                  class="btn"
-                  disabled=${isCooling || approveMut.isPending}
-                  style=${isCooling ? { opacity: 0.5, cursor: 'not-allowed' } : { background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
-                  onClick=${() => !isCooling && approveMut.mutate({ id: sel.id })}
-                  title=${isCooling ? `Cooling — send blocked for ${sel.cooling_until}` : 'Approve & Schedule'}
-                >
-                  ${approveMut.isPending ? 'Approving…' : isCooling ? `Cooling ${sel.cooling_until}` : 'Approve & Schedule'}
-                </button>
-                <button class="btn btn-ghost" onClick=${() => setRejectOpen((o) => !o)}>
+                ${sel.raw_status === 'failed' ? html`
+                  <button
+                    class="btn"
+                    style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                    disabled=${commitMut.isPending}
+                    onClick=${() => undo.arm(sel.id)}
+                  >Retry send</button>
+                ` : isApprovable(sel) ? html`
+                  <button
+                    class="btn"
+                    disabled=${isCooling || commitMut.isPending || undo.isArmed(sel.id)}
+                    style=${isCooling ? { opacity: 0.5, cursor: 'not-allowed' } : { background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                    onClick=${() => !isCooling && undo.arm(sel.id)}
+                    title=${isCooling ? `Cooling — send blocked for ${sel.cooling_until}` : 'Approve & Schedule'}
+                  >
+                    ${commitMut.isPending || undo.isArmed(sel.id) ? 'Scheduling…' : isCooling ? `Cooling ${sel.cooling_until}` : 'Approve & Schedule'}
+                  </button>
+                ` : html`
+                  <${StatusChip} rawStatus=${sel.raw_status} />
+                `}
+                <button class="btn btn-ghost is-danger" onClick=${() => setRejectOpen((o) => !o)}>
                   Reject…
                 </button>
               </div>
@@ -1534,27 +2118,28 @@ function NewsletterQueueView({ standalone }) {
 }
 
 function NewsletterScheduleView({ standalone }) {
-  // Scheduled newsletter sends — from outbound_newsletter_drafts whose status is
-  // 'approved' (about to go out) plus any cooling drafts with a cooling_until.
+  // Scheduled newsletter sends — single source: pa_action_drafts rows whose
+  // derived content type is 'newsletter' and that carry a future scheduled_at.
   const { data } = useQuery({
     queryKey: ['newsletter', 'schedule'],
     queryFn: async () => {
-      try {
-        const rows = await hostDbQuery(
-          `SELECT id, subject, edition, status, cooling_until, recipient_count
-           FROM outbound_newsletter_drafts
-           WHERE status IN ('approved','cooling','pending')
-           ORDER BY cooling_until ASC
-           LIMIT 30`
-        );
-        if (rows?.length) {
-          return rows.map((r) => ({
-            ...r,
-            scheduled_for: r.cooling_until,
-            kind: r.status === 'cooling' ? 'cooling' : (r.edition || '').toLowerCase().includes('investor') ? 'investor' : 'scheduled',
-          }));
-        }
-      } catch { /* table empty */ }
+      const scheduled = (await loadDrafts(SCHEDULE_STATUSES)).filter(hasSchedule);
+      const nl = [];
+      for (const r of scheduled) {
+        const { item } = parseDraft(r);
+        if (deriveContentType(item) !== 'newsletter') continue;
+        nl.push({
+          id: r.id,
+          subject: item.subject ?? '(no subject)',
+          edition: null,
+          status: r.status,
+          cooling_until: null,
+          recipient_count: item.recipients ?? null,
+          scheduled_for: r.scheduled_at,
+          kind: 'scheduled',
+        });
+      }
+      if (nl.length) return nl;
       // No live scheduled rows → anchor fixtures to the current week so pills land.
       const wk = startOfWeekMon(new Date());
       const at = (offset, h) => { const d = new Date(wk); d.setDate(wk.getDate() + offset); d.setHours(h, 0, 0, 0); return d.toISOString(); };
@@ -1644,11 +2229,20 @@ function NewsletterSentView({ standalone }) {
 function SequenceStepRail({ sequence, standalone }) {
   const seqId = sequence?.id;
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [commitError, setCommitError] = useState(null);
   const qc = useQueryClient();
-  const rejectMut = useMutation({
-    mutationFn: ({ id, reason }) => rejectSequence(id, reason),
-    onSuccess: () => { setRejectOpen(false); qc.invalidateQueries({ queryKey: ['sequences'] }); qc.invalidateQueries({ queryKey: ['counts'] }); },
+  const invalidate = () => { qc.invalidateQueries({ queryKey: ['sequences'] }); qc.invalidateQueries({ queryKey: ['counts'] }); };
+  const commitMut = useMutation({
+    mutationFn: ({ id }) => approveDraft(id),
+    onSuccess: () => { setCommitError(null); invalidate(); },
+    onError: (e) => { const m = String(e?.message ?? e); console.error('[outbound] commit refused:', m); setCommitError(m); },
   });
+  const undo = useUndoCommit((id) => { setCommitError(null); commitMut.mutate({ id }); });
+  const rejectMut = useMutation({
+    mutationFn: ({ id, reason }) => rejectDraft(id, reason),
+    onSuccess: () => { setRejectOpen(false); invalidate(); },
+  });
+  const canApprove = isApprovable(sequence);
   const { data: steps, isLoading } = useQuery({
     queryKey: ['sequences', 'steps', seqId],
     queryFn: () => fetchSequenceSteps(seqId),
@@ -1706,13 +2300,38 @@ function SequenceStepRail({ sequence, standalone }) {
               onConfirm=${(reason) => rejectMut.mutate({ id: sequence.id, reason })}
             />
           ` : null}
+          <${FloatingUndoBar} armed=${undo.armed} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} subject=${sequence?.name ?? sequence?.slug} label="Activating" />
+          <${CommitError} message=${commitError} />
+          ${canApprove ? html`
+            <${ConsequenceLine}
+              recipient=${sequence?.segment || 'enrolled recipients'}
+              channel=${sequence?.delivery_system}
+              scheduled="now"
+            />
+          ` : null}
           <div class="sq-footer">
             <span class="ob-chip seq">enrol on approve</span>
             <span class="ob-chip seq">step 1 fires immediately</span>
             <div class="actions">
               <button class="ob-btn-sm is-danger" onClick=${() => setRejectOpen((o) => !o)}>Reject</button>
               <button class="ob-btn-sm">⌘ Send to chat</button>
-              <button class="btn" style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}>Approve & activate</button>
+              ${sequence?.raw_status === 'failed' ? html`
+                <button
+                  class="btn"
+                  style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                  disabled=${commitMut.isPending}
+                  onClick=${() => undo.arm(sequence.id)}
+                >Retry send</button>
+              ` : canApprove ? html`
+                <button
+                  class="btn"
+                  style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                  disabled=${commitMut.isPending || undo.isArmed(sequence.id)}
+                  onClick=${() => undo.arm(sequence.id)}
+                >${commitMut.isPending || undo.isArmed(sequence.id) ? 'Activating…' : 'Approve & activate'}</button>
+              ` : html`
+                <${StatusChip} rawStatus=${sequence?.raw_status} />
+              `}
             </div>
           </div>
         `}
@@ -1983,16 +2602,131 @@ function SequencesSentView({ standalone }) {
 
 // ─── Social views ───────────────────────────────────────────────────────────────
 
+// MediaCard — the OG image card (1200×627) when media_url is present, else a
+// tasteful "no media" empty slot with a URL-attach affordance. Writes via the
+// parent-provided onUpdate (→ updateDraft → edited_json). No upload (Phase 2).
+function MediaCard({ mediaUrl, onUpdate }) {
+  const [attachOpen, setAttachOpen] = useState(false);
+  const [urlDraft, setUrlDraft] = useState('');
+  const hasMedia = Boolean(mediaUrl);
+  return html`
+    <div class="ob-social-media">
+      <div class="ob-social-media-label">Media</div>
+      ${hasMedia ? html`
+        <div class="ob-social-media-card">
+          <img src=${mediaUrl} alt="Post media" class="ob-social-media-img" />
+          <button class="ob-social-media-remove" title="Remove media" aria-label="Remove media" onClick=${() => onUpdate(null)}>×</button>
+        </div>
+      ` : html`
+        <div class="ob-social-media-empty" role="button" tabindex="0"
+             onClick=${() => setAttachOpen((o) => !o)}
+             onKeyDown=${(e) => { if (e.key === 'Enter') setAttachOpen((o) => !o); }}>
+          <span class="ob-social-media-empty-icon" aria-hidden="true">▱</span>
+          <span>No media · attach URL</span>
+        </div>
+      `}
+      ${attachOpen ? html`
+        <div class="ob-social-media-attach">
+          <input class="ob-social-media-url-input" type="url"
+            placeholder="https://cdn.example.com/image.jpg (1200×627)"
+            value=${urlDraft} onInput=${(e) => setUrlDraft(e.target.value)} />
+          <button class="ob-btn-sm is-primary" disabled=${!urlDraft}
+            onClick=${() => { onUpdate(urlDraft); setAttachOpen(false); setUrlDraft(''); }}>Attach</button>
+          <button class="ob-btn-sm" onClick=${() => setAttachOpen(false)}>Cancel</button>
+        </div>
+      ` : null}
+    </div>
+  `;
+}
+
+// HashtagEditor — parsed/explicit hashtags as removable pill chips + a "+ add"
+// inline input. Local state lifts to the parent (onChange) for live preview, and
+// every add/remove writes through onUpdate (→ updateDraft → edited_json).
+function HashtagEditor({ hashtags, onChange, onUpdate }) {
+  const [inputVal, setInputVal] = useState('');
+  const [inputOpen, setInputOpen] = useState(false);
+  const inputRef = useRef(null);
+  const tags = hashtags || [];
+
+  function removeTag(tag) {
+    const next = tags.filter((t) => t !== tag);
+    onChange(next);
+    onUpdate(next);
+  }
+  function addTag() {
+    const raw = inputVal.trim();
+    if (!raw) { setInputOpen(false); return; }
+    const tag = raw.startsWith('#') ? raw : '#' + raw;
+    if (tags.includes(tag)) { setInputVal(''); setInputOpen(false); return; }
+    const next = [...tags, tag];
+    onChange(next);
+    onUpdate(next);
+    setInputVal('');
+    setInputOpen(false);
+  }
+  function handleKeyDown(e) {
+    if (e.key === 'Enter') { e.preventDefault(); addTag(); }
+    if (e.key === 'Escape') { setInputVal(''); setInputOpen(false); }
+  }
+
+  return html`
+    <div class="ob-hashtags">
+      <div class="ob-hashtags-label">Hashtags</div>
+      <div class="ob-hashtags-chips">
+        ${tags.map((tag) => html`
+          <span key=${tag} class="ob-tag-chip">
+            ${tag}
+            <button class="ob-tag-chip-remove" aria-label=${'Remove ' + tag} onClick=${() => removeTag(tag)}>×</button>
+          </span>
+        `)}
+        ${inputOpen ? html`
+          <input ref=${inputRef} class="ob-tag-chip-input" type="text" placeholder="#tag"
+            value=${inputVal} onInput=${(e) => setInputVal(e.target.value)}
+            onKeyDown=${handleKeyDown} onBlur=${addTag} autoFocus />
+        ` : html`
+          <button class="ob-tag-chip ob-tag-chip-add" onClick=${() => setInputOpen(true)}>+ add</button>
+        `}
+      </div>
+    </div>
+  `;
+}
+
 // Per-platform preview editor (design social §B): base body on the left, stacked
 // LinkedIn / X / Bluesky previews on the right with per-platform char caps; fan-out
-// rows + reject below. Body is editable locally (preview-only mock — no write-back
-// since social_queue stores one platform per row).
-function SocialEditor({ post, standalone, onApprove, approvePending, onReject, rejectPending }) {
+// rows + reject below. Body is editable locally; media + hashtags write back to
+// edited_json via updateDraft (the per-platform base body stays preview-only).
+function SocialEditor({ post, standalone, onApprove, approvePending, onReject, rejectPending, onRetry, rawStatus, commitError, armed, undoSecondsLeft, onCancelUndo }) {
+  const canApprove = isApprovable({ raw_status: rawStatus });
   const [body, setBody] = useState(post?.content ?? '');
   const [rejectOpen, setRejectOpen] = useState(false);
+  const [localHashtags, setLocalHashtags] = useState(post?.hashtags ?? []);
+  const [mediaUpdatePending, setMediaUpdatePending] = useState(false);
+  const [hashtagUpdatePending, setHashtagUpdatePending] = useState(false);
 
-  // Reset local body when the selected post changes.
-  useEffect(() => { setBody(post?.content ?? ''); setRejectOpen(false); }, [post?.id]);
+  // Reset local state when the selected post changes.
+  useEffect(() => {
+    setBody(post?.content ?? '');
+    setLocalHashtags(post?.hashtags ?? []);
+    setRejectOpen(false);
+  }, [post?.id]);
+
+  // Write media_url / hashtags through edited_json (host.paActions.update).
+  // In standalone (fixture) mode there is no host write path — keep it a no-op
+  // so the chip editor stays interactive without throwing.
+  async function handleMediaUpdate(newUrl) {
+    if (standalone || !post?.id) return;
+    setMediaUpdatePending(true);
+    try { await updateDraft(post.id, { media_url: newUrl }); }
+    catch (e) { console.error('[outbound] media update failed:', String(e?.message ?? e)); }
+    finally { setMediaUpdatePending(false); }
+  }
+  async function handleHashtagUpdate(tags) {
+    if (standalone || !post?.id) return;
+    setHashtagUpdatePending(true);
+    try { await updateDraft(post.id, { hashtags: tags }); }
+    catch (e) { console.error('[outbound] hashtag update failed:', String(e?.message ?? e)); }
+    finally { setHashtagUpdatePending(false); }
+  }
 
   const { data: fanout } = useQuery({
     queryKey: ['social', 'fanout', post?.slug],
@@ -2046,6 +2780,8 @@ function SocialEditor({ post, standalone, onApprove, approvePending, onReject, r
               `;
             })}
           </div>
+          <${MediaCard} mediaUrl=${post?.media_url} onUpdate=${handleMediaUpdate} />
+          <${HashtagEditor} hashtags=${localHashtags} onChange=${setLocalHashtags} onUpdate=${handleHashtagUpdate} />
         </div>
 
         <div>
@@ -2063,7 +2799,7 @@ function SocialEditor({ post, standalone, onApprove, approvePending, onReject, r
                   <div class="pv-body is-blocked">⚠ Over ${p.cap}-char cap by ${len - p.cap}. Add an alt-body for ${p.sub}, or split into a thread.</div>
                   <div class="pv-stats"><span style=${{ color: 'var(--danger)' }}>cannot post until resolved</span></div>
                 ` : html`
-                  <div class="pv-body">${body}</div>
+                  <div class="pv-body">${body}${localHashtags.length ? html`<span class="pv-tags"> ${localHashtags.join(' ')}</span>` : null}</div>
                   <div class="pv-stats"><span>♡ 0</span><span>↻ 0</span></div>
                 `}
               </div>
@@ -2098,20 +2834,40 @@ function SocialEditor({ post, standalone, onApprove, approvePending, onReject, r
         />
       ` : null}
 
+      <${CommitError} message=${commitError} />
+      ${canApprove ? html`
+        <${ConsequenceLine}
+          recipient=${post?.account || 'social accounts'}
+          channel=${'LinkedIn · X · Bluesky'}
+          scheduled=${post?.scheduled_for}
+        />
+      ` : null}
       <div class="ob-actions">
         <div class="ob-actions-primary">
-          <button
-            class="btn"
-            style=${anyBlocked ? { opacity: 0.55, cursor: 'not-allowed' } : { background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
-            disabled=${anyBlocked || approvePending}
-            title=${anyBlocked ? 'Resolve over-cap platforms first' : 'Approve & schedule'}
-            onClick=${() => !anyBlocked && onApprove()}
-          >
-            ${approvePending ? 'Approving…' : 'Approve & Schedule'}
-          </button>
-          <button class="btn btn-ghost" onClick=${() => setRejectOpen((o) => !o)}>Reject…</button>
+          ${rawStatus === 'failed' ? html`
+            <button
+              class="btn"
+              style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+              disabled=${approvePending}
+              onClick=${() => onRetry()}
+            >Retry send</button>
+          ` : canApprove ? html`
+            <button
+              class="btn"
+              style=${anyBlocked ? { opacity: 0.55, cursor: 'not-allowed' } : { background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+              disabled=${anyBlocked || approvePending}
+              title=${anyBlocked ? 'Resolve over-cap platforms first' : 'Approve & schedule'}
+              onClick=${() => !anyBlocked && onApprove()}
+            >
+              ${approvePending ? 'Scheduling…' : 'Approve & Schedule'}
+            </button>
+          ` : html`
+            <${StatusChip} rawStatus=${rawStatus} />
+          `}
+          <button class="btn btn-ghost is-danger" onClick=${() => setRejectOpen((o) => !o)}>Reject…</button>
         </div>
       </div>
+      <${FloatingUndoBar} armed=${armed} secondsLeft=${undoSecondsLeft} onCancel=${onCancelUndo} subject=${post?.title ?? post?.content} label="Scheduling" />
       <div class="ob-actions-secondary">
         <button
           class="ob-btn-sm"
@@ -2125,6 +2881,7 @@ function SocialEditor({ post, standalone, onApprove, approvePending, onReject, r
 
 function SocialQueueView({ standalone }) {
   const [selected, setSelected] = useState(null);
+  const [commitError, setCommitError] = useState(null);
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['social', 'queue'],
@@ -2134,13 +2891,16 @@ function SocialQueueView({ standalone }) {
   });
 
   const qc = useQueryClient();
-  const approveMut = useMutation({
-    mutationFn: ({ id }) => approveSocialPost(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['social'] }); qc.invalidateQueries({ queryKey: ['counts'] }); },
+  const invalidate = () => { qc.invalidateQueries({ queryKey: ['social'] }); qc.invalidateQueries({ queryKey: ['counts'] }); };
+  const commitMut = useMutation({
+    mutationFn: ({ id }) => approveDraft(id),
+    onSuccess: () => { setCommitError(null); invalidate(); },
+    onError: (e) => { const m = String(e?.message ?? e); console.error('[outbound] commit refused:', m); setCommitError(m); },
   });
+  const undo = useUndoCommit((id) => { setCommitError(null); commitMut.mutate({ id }); });
   const rejectMut = useMutation({
-    mutationFn: ({ id, reason }) => rejectSocialPost(id, reason),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['social'] }); qc.invalidateQueries({ queryKey: ['counts'] }); },
+    mutationFn: ({ id, reason }) => rejectDraft(id, reason),
+    onSuccess: invalidate,
   });
 
   if (isLoading) return html`<${StateDisplay} state="loading" message="Loading social queue…" />`;
@@ -2148,21 +2908,88 @@ function SocialQueueView({ standalone }) {
   if (!data?.length) return html`<${StateDisplay} state="empty" message="No social posts awaiting approval" />`;
 
   const rows = data ?? [];
-  const sel = selected ?? rows[0];
+
+  // Collapse fan-out siblings (same batch_id / slug) into one display row carrying
+  // a platforms[] array. Rows with no slug are singletons. The first sibling is the
+  // representative (_batchRows[0]) handed to the detail editor.
+  const batchMap = new Map();
+  const displayRows = [];
+  for (const row of rows) {
+    if (row.slug) {
+      if (batchMap.has(row.slug)) {
+        batchMap.get(row.slug).platforms.push(row.platform);
+      } else {
+        const dr = { ...row, platforms: [row.platform], _batchRows: [row] };
+        batchMap.set(row.slug, dr);
+        displayRows.push(dr);
+      }
+    } else {
+      displayRows.push({ ...row, platforms: [row.platform], _batchRows: [row] });
+    }
+  }
+  // Sort platform badge order within each display row: li → x → bs → ig → fb.
+  for (const dr of displayRows) {
+    dr.platforms.sort((a, b) => {
+      const ai = SOCIAL_PLAT_ORDER.indexOf(a);
+      const bi = SOCIAL_PLAT_ORDER.indexOf(b);
+      return (ai === -1 ? 99 : ai) - (bi === -1 ? 99 : bi);
+    });
+  }
+  // Group into fixed-order sections (omit empties).
+  const groupedRows = SOCIAL_GROUP_ORDER.map((key) => ({
+    key,
+    label: SOURCE_GROUP_LABEL[key],
+    rows: displayRows.filter((r) => (r.source_group ?? 'manual') === key),
+  })).filter((g) => g.rows.length > 0);
+
+  // Selection: `sel` is a REAL mapSocialQueue row (the representative), not the
+  // synthetic display row. Default to the first display row's representative.
+  const sel = selected ?? displayRows[0]?._batchRows[0];
+  const isArmed = sel ? undo.isArmed(sel.id) : false;
+  const armedRow = undo.armed ? rows.find((r) => r.id === undo.armed) : null;
 
   return html`
+    <${FloatingUndoBar} armed=${undo.armed} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} subject=${armedRow?.title ?? armedRow?.content ?? sel?.title} label="Scheduling" />
     <div class="nl-split">
       <div class="nl-master">
-        ${rows.map(row => html`
-          <div key=${row.id} class=${cn('nl-row', { 'is-on': sel?.id === row.id })} onClick=${() => setSelected(row)}>
-            <div class="nl-row-head">
-              <${PlatformBadge} platform=${row.platform} />
-              <span class="ob-chip seq">${row.source ?? ''}</span>
-            </div>
-            <div class="nl-row-subj" style=${{ whiteSpace: 'normal', WebkitLineClamp: 2, display: '-webkit-box', WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
-              ${row.content?.substring(0, 80)}${row.content?.length > 80 ? '…' : ''}
-            </div>
-            <div class="nl-row-pre">${formatDate(row.scheduled_for)}</div>
+        ${groupedRows.map((group) => html`
+          <div key=${group.key}>
+            <div class="nl-master-group-head">${group.label} · ${group.rows.length}</div>
+            ${group.rows.map((row) => {
+              const isOn = sel?.id === row.id;
+              const platformCount = row.platforms.length;
+              const blogSlugChip = row.blog_slug
+                ? html`<span class="ob-chip">blog · /${row.blog_slug}</span>`
+                : (row.source_group === 'blog' ? html`<span class="ob-chip">blog</span>` : null);
+              const platformsChip = platformCount >= 2
+                ? html`<span class="ob-chip chip-tint">${platformCount} platform${platformCount > 2 ? 's' : ''}</span>`
+                : null;
+              const agentChip = row.drafted_by && row.drafted_by !== 'pa'
+                ? html`<span class="ob-chip">cmo-agent · ${row.drafted_by}</span>`
+                : null;
+              const threadChip = row.thread_index != null && row.thread_total != null
+                ? html`<span class="ob-chip">thread · ${row.thread_index} of ${row.thread_total}</span>`
+                : null;
+              const toneChip = row.tone_check
+                ? html`<span class="ob-chip ob-chip-warn">tone check</span>`
+                : null;
+              return html`
+                <div key=${row.id} class=${cn('so-q-row nl-row', { 'is-on': isOn })} onClick=${() => setSelected(row._batchRows[0])}>
+                  <div class="so-q-row-head">
+                    ${row.platforms.map((p) => html`<${PlatPill} key=${p} platform=${p} />`)}
+                    <span class="so-q-row-time">${relativeTime(row.scheduled_for)}</span>
+                  </div>
+                  <div class="so-q-row-text">"${(row.content ?? '').substring(0, 100)}${(row.content?.length ?? 0) > 100 ? '…' : ''}"</div>
+                  <div class="so-q-row-foot">
+                    ${blogSlugChip}
+                    ${platformsChip}
+                    ${agentChip}
+                    ${threadChip}
+                    ${toneChip}
+                  </div>
+                </div>
+              `;
+            })}
           </div>
         `)}
       </div>
@@ -2171,10 +2998,16 @@ function SocialQueueView({ standalone }) {
           <${SocialEditor}
             post=${sel}
             standalone=${standalone}
-            onApprove=${() => approveMut.mutate({ id: sel.id })}
-            approvePending=${approveMut.isPending}
+            onApprove=${() => undo.arm(sel.id)}
+            approvePending=${commitMut.isPending || isArmed}
             onReject=${(reason) => rejectMut.mutate({ id: sel.id, reason })}
             rejectPending=${rejectMut.isPending}
+            onRetry=${() => undo.arm(sel.id)}
+            rawStatus=${sel.raw_status}
+            commitError=${commitError}
+            armed=${isArmed}
+            undoSecondsLeft=${undo.secondsLeft}
+            onCancelUndo=${undo.cancel}
           />
         ` : html`<${StateDisplay} state="empty" message="Select a post to review" />`}
       </div>
@@ -2247,9 +3080,340 @@ function SocialSentView({ standalone }) {
   `;
 }
 
+// ─── Cross-channel Approvals view (the folded approve-gate, WP-07) ──────────────
+// Mirrors the shell approve-gate: every awaiting/edited/committed/failed row
+// ACROSS ALL channels, each tagged with its derived content type, with the same
+// approve/reject/retry/edit + 10s undo actions. Single source: pa_action_drafts.
+
+const CT_LABEL = { email: 'Email', newsletter: 'Newsletter', social: 'Social', sequences: 'Sequence' };
+
+// Standalone fixture for CrossChannelApprovalsView — mixed-channel rows at the
+// mapApprovalRow output shape (same field contract). One row per channel covers
+// the four filter pills; the `edited` row proves the edited-status branch; the
+// `quality` field on the email row is a forward-compat exemplar for verdict-cells
+// (ItemQuality — see derive.js typedef at §G-QUALITY). Live mode never uses this.
+const FIXTURE_APPROVALS = [
+  // ── Email (smtp) — awaiting, carries ItemQuality for verdict-cells WP ──────────
+  {
+    id: 'ap-em-1',
+    ct: 'email',
+    ct_label: 'Email',
+    status: 'awaiting',
+    raw_status: 'awaiting',
+    channel: 'smtp',
+    subject: 'Re: Royalti onboarding · file processing delay',
+    body: 'Hi,\n\nThanks for flagging this. The delay you saw was caused by a schema mismatch on the ingestion side — we patched it in 0.7.4 and the backfill ran clean this morning.\n\nYour tenant (id 590) should now show all statements. Let me know if anything looks off.\n\nBest,\nRuby',
+    recipient: 'valentim@soundlabel.pt',
+    drafted_by: 'pa',
+    scheduled_for: null,
+    error_text: null,
+    attempts: 0,
+    batch_id: null,
+    // ItemQuality exemplar (G-QUALITY / derive.js typedef). The Approvals view
+    // does not render quality cells yet — this data is forward-compat for WP-12+.
+    quality: {
+      claims: [
+        { text: 'patched in 0.7.4', source: 'https://royalti.io/changelog/0.7.4', verdict: 'verified' },
+        { text: 'backfill ran clean this morning', source: null, verdict: 'unsourced' },
+      ],
+      tone: { verdict: 'on-voice', basis: 'Direct, no hype terms, first-person Ruby voice.', model: 'claude-sonnet-4-5' },
+      verified_at: '2026-06-10T09:15:00.000Z',
+      verifier: 'draft-time',
+    },
+  },
+  // ── Newsletter (listmonk) — awaiting ─────────────────────────────────────────
+  {
+    id: 'ap-nl-1',
+    ct: 'newsletter',
+    ct_label: 'Newsletter',
+    status: 'awaiting',
+    raw_status: 'awaiting',
+    channel: 'listmonk',
+    subject: 'You can deliver from Royalti now',
+    body: 'Royalti now ships a full delivery pipeline.\n\nYou can send DDEX ERN4 messages directly from your workspace to DSPs that accept DDEX — no third-party aggregator account required for the initial batch.',
+    recipient: '2104 subscribers',
+    drafted_by: 'cmo',
+    scheduled_for: 'Today 10:00',
+    error_text: null,
+    attempts: 0,
+    batch_id: 'nl-deliver-batch-1',
+  },
+  // ── Social (buffer) — awaiting, carries media_url + hashtags ─────────────────
+  {
+    id: 'ap-so-1',
+    ct: 'social',
+    ct_label: 'Social',
+    status: 'awaiting',
+    raw_status: 'awaiting',
+    channel: 'buffer',
+    subject: 'Royalty calculator overhaul · launch post',
+    body: 'The royalty calculator overhaul shipped this week. Statements ingest in ~90s for a 30k-row CSV, and splits recompute live as you edit. #royalti #musicbusiness',
+    recipient: 'LinkedIn · X · Bluesky',
+    drafted_by: 'pa',
+    scheduled_for: '2026-06-10 12:48',
+    error_text: null,
+    attempts: 0,
+    batch_id: 'blog-01',
+    // Social-specific extras (not in mapApprovalRow today but carried so the
+    // approvals detail can render them once the Approvals view grows them in).
+    media_url: 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=1200&h=627&fit=crop',
+    hashtags: ['#royalti', '#musicbusiness', '#labels'],
+  },
+  // ── Sequence (resend) — awaiting ─────────────────────────────────────────────
+  {
+    id: 'ap-sq-1',
+    ct: 'sequences',
+    ct_label: 'Sequence',
+    status: 'awaiting',
+    raw_status: 'awaiting',
+    channel: 'resend',
+    subject: 'Cold A&R outreach · distributor-q3',
+    body: 'Cold outbound to 14 distributor leads sourced from Q1 trade-show contacts. 4 steps over 21 days.',
+    recipient: 'distributor-leads-q1',
+    drafted_by: 'vp-sales-agent',
+    scheduled_for: null,
+    error_text: null,
+    attempts: 0,
+    batch_id: 'distributor-q3',
+  },
+  // ── Email (smtp) — edited status (proves the edited branch in the action footer)
+  {
+    id: 'ap-em-2',
+    ct: 'email',
+    ct_label: 'Email',
+    status: 'edited',
+    raw_status: 'edited',
+    channel: 'smtp',
+    subject: 'Following up on the Royalti deck · step 2 [edited]',
+    body: 'Hi [first name],\n\nWanted to circle back on the deck I sent last week — if you had a chance to look, happy to walk you through the ingestion demo on a 15-minute call.\n\nAlternatively I can send a Loom if async is easier. Just say the word.\n\nBest,\nChinedum',
+    recipient: 'ar@universalmusic.pt',
+    drafted_by: 'pa',
+    scheduled_for: 'Mon 09:00',
+    error_text: null,
+    attempts: 1,
+    batch_id: null,
+  },
+];
+
+// One row → a unified approval-row view-model (channel-agnostic).
+function mapApprovalRow(row) {
+  const { item, meta, edited } = parseDraft(row);
+  const ct = deriveContentType(item);
+  return {
+    id: row.id,
+    ct,
+    ct_label: CT_LABEL[ct] ?? ct,
+    status: row.status, // raw lifecycle status (awaiting/edited/committed/sending/failed)
+    raw_status: row.status, // alias matching the per-channel mappers (C-2 gate)
+    channel: row.channel ?? item.channel ?? null, // provider
+    subject: edited.subject ?? item.subject ?? '(no subject)',
+    body: edited.body ?? item.body ?? '',
+    recipient: item.recipient ?? item.recipientEmail ?? null,
+    drafted_by: String(meta.agent || 'pa').toLowerCase(),
+    scheduled_for: item.scheduledLabel || row.scheduled_at || null,
+    error_text: row.error_text || null,
+    attempts: row.attempts ?? 0,
+    batch_id: row.batch_id || null,
+  };
+}
+
+// All in-flight approval rows across every channel (newest first).
+async function fetchAllApprovals() {
+  const rows = await loadDrafts(QUEUE_STATUSES);
+  return (rows || []).map(mapApprovalRow);
+}
+
+const APPROVAL_REJECT_REASONS = ['Wrong recipient', 'Tone is off', 'Misses context', 'Already handled', "Don't send · close out"];
+
+function CrossChannelApprovalsView({ standalone }) {
+  const [selected, setSelected] = useState(null);
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [commitError, setCommitError] = useState(null);
+  const [ctFilter, setCtFilter] = useState('all'); // all | email | newsletter | social | sequences
+
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: ['approvals', 'all'],
+    queryFn: fetchAllApprovals,
+    enabled: !standalone,
+    refetchInterval: 30_000,
+    placeholderData: FIXTURE_APPROVALS,
+  });
+
+  const qc = useQueryClient();
+  // Invalidate EVERY channel + counts so any view downstream repaints.
+  const invalidate = () => {
+    for (const k of ['approvals', 'email', 'newsletter', 'sequences', 'social', 'counts']) {
+      qc.invalidateQueries({ queryKey: [k] });
+    }
+  };
+  const commitMut = useMutation({
+    mutationFn: ({ id }) => approveDraft(id),
+    onSuccess: () => { setCommitError(null); invalidate(); },
+    onError: (e) => { const m = String(e?.message ?? e); console.error('[outbound] commit refused:', m); setCommitError(m); },
+  });
+  const undo = useUndoCommit((id) => { setCommitError(null); commitMut.mutate({ id }); });
+  const rejectMut = useMutation({
+    mutationFn: ({ id, reason }) => rejectDraft(id, reason),
+    onSuccess: () => { setRejectOpen(false); invalidate(); },
+  });
+  const retryMut = useMutation({ mutationFn: ({ id }) => retryDraft(id), onSuccess: invalidate });
+  const editMut = useMutation({
+    mutationFn: ({ id, patch }) => updateDraft(id, patch),
+    onSuccess: () => { setEditOpen(false); invalidate(); },
+  });
+
+  if (isLoading) return html`<${StateDisplay} state="loading" message="Loading approvals…" />`;
+  if (isError) return html`<${StateDisplay} state="error" message="Couldn't load approvals" onRetry=${refetch} />`;
+
+  const all = data ?? [];
+  const rows = ctFilter === 'all' ? all : all.filter((r) => r.ct === ctFilter);
+  if (!all.length) return html`<${StateDisplay} state="empty" message="Nothing awaiting approval across any channel" />`;
+
+  const sel = (selected && rows.find((r) => r.id === selected.id)) ?? rows[0] ?? null;
+  const isFailed = sel?.raw_status === 'failed';
+  const canApprove = isApprovable(sel);
+  const armedRow = undo.armed ? all.find((r) => r.id === undo.armed) : null;
+  const pick = (row) => { setSelected(row); setRejectOpen(false); setEditOpen(false); };
+
+  // Per-content-type counts for the filter strip.
+  const ctCounts = all.reduce((acc, r) => { acc[r.ct] = (acc[r.ct] ?? 0) + 1; return acc; }, {});
+
+  const sendToChat = () => {
+    if (!sel) return;
+    hostSendToActiveSession(
+      `Help me review this outbound ${sel.ct_label} before I approve it.\n\nSubject: ${sel.subject}\nTo: ${sel.recipient ?? 'segment'}\nDrafted by: ${sel.drafted_by ?? 'agent'}`,
+    ).catch(() => {});
+  };
+
+  return html`
+    <${FloatingUndoBar} armed=${undo.armed} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} subject=${armedRow?.subject ?? sel?.subject} />
+    <div style=${{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <div class="nl-sent-toolbar">
+        <button class=${cn('ob-filter-chip', { 'is-on': ctFilter === 'all' })} onClick=${() => setCtFilter('all')}>All · ${all.length}</button>
+        ${CHANNELS.map((ct) => html`
+          <button
+            key=${ct}
+            class=${cn('ob-filter-chip', { 'is-on': ctFilter === ct })}
+            onClick=${() => setCtFilter(ct)}
+          >${CT_LABEL[ct]}${ctCounts[ct] ? ` · ${ctCounts[ct]}` : ''}</button>
+        `)}
+      </div>
+      <div class="nl-split" style=${{ flex: 1, minHeight: 0 }}>
+        <div class="nl-master">
+          ${rows.length ? rows.map(row => html`
+            <div
+              key=${row.id}
+              class=${cn('nl-row', { 'is-on': sel?.id === row.id })}
+              onClick=${() => pick(row)}
+            >
+              <div class="nl-row-head">
+                <span class="ob-chip seq">${row.ct_label}</span>
+                ${row.channel ? html`<${ChannelChip} channel=${row.channel} />` : null}
+                ${row.status === 'failed' ? html`<span class="ob-chip overdue">failed</span>` : null}
+              </div>
+              <div class="nl-row-subj">${row.subject}</div>
+              <div class="nl-row-pre">${row.recipient || '—'} · ${row.drafted_by}</div>
+            </div>
+          `) : html`<${StateDisplay} state="empty" message="No items for this filter" />`}
+        </div>
+        <div class="nl-detail">
+          ${sel ? html`
+            <div class="ob-detail-wrap">
+              <div class="ip-head">
+                <div class="ip-meta-row">
+                  <span class="ob-chip seq">${sel.ct_label}</span>
+                  ${sel.channel ? html`<${ChannelChip} channel=${sel.channel} />` : null}
+                  <span style=${{ fontSize: '0.75rem', color: 'var(--fg-muted)' }}>${sel.recipient || '—'}</span>
+                </div>
+                <h2 style=${{ fontSize: '0.9rem', fontWeight: 600, margin: '0.5rem 0 0', color: 'var(--fg)' }}>${sel.subject}</h2>
+              </div>
+
+              <div class="ip-body" style=${{ flex: 1, padding: '1rem', color: 'var(--fg-muted)', fontSize: '0.8125rem' }}>
+                ${sel.body ? html`
+                  <p style=${{ margin: 0, color: 'var(--fg)', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>${sel.body}</p>
+                ` : html`<p style=${{ margin: 0 }}>(no body)</p>`}
+                <p style=${{ marginTop: '1rem', color: 'var(--fg-muted)' }}>
+                  Drafted by <strong style=${{ color: 'var(--fg)' }}>${sel.drafted_by ?? 'agent'}</strong>
+                  ${sel.scheduled_for ? html` · scheduled <strong style=${{ color: 'var(--fg)' }}>${sel.scheduled_for}</strong>` : ''}
+                </p>
+              </div>
+
+              ${sel.error_text ? html`
+                <div class="ob-chip overdue" style=${{ display: 'inline-flex', margin: '0 1rem' }}>
+                  Last attempt failed · ${sel.error_text}
+                </div>
+              ` : null}
+
+              ${editOpen ? html`
+                <${EditPanel}
+                  subject=${sel.subject}
+                  body=${sel.body}
+                  pending=${editMut.isPending}
+                  onCancel=${() => setEditOpen(false)}
+                  onSave=${(patch) => editMut.mutate({ id: sel.id, patch })}
+                />
+              ` : null}
+
+              ${rejectOpen ? html`
+                <${RejectPanel}
+                  canned=${APPROVAL_REJECT_REASONS}
+                  pending=${rejectMut.isPending}
+                  placeholder="Optional · why? (feeds the writer-agent training set)"
+                  onCancel=${() => setRejectOpen(false)}
+                  onConfirm=${(reason) => rejectMut.mutate({ id: sel.id, reason })}
+                />
+              ` : null}
+
+              <${CommitError} message=${commitError} />
+              ${canApprove ? html`
+                <${ConsequenceLine}
+                  recipient=${sel.recipient}
+                  channel=${sel.channel ?? sel.ct_label}
+                  scheduled=${sel.scheduled_for}
+                />
+              ` : null}
+              <div class="ob-actions">
+                <div class="ob-actions-primary">
+                  ${isFailed ? html`
+                    <button
+                      class="btn"
+                      style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                      onClick=${() => retryMut.mutate({ id: sel.id })}
+                      disabled=${retryMut.isPending}
+                    >${retryMut.isPending ? 'Retrying…' : 'Retry send'}</button>
+                  ` : canApprove ? html`
+                    <button
+                      class="btn"
+                      style=${{ background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
+                      onClick=${() => undo.arm(sel.id)}
+                      disabled=${commitMut.isPending || undo.isArmed(sel.id)}
+                    >${commitMut.isPending || undo.isArmed(sel.id) ? 'Sending…' : 'Approve & schedule'}</button>
+                  ` : html`
+                    <${StatusChip} rawStatus=${sel.raw_status} />
+                  `}
+                  <button class="btn btn-ghost" onClick=${() => setEditOpen((o) => !o)}>Edit</button>
+                  <button class="btn btn-ghost is-danger" onClick=${() => setRejectOpen((o) => !o)}>Reject</button>
+                </div>
+              </div>
+              <div class="ob-actions-secondary">
+                <button class="ob-btn-sm" onClick=${sendToChat}>⌘ Send to chat</button>
+                <span class="ob-act-spacer"></span>
+                <span class="ob-act-meta">${sel.status}${sel.attempts ? ` · ${sel.attempts} attempt${sel.attempts === 1 ? '' : 's'}` : ''}</span>
+              </div>
+            </div>
+          ` : html`<${StateDisplay} state="empty" message="Select an item to review" />`}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 // ─── View dispatcher ────────────────────────────────────────────────────────────
 
 function ViewBody({ channel, view, standalone }) {
+  // Cross-channel Approvals is a top-level view independent of channel.
+  if (view === 'approvals') return html`<${CrossChannelApprovalsView} standalone=${standalone} />`;
   if (channel === 'email') {
     if (view === 'queue') return html`<${EmailQueueView} standalone=${standalone} />`;
     if (view === 'schedule') return html`<${EmailScheduleView} standalone=${standalone} />`;
@@ -2276,18 +3440,16 @@ function ViewBody({ channel, view, standalone }) {
 // ─── Main OutboundView ──────────────────────────────────────────────────────────
 
 export function OutboundView({ activeFeature }) {
-  // Initialise channel from activeFeature directly (lazy init) so the first paint
-  // already reflects the sidebar selection — closes the mount race where the
-  // useEffect relay below lands a frame after the initial render (F-01).
-  const [channel, setChannel] = useState(() => {
-    if (typeof activeFeature === 'string' && activeFeature.startsWith('ch:')) {
-      const ch = activeFeature.slice(3);
-      if (CHANNELS.includes(ch)) return ch;
-    }
-    return 'newsletter';
-  });
-  const [view, setView] = useState('queue');
+  // Initialise channel + view from the deep-link target (pre-seeded activeFeature
+  // 'v:<view>' OR the mounted sub-route pathname) directly (lazy init) so the
+  // first paint already reflects the deep-link / sidebar selection — closes the
+  // mount race where the useEffect relay below lands a frame after the initial
+  // render (F-01, WP-07).
+  const initial = parseInitialTarget(activeFeature);
+  const [channel, setChannel] = useState(() => initial?.channel ?? 'newsletter');
+  const [view, setView] = useState(() => initial?.view ?? 'queue');
   const standalone = isStandalone();
+  const isApprovals = view === 'approvals';
 
   // Channel counts query (for sidebar badges)
   const { data: counts } = useQuery({
@@ -2327,12 +3489,24 @@ export function OutboundView({ activeFeature }) {
   // that never existed (wave-2 live-verify finding: channel switching dead).
   useEffect(() => {
     if (!activeFeature) return;
+    // Sidebar channel clicks → 'ch:<channel>' (Channels group).
     if (activeFeature.startsWith('ch:')) {
       const newChannel = activeFeature.slice(3);
       if (CHANNELS.includes(newChannel)) {
         setChannel(newChannel);
         setView('queue'); // reset to queue on channel switch
       }
+      return;
+    }
+    // Deep-link re-emits → 'v:<view>' ('v:approvals' = cross-channel gate;
+    // 'v:<channel>' = that channel's queue).
+    if (activeFeature.startsWith('v:')) {
+      const target = viewFromToken(activeFeature.slice(2));
+      if (target) {
+        setChannel(target.channel);
+        setView(target.view);
+      }
+      return;
     }
     // Filter clicks (f:pa/f:cmo/f:cbo) — no state change needed in pkg
     // (the shell menu already handles the is-on visual)
@@ -2360,23 +3534,31 @@ export function OutboundView({ activeFeature }) {
       <div class="ob-header">
         <h1 style=${{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
           <span style=${{ display: 'inline-flex', color: 'var(--tint-outbox-fg, var(--tint-fg-active, var(--fg)))' }}>
-            <${Icon} name="send" size=${16} />
+            <${Icon} name=${isApprovals ? 'check-circle' : 'send'} size=${16} />
           </span>
-          <span>Outbox · ${meta.label}</span>
+          <span>${isApprovals ? 'Outbox · Approvals' : `Outbox · ${meta.label}`}</span>
         </h1>
-        <p class="sub">${meta.subtitle}</p>
+        <p class="sub">${isApprovals ? 'Cross-channel approve-gate · every channel' : meta.subtitle}</p>
         <p class="meta">${totalAwaiting} awaiting · ${activeSeqCount} sequences active</p>
       </div>
 
-      <!-- Inner-tab strip: Approval queue / Schedule / Sent -->
+      <!-- Inner-tab strip: Approvals (cross-channel) + per-channel Approval queue / Schedule / Sent -->
       <div class="nl-inner-tabs">
+        <button
+          key="approvals"
+          class=${cn({ 'is-on': isApprovals })}
+          onClick=${() => setView('approvals')}
+        >
+          Approvals
+          ${totalAwaiting + activeSeqCount > 0 ? html`<span class="nl-tab-count">${totalAwaiting + activeSeqCount}</span>` : null}
+        </button>
         ${meta.views.map(v => {
           const label = meta.viewLabels[v];
           const cnt = v === 'queue' ? (counts?.[channel] ?? 0) : 0;
           return html`
             <button
               key=${v}
-              class=${cn({ 'is-on': view === v })}
+              class=${cn({ 'is-on': !isApprovals && view === v })}
               onClick=${() => setView(v)}
             >
               ${label}

@@ -4,8 +4,10 @@
   "version": "0.1.0",
   "ikenga_api": "1",
   "kind": "embedded",
-  "author": { "name": "Royalti", "key": "royalti" },
-
+  "author": {
+    "name": "Royalti",
+    "key": "royalti"
+  },
   "ui": {
     "nav": [
       {
@@ -14,6 +16,13 @@
         "icon": "send",
         "section": "ops",
         "route": "/pkg/com.ikenga.outbound/"
+      },
+      {
+        "id": "outbound.approvals",
+        "label": "Approvals",
+        "icon": "check-circle",
+        "section": "ops",
+        "route": "/pkg/com.ikenga.outbound/approvals"
       }
     ],
     "routes": [
@@ -21,41 +30,89 @@
         "path": "/",
         "kind": "iframe",
         "source": "dist/index.html"
+      },
+      {
+        "path": "/email",
+        "kind": "iframe",
+        "source": "dist/index.html"
+      },
+      {
+        "path": "/newsletter",
+        "kind": "iframe",
+        "source": "dist/index.html"
+      },
+      {
+        "path": "/social",
+        "kind": "iframe",
+        "source": "dist/index.html"
+      },
+      {
+        "path": "/sequences",
+        "kind": "iframe",
+        "source": "dist/index.html"
+      },
+      {
+        "path": "/approvals",
+        "kind": "iframe",
+        "source": "dist/index.html"
       }
     ],
     "csp": {
-      "script-src": ["'self'", "'unsafe-inline'", "https://esm.sh"],
-      "style-src": ["'self'", "'unsafe-inline'", "https://esm.sh"],
-      "font-src": ["'self'", "https://esm.sh", "data:"],
-      "connect-src": ["'self'", "https://esm.sh"]
+      "script-src": [
+        "'self'",
+        "'unsafe-inline'",
+        "https://esm.sh"
+      ],
+      "style-src": [
+        "'self'",
+        "'unsafe-inline'",
+        "https://esm.sh"
+      ],
+      "font-src": [
+        "'self'",
+        "https://esm.sh",
+        "data:"
+      ],
+      "connect-src": [
+        "'self'",
+        "https://esm.sh"
+      ]
     }
   },
-
   "capabilities": {
-    "sqlite": { "db": "ikenga.local" }
+    "sqlite": {
+      "db": "ikenga.local"
+    },
+    "paActions": true,
+    "http": {
+      "auth_secret": "twenty"
+    },
+    "secrets": {
+      "declarations": [
+        {
+          "name": "twenty",
+          "vault_key": "TWENTY_API_KEY"
+        }
+      ]
+    }
   },
-
   "permissions": {
     "shell.execute": [],
     "fs.read": [],
     "fs.write": [],
-    "net": ["https://esm.sh"],
-    "sqlite.tables": [
-      "email_sequences",
-      "outbound_sequences",
-      "fundraising_outreach",
-      "newsletter_sends",
-      "social_queue",
-      "outbound_email_approvals",
-      "outbound_sent_log",
-      "outbound_newsletter_drafts",
-      "outbound_sequence_steps",
-      "contacts",
-      "receivables"
+    "net": [
+      "https://esm.sh",
+      "https://twenty.royalti.io/rest/"
     ],
-    "vault.keys": []
+    "sqlite.tables": [
+      "pa_action_drafts",
+      "receivables",
+      "newsletter_sends"
+    ],
+    "vault.keys": [
+      "TWENTY_API_KEY"
+    ]
   },
-
   "requires": [
     {
       "kind": "skill",
