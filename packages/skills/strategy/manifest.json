@@ -1,0 +1,36 @@
+{
+  "id": "com.ikenga.skill-strategy",
+  "name": "Strategy",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "skill",
+  "author": { "name": "Royalti", "key": "royalti" },
+
+  "capabilities": {
+    "sqlite": { "db": "ikenga.local" }
+  },
+
+  "permissions": {
+    "shell.execute": [],
+    "fs.read": [],
+    "fs.write": [],
+    "net": [],
+    "sqlite.tables": [
+      "strategic_initiatives",
+      "architecture_decisions",
+      "ideas_backlog",
+      "feature_score_history",
+      "review_items",
+      "strategy_objectives",
+      "strategy_key_results",
+      "strategy_cycles"
+    ],
+    "vault.keys": []
+  },
+  "requires": [
+    {
+      "kind": "skill",
+      "name": "skill-core"
+    }
+  ]
+}

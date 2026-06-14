@@ -1,0 +1,255 @@
+/* research.css — domain residue for com.ikenga.research.
+ *
+ * Only research-local classes live here. Kit primitives (.frame*, .ip-split*,
+ * .split-*, .dense-row*, .btn*, .tag, .chip, .badge, .atelier-state*,
+ * .nav-group*, .nav-item*, etc.) are consumed from app-kit-css.js — never
+ * re-derived here.
+ *
+ * Inject order: tokens-css → app-kit-css → research-css (this file).
+ * data-workspace="agents" on <html> → teal tint for active nav + accents.
+ *
+ * Local vocabulary (screen-scoped — NOT in the kit, per screen doc §4):
+ *   - .ux-dot.ux-*           next-action mode dot colours (confirm/silent/approve)
+ *   - .next-chip / .stage-chip  next-action chip + type chip (screen residue,
+ *                            same shape as content's residue)
+ *   - .rs-persona-*          Personas view 2-up card grid (no kit equivalent)
+ *   - .rs-source-table/*     Sources view monitored register (dense table)
+ *   - .rs-source-status      freshness pill (fresh/signal/stale — semantic colour)
+ *   - .rs-src-badge          source type badge
+ *   - .rs-xdomain            cross-domain "Hand to sales" link badge
+ *   - .rs-prog / .rs-prog-fill  persona Fit score bar
+ *   - .rs-empty-cta          small inline CTA in the empty state
+ */
+
+/* ── Reduced motion gate ── */
+@media (prefers-reduced-motion: reduce) {
+  .split-row { transition: none; }
+  .split-group-chev { transition: none; }
+  .atelier-spin { animation: none; }
+  .atelier-prog > span { animation: none; }
+}
+
+/* ── Next-action mode dot + chips (screen residue) ──────────────────────────── */
+/* The .ux-dot base shape lives in app-kit; the mode COLOURS are screen-scoped.
+   confirm → achievement (amber) · silent → fg-faint (muted) · approve → primary. */
+.ux-dot.ux-confirm  { background: var(--achievement); }
+.ux-dot.ux-silent   { background: var(--fg-faint); }
+.ux-dot.ux-approve  { background: var(--primary); }
+
+/* ── Personas view (2-up ICP card grid) ─────────────────────────────────────── */
+.rs-persona-wrap {
+  padding: var(--space-4);
+  overflow-y: auto;
+  height: 100%;
+}
+.rs-persona-head {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 500;
+  margin-bottom: var(--space-4);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.rs-persona-head .sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg-faint);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.rs-persona-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3);
+}
+.rs-persona-card {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  background: var(--bg-base);
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+.rs-persona-tag {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--tint-fg-active, var(--primary));
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  padding: 2px 7px;
+  justify-self: start;
+}
+.rs-persona-name {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 500;
+}
+.rs-persona-desc {
+  font-size: var(--text-body-sm);
+  color: var(--fg-muted);
+  line-height: 1.5;
+}
+.rs-persona-attr {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--text-body-sm);
+  color: var(--fg-muted);
+  border-top: 1px solid var(--border-soft);
+  padding-top: 7px;
+}
+.rs-persona-attr b {
+  color: var(--fg);
+  font-weight: 500;
+}
+
+/* ── Persona Fit-score progress bar ─────────────────────────────────────────── */
+.rs-prog {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-sunken);
+  overflow: hidden;
+  margin-top: 4px;
+}
+.rs-prog-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary-soft), var(--primary));
+  border-radius: 3px;
+}
+
+/* ── Sources view (monitored register, dense table) ─────────────────────────── */
+.rs-source-wrap {
+  padding: var(--space-4);
+  overflow-y: auto;
+  height: 100%;
+}
+.rs-source-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.rs-source-kpi {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-base);
+}
+.rs-kpi-k {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+.rs-kpi-v {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 500;
+  margin-top: 4px;
+}
+.rs-kpi-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--fg-muted);
+  margin-top: 2px;
+}
+.rs-source-head {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 500;
+  margin-bottom: var(--space-3);
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+.rs-source-head .sub {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--fg-faint);
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.rs-source-card {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--bg-base);
+}
+.rs-source-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.rs-source-table th {
+  text-align: left;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  padding: 10px var(--space-4);
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-sunken);
+  font-weight: 400;
+}
+.rs-source-table td {
+  padding: 12px var(--space-4);
+  border-bottom: 1px solid var(--border-soft);
+  font-size: var(--text-body-sm);
+  color: var(--fg-muted);
+}
+.rs-source-table tr:last-child td { border-bottom: 0; }
+.rs-source-table .rs-src-name { color: var(--fg); font-weight: 500; }
+.rs-source-table tbody tr { cursor: pointer; transition: background var(--motion-fast) var(--ease-calm); }
+.rs-source-table tbody tr:hover { background: var(--bg-raised); }
+
+.rs-src-badge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-soft);
+  color: var(--fg-faint);
+  white-space: nowrap;
+}
+
+/* Freshness pill — SEMANTIC colour (not decorative): fresh=live, signal=achievement, stale=danger. */
+.rs-source-status {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-soft);
+  color: var(--fg-faint);
+  white-space: nowrap;
+}
+.rs-source-status.is-fresh  { color: var(--live);        border-color: var(--live-soft); }
+.rs-source-status.is-signal { color: var(--achievement); border-color: var(--achievement-soft); }
+.rs-source-status.is-stale  { color: var(--danger);      border-color: var(--danger-soft); }
+
+/* ── Cross-domain "Hand to sales" link badge ───────────────────────────────── */
+.rs-xdomain {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 6px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .04em;
+  padding: 1px 6px;
+  border-radius: var(--radius-pill);
+  color: var(--tint-fg-active, var(--primary));
+  border: 1px solid var(--border-soft);
+  background: var(--bg-sunken);
+}
+
+/* ── Empty-state inline CTA ─────────────────────────────────────────────────── */
+.rs-empty-cta { margin-top: 8px; }

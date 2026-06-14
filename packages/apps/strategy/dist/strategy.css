@@ -1,0 +1,131 @@
+/* strategy.css — domain residue for com.ikenga.strategy.
+ *
+ * Only strategy-local classes live here:
+ *   - .ux-dot(.ux-confirm|.ux-silent|.ux-approve) / .next-chip / .stage-chip — small
+ *     shared status-dot / chip residue (app-kit ships the .pl-*/.okr-*/.kb-* chrome;
+ *     these tiny shell-ish primitives are kept per-domain, as in content.css).
+ *   - .st-mv-wrap / .fc-kpis / .fc-kpi* — Cycles + Reviews KPI cells (4-up grid)
+ *   - .st-cycle-row / .st-cycle-head / .st-cycle-name / .st-cycle-meta / .st-prog — Cycles view
+ *   - .st-mv-table / .st-mv-badge / .st-status-pill — Reviews table + cadence chips
+ *   - Reduced-motion overrides for strategy-specific transitions
+ *
+ * Kit primitives (.frame*, .pane-split, .pl-*, .kb-*, .okr-*, .kb-col-agg, .btn*,
+ * .tag, .chip, .badge, .atelier-state*, .nav-group*, .nav-item*, .seg*) are
+ * consumed from app-kit-css.js — never re-derived here.
+ *
+ * Inject order: tokens-css → app-kit-css → strategy-css (this file).
+ * data-workspace="settings" on <html> → cool slate-blue tint for active nav + accents.
+ * No new tokens — only var(--*) from @ikenga/tokens. Per the screen doc §4 step 8:
+ * ~80 lines, layout-only, all Cycles/Reviews/detail residue.
+ */
+
+/* ── Reduced motion gate ── */
+@media (prefers-reduced-motion: reduce) {
+  .kb-card { transition: none; }
+  .kb-card:hover { transform: none; }
+  .pl-row { transition: none; }
+}
+
+/* ── Area column dot colours: passed inline on .kb-col-dot (kanban convention) ──
+   so no per-area CSS here; the tolerant-extras column gets a neutral dot only. */
+.kb-col:not([data-stage="Company"]):not([data-stage="Growth"]):not([data-stage="Product"]):not([data-stage="Finance"]) .kb-col-dot {
+  background: var(--fg-faint, rgba(128,128,128,0.3));
+}
+
+/* ── UX-mode dots (strategy domain) ────────────────────────────────────────────
+   ux-confirm = achievement (operator confirms) · ux-silent = fg-faint (agent acts
+   autonomously) · ux-approve = primary (operator countersigns). Mirrors content.css. */
+.ux-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-right: 4px;
+}
+.ux-dot.ux-confirm { background: var(--achievement, hsl(38,85%,52%)); }
+.ux-dot.ux-silent  { background: var(--fg-faint, rgba(128,128,128,0.4)); }
+.ux-dot.ux-approve { background: var(--primary, hsl(215,70%,55%)); }
+
+/* ── Next-action chip (board + list rows + detail) ─────────────────────────────── */
+.next-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.68rem;
+  color: var(--fg-muted);
+  background: var(--bg-inset, rgba(0,0,0,0.06));
+  border-radius: 4px;
+  padding: 2px 6px;
+  max-width: 220px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ── Stage / area chip in detail eyebrow ───────────────────────────────────────── */
+.stage-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 3px 8px;
+  border-radius: 5px;
+  background: var(--bg-inset, rgba(0,0,0,0.07));
+  color: var(--fg-muted);
+  text-transform: capitalize;
+  letter-spacing: 0.03em;
+}
+
+/* ── Hot filter (At risk — achievement amber count) ────────────────────────────── */
+.nav-item.is-hot .nav-item-count {
+  color: var(--achievement, hsl(38,85%,52%));
+  font-weight: 700;
+}
+
+/* ── Affirmative button (approve actions, live-tinted) ─────────────────────────── */
+.btn.affirmative {
+  border-color: color-mix(in srgb, var(--live, hsl(348,72%,52%)) 45%, transparent);
+  color: var(--live, hsl(348,72%,52%));
+}
+
+/* ── Cycles + Reviews secondary-view wrapper + KPI cells (.st-* / .fc-*) ────────── */
+.st-mv-wrap { padding: var(--space-5); display: grid; gap: var(--space-5); align-content: start; overflow: auto; height: 100%; }
+.fc-kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--space-3); }
+.fc-kpi { border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); background: var(--bg-base); }
+.fc-kpi-k { font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-faint); }
+.fc-kpi-v { font-family: var(--font-display); font-size: 26px; font-weight: 500; margin-top: 4px; }
+.fc-kpi-sub { font-size: 11px; color: var(--fg-muted); margin-top: 2px; }
+
+.st-fc-card { border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: var(--space-4); background: var(--bg-base); }
+.st-fc-card.flush { padding: 0; overflow: hidden; }
+.st-fc-card-h { font-family: var(--font-display); font-size: 15px; font-weight: 500; margin-bottom: var(--space-4); display: flex; justify-content: space-between; align-items: baseline; }
+.st-fc-card-h .st-sub { font-family: var(--font-mono); font-size: 10px; color: var(--fg-faint); letter-spacing: .06em; text-transform: uppercase; }
+
+/* ── Cycles view: cycle cards + 6px progress bar ───────────────────────────────── */
+.st-cycle-row { border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: var(--space-4); background: var(--bg-base); display: grid; gap: 8px; }
+.st-cycle-row.cur { border-color: color-mix(in srgb, var(--primary) 45%, transparent); }
+.st-cycle-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.st-cycle-name { font-family: var(--font-display); font-size: 15px; font-weight: 500; }
+.st-cycle-meta { font-size: 11px; color: var(--fg-faint); font-family: var(--font-mono); }
+.st-prog { height: 6px; border-radius: 3px; background: var(--bg-sunken); overflow: hidden; margin-top: 4px; }
+.st-prog-fill { height: 100%; background: linear-gradient(90deg, var(--primary-soft, var(--primary)), var(--primary)); border-radius: 3px; }
+
+/* ── Status pill (cycles + reviews) ────────────────────────────────────────────── */
+.st-status-pill { font-family: var(--font-mono); font-size: 9px; letter-spacing: .05em; text-transform: uppercase; padding: 2px 7px; border-radius: var(--radius-pill); border: 1px solid var(--border-soft); white-space: nowrap; }
+.st-status-pill.ok { color: var(--live); }
+.st-status-pill.warn { color: var(--primary); }
+.st-status-pill.done { color: var(--achievement); }
+.st-status-pill.muted { color: var(--fg-faint); }
+
+/* ── Reviews view: cadence table + badge chips ─────────────────────────────────── */
+.st-mv-table { width: 100%; border-collapse: collapse; }
+.st-mv-table th { text-align: left; font-family: var(--font-mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-faint); padding: 10px var(--space-4); border-bottom: 1px solid var(--border-soft); background: var(--bg-sunken); font-weight: 400; }
+.st-mv-table td { padding: 12px var(--space-4); border-bottom: 1px solid var(--border-soft); font-size: var(--text-body-sm); color: var(--fg-muted); }
+.st-mv-table tr:last-child td { border-bottom: 0; }
+.st-mv-table .lead { color: var(--fg); font-weight: 500; }
+.st-mv-badge { font-family: var(--font-mono); font-size: 9px; letter-spacing: .05em; text-transform: uppercase; padding: 2px 7px; border-radius: var(--radius-pill); border: 1px solid var(--border-soft); color: var(--fg-faint); white-space: nowrap; }
+.st-mv-badge.live { color: var(--live); }
+.st-mv-badge.warn { color: var(--primary); }
+.st-mv-badge.gold { color: var(--achievement); }
