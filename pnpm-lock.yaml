@@ -43,7 +43,19 @@ importers:
         specifier: ^0.3.0
         version: 0.3.0
 
+  packages/apps/research:
+    devDependencies:
+      '@ikenga/tokens':
+        specifier: ^0.3.0
+        version: 0.3.0
+
   packages/apps/sales:
+    devDependencies:
+      '@ikenga/tokens':
+        specifier: ^0.3.0
+        version: 0.3.0
+
+  packages/apps/strategy:
     devDependencies:
       '@ikenga/tokens':
         specifier: ^0.3.0
@@ -100,8 +112,6 @@ importers:
       typescript:
         specifier: ^5.4.0
         version: 5.9.3
-
-  packages/apps/suite: {}
 
   packages/apps/tasks:
     devDependencies:
@@ -319,6 +329,8 @@ importers:
 
   packages/skills/content: {}
 
+  packages/skills/contribute: {}
+
   packages/skills/core: {}
 
   packages/skills/finance: {}
@@ -333,9 +345,13 @@ importers:
 
   packages/skills/query: {}
 
+  packages/skills/research: {}
+
   packages/skills/sales: {}
 
   packages/skills/storyboard-workflow: {}
+
+  packages/skills/strategy: {}
 
   packages/skills/studio-archetypes:
     dependencies:
