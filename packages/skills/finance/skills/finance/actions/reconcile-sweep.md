@@ -37,7 +37,7 @@ run:
     SELECT id, txn_date, entity, description, counterparty, amount, currency,
            amount_usd, payment_type, account_id
     FROM transaction_ledger
-    WHERE match_state IN ('unmatched', 'suggested')
+    WHERE reconciliation_status NOT IN ('reconciled', 'matched')
     {{#entity}}AND entity = :entity{{/entity}}
     ORDER BY txn_date DESC
     LIMIT {{max_rows}}
@@ -63,7 +63,7 @@ run:
     ```sql
     SELECT account_name, entity, currency, bank
     FROM bank_accounts
-    WHERE account_id = :account_id
+    WHERE id = :account_id
     ```
 
     **Exchange rate** (for USD amount verification on non-USD transactions):
@@ -78,7 +78,7 @@ run:
     **Contact enrichment** (for vendor/customer counterparty rows where a match
     candidate is found):
     ```sql
-    SELECT id, name, email, company
+    SELECT id, name, email, organization
     FROM contacts
     WHERE email LIKE :counterparty_email
        OR name LIKE :counterparty_name
@@ -177,7 +177,7 @@ This action produces the evidence that powers that display. Each proposal carrie
 
 The operator sees "Suggested 92%" next to a row because `reconcile-sweep`
 evaluated the evidence and scored it at 0.92. The host pane renders this score
-as the `match_state` column badge in the Transactions tab.
+as the `reconciliation_status` column badge in the Transactions tab.
 
 ## Business rules (from Finance screen doc §1)
 
@@ -196,11 +196,11 @@ as the `match_state` column badge in the Transactions tab.
 
 | Table | Columns | Purpose |
 |---|---|---|
-| `transaction_ledger` | id, txn_date, entity, description, counterparty, amount, currency, amount_usd, payment_type, account_id, match_state | Core ledger rows — filter on `match_state IN ('unmatched', 'suggested')` |
+| `transaction_ledger` | id, txn_date, entity, description, counterparty, amount, currency, amount_usd, payment_type, account_id, reconciliation_status | Core ledger rows — filter on `reconciliation_status NOT IN ('reconciled', 'matched')` |
 | `inter_company_entries` | id, source_entity, destination_entity, amount, currency, amount_usd, transfer_type, loan_status, reconciliation_status, source_txn_id, destination_txn_id | Cross-entity transfers awaiting reconciliation |
 | `bank_accounts` | account_name, entity, currency, bank | Entity/account context for confidence evidence |
 | `exchange_rates` | rate_month, ngn_usd, eur_usd, gbp_usd | FX rate lookup for non-USD amount verification |
-| `contacts` | id, name, email, company | Counterparty enrichment for match evidence |
+| `contacts` | id, name, email, organization | Counterparty enrichment for match evidence |
 
 All reads are SELECT-only via `host.dbQuery`. **No writes.**
 
