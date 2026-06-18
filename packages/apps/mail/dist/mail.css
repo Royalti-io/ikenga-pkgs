@@ -14,6 +14,11 @@
   .mail-row { transition: none; }
 }
 
+/* ── Root frame ── */
+.frame {
+  height: 100%;
+}
+
 /* ── Two-column split ── */
 /* mail-local — NOT .ip-split (the reading pane is richer than a pipeline detail) */
 .pane-split {
@@ -250,6 +255,7 @@
 .reader-body-wrap {
   flex: 1;
   overflow-y: auto;
+  min-height: 0;
   padding: var(--space-6) var(--space-8);
   max-width: 780px;
   margin: 0 auto;

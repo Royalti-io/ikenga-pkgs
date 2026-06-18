@@ -337,7 +337,7 @@ function ReaderToolbar({ onBack, onArchive, onSnooze, onTag, onDelete, onPrev, o
 /**
  * Reader pane — full thread view with quick-reply.
  */
-function ReaderPane({ messageId, queryClient, onBack, onPrev, onNext, position, canPrev, canNext }) {
+function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext, position, canPrev, canNext }) {
   const [replyText, setReplyText] = useState('');
   const [draftSent, setDraftSent] = useState(false);
 
@@ -418,7 +418,7 @@ function ReaderPane({ messageId, queryClient, onBack, onPrev, onNext, position, 
 
   if (!messageId) {
     return html`
-      <div class="reader-pane">
+      <div class=${cn("reader-pane flex-1 min-h-0", className)}>
         <${FeedbackState} state="empty" message="Select a thread to read" />
       </div>
     `;
@@ -426,7 +426,7 @@ function ReaderPane({ messageId, queryClient, onBack, onPrev, onNext, position, 
 
   if (msgLoading) {
     return html`
-      <div class="reader-pane">
+      <div class=${cn("reader-pane flex-1 min-h-0", className)}>
         <${FeedbackState} state="loading" />
       </div>
     `;
@@ -434,7 +434,7 @@ function ReaderPane({ messageId, queryClient, onBack, onPrev, onNext, position, 
 
   if (msgError) {
     return html`
-      <div class="reader-pane">
+      <div class=${cn("reader-pane flex-1 min-h-0", className)}>
         <${FeedbackState} state="error" message=${msgError.message} />
       </div>
     `;
@@ -442,14 +442,14 @@ function ReaderPane({ messageId, queryClient, onBack, onPrev, onNext, position, 
 
   if (!message) {
     return html`
-      <div class="reader-pane">
+      <div class=${cn("reader-pane flex-1 min-h-0", className)}>
         <${FeedbackState} state="empty" message="Thread not found." />
       </div>
     `;
   }
 
   return html`
-    <div class="reader-pane">
+    <div class=${cn("reader-pane flex-1 min-h-0", className)}>
       <${ReaderToolbar}
         onBack=${onBack}
         onArchive=${() => {}}
@@ -731,7 +731,7 @@ export function MailView({ activeFeature }) {
         </div>
 
         <!-- Right: reader pane -->
-        <${ReaderPane}
+        <${ReaderPane} class="flex-1 min-h-0"
           messageId=${selectedId}
           queryClient=${queryClient}
           onBack=${() => setSelectedId(null)}
