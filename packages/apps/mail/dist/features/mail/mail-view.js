@@ -440,7 +440,8 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
 
   const handleSendReply = () => {
     if (!replyText.trim()) return;
-    hostSendToActiveSession(`Send this email reply: "${replyText.replace(/"/g, '\\"')}"`, "com.ikenga.mail");
+    const safeText = replyText.replace(new RegExp('"', 'g'), '\\"');
+    hostSendToActiveSession(`Send this email reply: "${safeText}"`, "com.ikenga.mail");
     setDraftSent(true);
     setReplyText("");
   };
