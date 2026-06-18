@@ -32,6 +32,15 @@ export async function fetchThreadList(view = "inbox", searchTerm = "") {
       whereClause = '';
   }
 
+  const params = [];
+  if (searchTerm) {
+    const searchClause = `(em.subject LIKE ? OR em.from_address LIKE ? OR em.body_text LIKE ? OR COALESCE(c.name, "") LIKE ?)`;
+    if (whereClause) whereClause += ` AND ${searchClause}`;
+    else whereClause = `WHERE ${searchClause}`;
+    const s = `%${searchTerm}%`;
+    params.push(s, s, s, s);
+  }
+
   const sql = `
     SELECT
       em.id,
@@ -51,14 +60,6 @@ export async function fetchThreadList(view = "inbox", searchTerm = "") {
     ${orderClause}
     LIMIT 100
   `;
-  const params = [];
-  if (searchTerm) {
-    const searchClause = `(em.subject LIKE ? OR em.from_address LIKE ? OR em.body_text LIKE ? OR COALESCE(c.name, "") LIKE ?)`;
-    if (whereClause) whereClause += ` AND ${searchClause}`;
-    else whereClause = `WHERE ${searchClause}`;
-    const s = `%${searchTerm}%`;
-    params.push(s, s, s, s);
-  }
   const rows = await hostDbQuery(sql, params);
   return rows.map(normalizeThreadRow);
 }
