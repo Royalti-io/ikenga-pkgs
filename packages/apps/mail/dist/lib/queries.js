@@ -11,7 +11,7 @@ import { hostDbQuery, hostDbExec } from './bridge.js';
  *    id, subject, from_address, from_name, received_at, triage_category,
  *    is_read, snoozed_until, tags, preview
  */
-export async function fetchThreadList(view = 'inbox') {
+export async function fetchThreadList(view = "inbox", searchTerm = "") {
   let whereClause = '';
   let orderClause = 'ORDER BY em.received_at DESC';
 
@@ -27,7 +27,7 @@ export async function fetchThreadList(view = 'inbox') {
       break;
     case 'drafts':
       // Drafts view reads email_drafts, not email_messages
-      return fetchDraftList();
+      return fetchDraftList(searchTerm);
     default:
       whereClause = '';
   }
@@ -51,7 +51,15 @@ export async function fetchThreadList(view = 'inbox') {
     ${orderClause}
     LIMIT 100
   `;
-  const rows = await hostDbQuery(sql, []);
+  const params = [];
+  if (searchTerm) {
+    const searchClause = `(em.subject LIKE ? OR em.from_address LIKE ? OR em.body_text LIKE ? OR COALESCE(c.name, "") LIKE ?)`;
+    if (whereClause) whereClause += ` AND ${searchClause}`;
+    else whereClause = `WHERE ${searchClause}`;
+    const s = `%${searchTerm}%`;
+    params.push(s, s, s, s);
+  }
+  const rows = await hostDbQuery(sql, params);
   return rows.map(normalizeThreadRow);
 }
 
@@ -61,7 +69,14 @@ export async function fetchThreadList(view = 'inbox') {
  *  (type='outreach' OR type IS NULL) returned 95 outreach-sequence rows — i.e.
  *  the list was effectively unfiltered and mirrored Inbox (F-22).
  */
-export async function fetchDraftList() {
+export async function fetchDraftList(searchTerm = "") {
+  let whereClause = "WHERE status = 'draft'";
+  const params = [];
+  if (searchTerm) {
+    whereClause += " AND (subject LIKE ? OR from_email LIKE ? OR body LIKE ? OR from_name LIKE ?)";
+    const s = `%${searchTerm}%`;
+    params.push(s, s, s, s);
+  }
   const sql = `
     SELECT
       id,
@@ -76,15 +91,13 @@ export async function fetchDraftList() {
       NULL AS tags,
       substr(body, 1, 160) AS preview
     FROM email_drafts
-    WHERE status = 'draft'
+    ${whereClause}
     ORDER BY created_at DESC
     LIMIT 50
   `;
-  const rows = await hostDbQuery(sql, []);
+  const rows = await hostDbQuery(sql, params);
   return rows.map(normalizeThreadRow);
 }
-
-/** Count unread threads (for is-hot badge on Inbox nav item). */
 export async function fetchUnreadCount() {
   const sql = `
     SELECT COUNT(*) AS cnt
@@ -96,7 +109,6 @@ export async function fetchUnreadCount() {
   const rows = await hostDbQuery(sql, []);
   return rows[0]?.cnt ?? 0;
 }
-
 /** Count triage-flagged threads. */
 export async function fetchTriageCount() {
   const sql = `
@@ -104,7 +116,15 @@ export async function fetchTriageCount() {
     FROM email_messages em
     WHERE em.triage_category IS NOT NULL AND em.triage_category != ''
   `;
-  const rows = await hostDbQuery(sql, []);
+  const params = [];
+  if (searchTerm) {
+    const searchClause = `(em.subject LIKE ? OR em.from_address LIKE ? OR em.body_text LIKE ? OR COALESCE(c.name, "") LIKE ?)`;
+    if (whereClause) whereClause += ` AND ${searchClause}`;
+    else whereClause = `WHERE ${searchClause}`;
+    const s = `%${searchTerm}%`;
+    params.push(s, s, s, s);
+  }
+  const rows = await hostDbQuery(sql, params);
   return rows[0]?.cnt ?? 0;
 }
 
@@ -115,14 +135,30 @@ export async function fetchSnoozedCount() {
     FROM mail_thread_state
     WHERE snoozed_until IS NOT NULL AND snoozed_until > datetime('now')
   `;
-  const rows = await hostDbQuery(sql, []);
+  const params = [];
+  if (searchTerm) {
+    const searchClause = `(em.subject LIKE ? OR em.from_address LIKE ? OR em.body_text LIKE ? OR COALESCE(c.name, "") LIKE ?)`;
+    if (whereClause) whereClause += ` AND ${searchClause}`;
+    else whereClause = `WHERE ${searchClause}`;
+    const s = `%${searchTerm}%`;
+    params.push(s, s, s, s);
+  }
+  const rows = await hostDbQuery(sql, params);
   return rows[0]?.cnt ?? 0;
 }
 
 /** Count unsent drafts. */
 export async function fetchDraftCount() {
   const sql = `SELECT COUNT(*) AS cnt FROM email_drafts WHERE status = 'draft'`;
-  const rows = await hostDbQuery(sql, []);
+  const params = [];
+  if (searchTerm) {
+    const searchClause = `(em.subject LIKE ? OR em.from_address LIKE ? OR em.body_text LIKE ? OR COALESCE(c.name, "") LIKE ?)`;
+    if (whereClause) whereClause += ` AND ${searchClause}`;
+    else whereClause = `WHERE ${searchClause}`;
+    const s = `%${searchTerm}%`;
+    params.push(s, s, s, s);
+  }
+  const rows = await hostDbQuery(sql, params);
   return rows[0]?.cnt ?? 0;
 }
 

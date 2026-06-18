@@ -596,6 +596,7 @@ export function MailView({ activeFeature }) {
     () => localStorage.getItem(VIEW_STORAGE_KEY) ?? 'inbox'
   );
   const [selectedId, setSelectedId] = useState(null);
+  const [searchTerm, setSearchTerm] = useState("");
 
   const handleViewChange = (newView) => {
     setView(newView);
@@ -618,8 +619,8 @@ export function MailView({ activeFeature }) {
     isLoading: threadsLoading,
     error: threadsError,
   } = useQuery({
-    queryKey: ['mail', 'threads', view],
-    queryFn: () => fetchThreadList(view),
+    queryKey: ["mail", "threads", view, searchTerm],
+    queryFn: () => fetchThreadList(view, searchTerm),
     staleTime: 30_000,
     refetchOnWindowFocus: false,
   });
@@ -737,7 +738,7 @@ export function MailView({ activeFeature }) {
               <input
                 type="search"
                 class="input"
-                placeholder=${`from:valentim · catalog`}
+                placeholder=${"from:valentim · catalog"} value=${searchTerm} onInput=${(e) => setSearchTerm(e.target.value)}
                 aria-label="Search threads"
               />
             </div>
