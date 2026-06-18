@@ -339,6 +339,7 @@ function ReaderToolbar({ onBack, onArchive, onSnooze, onTag, onDelete, onPrev, o
  */
 function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext, position, canPrev, canNext }) {
   const [replyText, setReplyText] = useState('');
+  const [isEditing, setIsEditing] = useState(false);
   const [draftSent, setDraftSent] = useState(false);
 
   // Fetch thread detail
@@ -389,6 +390,37 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
     },
   });
 
+  // Archive mutation (marks as read and snoozes for 100 years to hide from Inbox)
+  const archiveMut = useMutation({
+    mutationFn: async () => {
+      await markRead(messageId);
+      return snoozeThread(messageId, '9999-12-31 23:59:59');
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mail', 'threads'] });
+      queryClient.invalidateQueries({ queryKey: ['mail', 'counts'] });
+      if (canNext) onNext(); else onBack();
+    },
+  });
+
+  // Delete mutation (removes thread state)
+  const deleteMut = useMutation({
+    mutationFn: () => hostDbExec('DELETE FROM mail_thread_state WHERE message_id = ?', [messageId]),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mail', 'threads'] });
+      queryClient.invalidateQueries({ queryKey: ['mail', 'counts'] });
+      onBack();
+    },
+  });
+
+  // Tag mutation (adds 'urgent' tag for now as a smoke test)
+  const tagMut = useMutation({
+    mutationFn: () => setThreadTags(messageId, ['urgent']),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mail', 'threads'] });
+    },
+  });
+
   // Handle ⌘↵ quick send
   const handleReplyKeyDown = (e) => {
     if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -401,14 +433,17 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
     }
   };
 
-  const handleSendReply = () => {
-    if (!replyText.trim()) return;
-    // In production: route through outbound system. For now: simulate draft-reply result.
-    setDraftSent(true);
-    setReplyText('');
+  const handleRejectReply = () => {
+    setReplyText("");
+    setIsEditing(false);
   };
 
-  const handleRegenerateReply = () => {
+  const handleSendReply = () => {
+    if (!replyText.trim()) return;
+    hostSendToActiveSession(`Send this email reply: "${replyText.replace(/"/g, """)}"`, "com.ikenga.mail");
+    setDraftSent(true);
+    setReplyText("");
+  };
     if (!messageId) return;
     hostSendToActiveSession(
       `Regenerate reply for email thread: "${message?.subject ?? messageId}". Tone: warm, professional.`,
@@ -452,10 +487,10 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
     <div class=${cn("reader-pane flex-1 min-h-0", className)}>
       <${ReaderToolbar}
         onBack=${onBack}
-        onArchive=${() => {}}
+        onArchive=${() => archiveMut.mutate()}
         onSnooze=${() => snoozeMut.mutate()}
-        onTag=${() => {}}
-        onDelete=${() => {}}
+        onTag=${() => tagMut.mutate()}
+        onDelete=${() => deleteMut.mutate()}
         onPrev=${onPrev}
         onNext=${onNext}
         position=${position}
@@ -474,10 +509,10 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
               <button class="btn btn-sm" onClick=${() => snoozeMut.mutate()} title="Snooze 4h">
                 <${Icon} name="clock" size=${14} /> Snooze 4h
               </button>
-              <button class="btn btn-sm" title="Archive">
+              <button class="btn btn-sm" onClick=${() => archiveMut.mutate()} title="Archive">
                 <${Icon} name="archive" size=${14} /> Archive
               </button>
-              <button class="btn btn-sm btn-primary" title="Reply">
+              <button class="btn btn-sm btn-primary" onClick=${() => document.querySelector('.reader-quick-reply .input')?.focus()} title="Reply">
                 <${Icon} name="corner-down-left" size=${14} /> Reply
               </button>
             </div>
@@ -508,7 +543,7 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
             </div>
             <textarea
               class="input"
-              rows="4"
+              rows="8"
               placeholder="Chi's drafted reply will appear here…"
               value=${replyText}
               onInput=${(e) => setReplyText(e.target.value)}
@@ -516,12 +551,12 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
               aria-label="Quick reply"
             ></textarea>
             <div class="reader-quick-reply-foot">
-              <span><kbd>⌘</kbd><kbd>↵</kbd> Send</span>
-              <span><kbd>⌘</kbd><kbd>R</kbd> Regenerate</span>
-              <span class="reader-quick-reply-tone">
-                Tone: warm · 3-line · matches your last 6 replies
-              </span>
-            </div>
+                <button class="btn btn-sm btn-primary" onClick=${handleSendReply}><${Icon} name="send" size=${12} /> Approve & Send</button>
+                <button class="btn btn-sm" onClick=${handleRegenerateReply}><${Icon} name="refresh-cw" size=${12} /> Regenerate</button>
+                <button class="btn btn-sm btn-ghost" onClick=${handleRejectReply}>Reject</button>
+                <span class="reader-quick-reply-foot-spacer"></span>
+                <span><kbd>⌘</kbd><kbd>↵</kbd> Send · <kbd>⌘</kbd><kbd>R</kbd> Regen</span>
+                <span class="reader-quick-reply-tone">Tone: warm</span>
           </div>
         ` : html`
           <div class="reader-quick-reply">
@@ -530,18 +565,18 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
             </div>
             <textarea
               class="input"
-              rows="3"
+              rows="8"
               placeholder="Ask Chi to draft a reply, or type directly…"
               value=${replyText}
               onInput=${(e) => setReplyText(e.target.value)}
               onKeyDown=${handleReplyKeyDown}
               aria-label="Quick reply"
             ></textarea>
-            <div class="reader-quick-reply-foot">
-              <span class="reader-quick-reply-foot-spacer"></span>
-              <span><kbd>⌘</kbd><kbd>↵</kbd> send</span>
-              <span><kbd>⌘</kbd><kbd>R</kbd> ask Chi to draft</span>
-            </div>
+              <div class="reader-quick-reply-foot">
+                <button class="btn btn-sm btn-primary" onClick=${handleSendReply}><${Icon} name="send" size=${12} /> Send</button>
+                <button class="btn btn-sm" onClick=${handleRegenerateReply}>Ask Chi to draft</button>
+                <span class="reader-quick-reply-foot-spacer"></span>
+                <span><kbd>⌘</kbd><kbd>↵</kbd> Send · <kbd>⌘</kbd><kbd>R</kbd> Draft</span>
           </div>
         `}
       </div>
@@ -679,7 +714,12 @@ export function MailView({ activeFeature }) {
           </h1>
         </div>
         <div class="frame-head-actions">
-          <button class="btn btn-sm" title="Compose" aria-label="Compose new message">
+          <button
+            class="btn btn-sm"
+            onClick=${() => hostSendToActiveSession('Help me compose a new email.', 'com.ikenga.mail')}
+            title="Compose"
+            aria-label="Compose new message"
+          >
             <${Icon} name="edit-3" size=${14} /> Compose
           </button>
         </div>
