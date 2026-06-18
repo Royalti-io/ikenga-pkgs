@@ -444,15 +444,16 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
     setDraftSent(true);
     setReplyText("");
   };
+
+  const handleRegenerateReply = () => {
     if (!messageId) return;
     hostSendToActiveSession(
       `Regenerate reply for email thread: "${message?.subject ?? messageId}". Tone: warm, professional.`,
-      'com.ikenga.mail'
+      "com.ikenga.mail"
     ).catch(() => {});
   };
-
-  if (!messageId) {
-    return html`
+    if (!messageId) {
+      return html`
       <div class=${cn("reader-pane flex-1 min-h-0", className)}>
         <${FeedbackState} state="empty" message="Select a thread to read" />
       </div>
