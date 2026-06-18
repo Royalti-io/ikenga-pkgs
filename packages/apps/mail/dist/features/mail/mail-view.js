@@ -440,7 +440,7 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
 
   const handleSendReply = () => {
     if (!replyText.trim()) return;
-    hostSendToActiveSession(`Send this email reply: "${replyText.replace(/"/g, """)}"`, "com.ikenga.mail");
+    hostSendToActiveSession(`Send this email reply: "${replyText.replace(/"/g, '\\"')}"`, "com.ikenga.mail");
     setDraftSent(true);
     setReplyText("");
   };
@@ -452,8 +452,9 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
       "com.ikenga.mail"
     ).catch(() => {});
   };
-    if (!messageId) {
-      return html`
+
+  if (!messageId) {
+    return html`
       <div class=${cn("reader-pane flex-1 min-h-0", className)}>
         <${FeedbackState} state="empty" message="Select a thread to read" />
       </div>
