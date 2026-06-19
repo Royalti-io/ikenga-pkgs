@@ -117,15 +117,7 @@ export async function fetchTriageCount() {
     FROM email_messages em
     WHERE em.triage_category IS NOT NULL AND em.triage_category != ''
   `;
-  const params = [];
-  if (searchTerm) {
-    const searchClause = `(em.subject LIKE ? OR em.from_address LIKE ? OR em.body_text LIKE ? OR COALESCE(c.name, "") LIKE ?)`;
-    if (whereClause) whereClause += ` AND ${searchClause}`;
-    else whereClause = `WHERE ${searchClause}`;
-    const s = `%${searchTerm}%`;
-    params.push(s, s, s, s);
-  }
-  const rows = await hostDbQuery(sql, params);
+  const rows = await hostDbQuery(sql, []);
   return rows[0]?.cnt ?? 0;
 }
 
@@ -136,30 +128,14 @@ export async function fetchSnoozedCount() {
     FROM mail_thread_state
     WHERE snoozed_until IS NOT NULL AND snoozed_until > datetime('now')
   `;
-  const params = [];
-  if (searchTerm) {
-    const searchClause = `(em.subject LIKE ? OR em.from_address LIKE ? OR em.body_text LIKE ? OR COALESCE(c.name, "") LIKE ?)`;
-    if (whereClause) whereClause += ` AND ${searchClause}`;
-    else whereClause = `WHERE ${searchClause}`;
-    const s = `%${searchTerm}%`;
-    params.push(s, s, s, s);
-  }
-  const rows = await hostDbQuery(sql, params);
+  const rows = await hostDbQuery(sql, []);
   return rows[0]?.cnt ?? 0;
 }
 
 /** Count unsent drafts. */
 export async function fetchDraftCount() {
   const sql = `SELECT COUNT(*) AS cnt FROM email_drafts WHERE status = 'draft'`;
-  const params = [];
-  if (searchTerm) {
-    const searchClause = `(em.subject LIKE ? OR em.from_address LIKE ? OR em.body_text LIKE ? OR COALESCE(c.name, "") LIKE ?)`;
-    if (whereClause) whereClause += ` AND ${searchClause}`;
-    else whereClause = `WHERE ${searchClause}`;
-    const s = `%${searchTerm}%`;
-    params.push(s, s, s, s);
-  }
-  const rows = await hostDbQuery(sql, params);
+  const rows = await hostDbQuery(sql, []);
   return rows[0]?.cnt ?? 0;
 }
 

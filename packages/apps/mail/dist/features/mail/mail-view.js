@@ -560,6 +560,7 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
                 <span class="reader-quick-reply-foot-spacer"></span>
                 <span><kbd>⌘</kbd><kbd>↵</kbd> Send · <kbd>⌘</kbd><kbd>R</kbd> Regen</span>
                 <span class="reader-quick-reply-tone">Tone: warm</span>
+            </div>
           </div>
         ` : html`
           <div class="reader-quick-reply">
@@ -580,6 +581,7 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
                 <button class="btn btn-sm" onClick=${handleRegenerateReply}>Ask Chi to draft</button>
                 <span class="reader-quick-reply-foot-spacer"></span>
                 <span><kbd>⌘</kbd><kbd>↵</kbd> Send · <kbd>⌘</kbd><kbd>R</kbd> Draft</span>
+              </div>
           </div>
         `}
       </div>
