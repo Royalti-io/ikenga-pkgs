@@ -13,11 +13,5 @@
     "net": [],
     "sqlite.tables": [],
     "vault.keys": []
-  },
-  "requires": [
-    {
-      "kind": "skill",
-      "name": "skill-core"
-    }
-  ]
+  }
 }
