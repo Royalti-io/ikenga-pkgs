@@ -1,5 +1,11 @@
 # @ikenga/mcp-browser
 
+## 0.3.0
+
+### Minor Changes
+
+- [#26](https://github.com/Royalti-io/ikenga-pkgs/pull/26) [`eac5cf9`](https://github.com/Royalti-io/ikenga-pkgs/commit/eac5cf9103c5f9162daae9286c04028b24d75430) Thanks [@nedjamez](https://github.com/nedjamez)! - Add an `engine` discriminant to the browser MCP so agents can target Managed-mode Chrome. `browser_open` gains an optional `engine: "webkit" | "chrome"` (default `"webkit"`) that is forwarded in the open body and reported in the result; `browser_list` now surfaces each pane's `engine`. The wire shape stays engine-agnostic — the shell fixes the engine at open and later verbs inherit it via the pane id. Requires `@ikenga/contract@^0.11.0` (the `BROWSER_ENGINES` discriminant). chrome-pkg WP-08.
+
 ## 0.2.1
 
 ### Patch Changes
