@@ -34,14 +34,26 @@ test('Playwright engine satisfies the /iyke/browser/* verb contract (managed)', 
     assert.match(btn!.ref, /^e\d+$/);
 
     // click via ref -> page mutates
-    await eng.click('p1', btn!.ref);
+    await eng.click('p1', { ref: btn!.ref });
     const out = await eng.eval('p1', `return document.getElementById('out').textContent`);
     assert.equal(out, 'clicked', 'click mutated #out');
 
+    // click via text target also works (selector/text parity with webkit)
+    await eng.eval('p1', `return document.getElementById('out').textContent = 'idle'`);
+    await eng.click('p1', { text: 'Run action' });
+    assert.equal(await eng.eval('p1', `return document.getElementById('out').textContent`), 'clicked', 'click-by-text works');
+
     // fill via ref -> value set
-    await eng.fill('p1', inp!.ref, 'hello engine');
+    await eng.fill('p1', { ref: inp!.ref }, 'hello engine');
     const q = await eng.eval('p1', `return document.getElementById('q').value`);
     assert.equal(q, 'hello engine', 'fill set #q');
+
+    // read-text + pause/resume contract
+    assert.equal((await eng.readText('p1', { ref: btn!.ref })).text, 'Run action', 'read-text by ref');
+    await eng.pause('p1');
+    await assert.rejects(eng.click('p1', { ref: btn!.ref }), /paused/, 'paused refuses interaction');
+    await eng.resume('p1');
+    await eng.click('p1', { ref: btn!.ref }); // works again
 
     // eval (IIFE-return contract)
     assert.equal(await eng.eval('p1', `return 6*7`), 42);
@@ -60,8 +72,14 @@ test('Playwright engine satisfies the /iyke/browser/* verb contract (managed)', 
     await eng.close('p1');
     assert.equal((await eng.list()).panes.length, 0);
 
-    // attach mode errors cleanly (until WP-02 wires the extension)
-    await assert.rejects(eng.open({ pane_id: 'p2', url: 'about:blank', mode: 'attach' }), /extension/);
+    // attach mode connects over CDP; with no Chrome remote-debugging endpoint
+    // reachable it must fail with a precise, actionable error (not a bare stub).
+    process.env.IKENGA_PW_ATTACH_ENDPOINT = 'http://127.0.0.1:59999'; // nothing listening
+    await assert.rejects(
+      eng.open({ pane_id: 'p2', url: 'about:blank', mode: 'attach' }),
+      /attach mode could not reach a Chrome CDP endpoint/,
+    );
+    delete process.env.IKENGA_PW_ATTACH_ENDPOINT;
   } finally {
     await eng.shutdown();
   }

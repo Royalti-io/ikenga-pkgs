@@ -18,6 +18,11 @@ const err = (e: unknown, status = 500) =>
 
 type Body = Record<string, any>;
 
+// Extract the target spec the interaction verbs share. For `click`/`read-text`,
+// `text` targets by visible text; for `fill`/`select` the engine ignores `text`
+// (there it's the value), so passing it through is harmless.
+const target = (b: Body) => ({ ref: b.ref ?? null, selector: b.selector ?? null, text: b.text ?? null });
+
 async function handle(path: string, body: Body): Promise<unknown> {
   const id = body.pane_id as string;
   switch (path) {
@@ -28,13 +33,17 @@ async function handle(path: string, body: Body): Promise<unknown> {
     case '/iyke/browser/forward': return engine.forward(id);
     case '/iyke/browser/reload': return engine.reload(id);
     case '/iyke/browser/snapshot': return engine.snapshot(id, { query: body.query ?? undefined });
-    case '/iyke/browser/click': return engine.click(id, body.ref);
-    case '/iyke/browser/fill': return engine.fill(id, body.ref, body.text, body.replace !== false);
-    case '/iyke/browser/select': return engine.select(id, body.ref, body.value);
+    case '/iyke/browser/click': return engine.click(id, target(body));
+    case '/iyke/browser/fill': return engine.fill(id, target(body), body.text, body.replace !== false);
+    case '/iyke/browser/select': return engine.select(id, target(body), body.value);
+    case '/iyke/browser/read-text': return engine.readText(id, target(body));
     case '/iyke/browser/press-key': return engine.pressKey(id, body.combo);
     case '/iyke/browser/eval': return engine.eval(id, body.script);
     case '/iyke/browser/screenshot': return engine.screenshot(id);
     case '/iyke/browser/wait-for': return engine.waitFor(id, body.kind, body.value ?? undefined, body.timeout_ms);
+    case '/iyke/browser/focus': return engine.focus(id);
+    case '/iyke/browser/pause': return engine.pause(id);
+    case '/iyke/browser/resume': return engine.resume(id);
     case '/iyke/browser/close': return engine.close(id);
     default: throw new Error(`unknown verb ${path}`);
   }
