@@ -1,0 +1,32 @@
+{
+  "id": "com.ikenga.sidecar-playwright-browser",
+  "name": "Playwright Browser Engine",
+  "version": "0.0.0",
+  "ikenga_api": "2",
+  "kind": "embedded",
+
+  "author": {
+    "name": "Royalti, Inc.",
+    "key": "royalti"
+  },
+
+  "//": "WP-03 skeleton. The sidecar/iyke wiring lands in WP-04 (bridge routes mode:attach|managed here, replacing the chromiumoxide engine). Verb engine in src/engine.ts is tested + green.",
+
+  "sidecars": [
+    {
+      "name": "playwright-browser-main",
+      "command": "bun",
+      "args": ["run", "src/sidecar.ts"],
+      "stdio": "json",
+      "lifecycle": "long-lived",
+      "auto_restart": true
+    }
+  ],
+
+  "permissions": {
+    "shell.execute": ["bun", "node", "npx"],
+    "net": ["http://127.0.0.1:*"],
+    "fs.read": ["$pkg_data/**"],
+    "fs.write": ["$pkg_data/**"]
+  }
+}
