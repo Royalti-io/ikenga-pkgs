@@ -17,7 +17,9 @@ import {
   ErrorCode,
   McpError,
 } from '@modelcontextprotocol/sdk/types.js';
+import { BROWSER_ENGINES } from '@ikenga/contract/browser';
 import { BROWSER_WAIT_FOR_KINDS } from '@ikenga/contract/browser';
+import { pathToFileURL } from 'node:url';
 
 import { BrowserClient } from './api.js';
 import { load, STALE_THRESHOLD_SECS } from './control.js';
@@ -47,13 +49,18 @@ const TOOLS = [
   {
     name: 'browser_open',
     description:
-      'Open a new child-webview pane navigated to `url`. Returns an opaque pane id like `b1` that all subsequent browser_* tools use to address this pane. Pass either `session` (a name from browser_session_list) OR `partition` (a raw jar slug) — mutually exclusive. Omit both to use the default jar. Pane survives until browser_close or the desktop app restarts.',
+      'Open a new child-webview pane navigated to `url`. Returns an opaque pane id like `b1` that all subsequent browser_* tools use to address this pane. Pass either `session` (a name from browser_session_list) OR `partition` (a raw jar slug) — mutually exclusive. Omit both to use the default jar. `engine` selects the backend: "webkit" (default, in-shell child webview) or "chrome" (Managed mode — drives the user\'s installed Google Chrome over CDP in its own OS window; use for real-login portals and Chrome-rendering parity). The engine is fixed at open; all later browser_* calls inherit it via the pane id. Pane survives until browser_close or the desktop app restarts.',
     inputSchema: {
       type: 'object',
       properties: {
         url: { type: 'string', description: 'Full https:// URL to load.' },
         partition: { type: 'string', description: 'Raw cookie/storage jar slug. Mutually exclusive with `session`.' },
         session: { type: 'string', description: 'Named session handle (from browser_session_create). Resolves to a partition.' },
+        engine: {
+          type: 'string',
+          enum: [...BROWSER_ENGINES],
+          description: 'Backend engine: "webkit" (default) or "chrome" (Managed mode). Defaults to "webkit".',
+        },
       },
       required: ['url'],
       additionalProperties: false,
@@ -71,7 +78,7 @@ const TOOLS = [
   },
   {
     name: 'browser_list',
-    description: 'List all currently-open browser panes owned by this MCP server. Returns { panes: [{id, url, partition, surface_kind}] }. Useful to discover what state a previous session left around.',
+    description: 'List all currently-open browser panes owned by this MCP server. Returns { panes: [{id, url, partition, surface_kind, engine}] }, where `engine` is "webkit" or "chrome". Useful to discover what state a previous session left around.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -374,6 +381,10 @@ async function dispatch(name: ToolName, args: Record<string, unknown>): Promise<
         })) as { partition: string };
         partition = resolved.partition;
       }
+      // Engine is fixed at open; the shell remembers it per-pane and later
+      // verbs inherit it via the pane id (the wire shape is engine-agnostic).
+      // Normalize to the contract default rather than trusting raw input.
+      const engine = args.engine === 'chrome' ? 'chrome' : 'webkit';
       const id = panes.allocate();
       try {
         await client.post('/iyke/browser/open', {
@@ -382,8 +393,9 @@ async function dispatch(name: ToolName, args: Record<string, unknown>): Promise<
           url: args.url,
           partition,
           rect: DEFAULT_RECT,
+          engine,
         });
-        return { id, url: args.url, partition, session: args.session ?? null };
+        return { id, url: args.url, partition, session: args.session ?? null, engine };
       } catch (e) {
         panes.release(id);
         throw e;
@@ -428,7 +440,13 @@ async function dispatch(name: ToolName, args: Record<string, unknown>): Promise<
 
     case 'browser_list': {
       const res = (await client.get('/iyke/browser/list', { pkg_id: PKG_ID })) as {
-        panes: Array<{ pane_id: string; current_url: string | null; partition: string; surface_kind: string }>;
+        panes: Array<{
+          pane_id: string;
+          current_url: string | null;
+          partition: string;
+          surface_kind: string;
+          engine?: string;
+        }>;
       };
       // Reconcile the local known set with whatever the shell reports.
       const seen = new Set(res.panes.map((p) => p.pane_id));
@@ -442,6 +460,8 @@ async function dispatch(name: ToolName, args: Record<string, unknown>): Promise<
           url: p.current_url,
           partition: p.partition,
           surface_kind: p.surface_kind,
+          // Back-compat: a pre-engine shell omits this; treat it as webkit.
+          engine: p.engine ?? 'webkit',
         })),
       };
     }
@@ -630,8 +650,18 @@ async function main(): Promise<void> {
   await server.connect(transport);
 }
 
-main().catch((err) => {
-  // eslint-disable-next-line no-console
-  console.error('browser-mcp fatal:', err);
-  process.exit(1);
-});
+// Only run the stdio server when executed as the bin entrypoint — importing
+// this module (e.g. from the test suite to inspect TOOLS) must not start it.
+const isEntrypoint =
+  typeof process.argv[1] === 'string' &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isEntrypoint) {
+  main().catch((err) => {
+    // eslint-disable-next-line no-console
+    console.error('browser-mcp fatal:', err);
+    process.exit(1);
+  });
+}
+
+export { TOOLS };

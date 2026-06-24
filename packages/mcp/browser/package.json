@@ -56,7 +56,7 @@
     "test": "node --test --import=tsx 'src/**/*.test.ts'"
   },
   "dependencies": {
-    "@ikenga/contract": "^0.5.1",
+    "@ikenga/contract": "^0.11.0",
     "@modelcontextprotocol/sdk": "^1.23.0"
   },
   "devDependencies": {
