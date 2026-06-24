@@ -9,6 +9,7 @@ import { createServer, type IncomingMessage, type Server } from 'node:http';
 import { AddressInfo } from 'node:net';
 
 import { BrowserClient } from './api.js';
+import { TOOLS } from './index.js';
 import type { ControlFile } from './control.js';
 
 interface RecordedRequest {
@@ -80,6 +81,36 @@ test('BrowserClient.post sends Authorization, Content-Type, and the JSON body', 
       assert.equal(parsed.pkg_id, 'com.ikenga.mcp-browser');
       assert.equal(parsed.pane_id, 'b1');
       assert.equal(parsed.url, 'https://example.com');
+    },
+  );
+});
+
+test('browser_open exposes the engine discriminant (webkit|chrome) and carries it on the wire', async () => {
+  // The new tool surface: browser_open accepts an `engine` enum.
+  const open = TOOLS.find((t) => t.name === 'browser_open');
+  assert.ok(open, 'browser_open tool is present');
+  const engineProp = (open!.inputSchema.properties as Record<string, { enum?: readonly string[] }>)
+    .engine;
+  assert.ok(engineProp, 'browser_open declares an engine property');
+  assert.deepEqual([...(engineProp.enum ?? [])].sort(), ['chrome', 'webkit']);
+  // engine is optional — only `url` is required.
+  assert.deepEqual([...open!.inputSchema.required], ['url']);
+
+  // The wire shape stays engine-agnostic: the field travels in the open body
+  // and the shell remembers it per-pane (Mock 2 contract).
+  await withServer(
+    () => ({ body: { ok: true } }),
+    async (cf, recorded) => {
+      const c = new BrowserClient(cf);
+      await c.post('/iyke/browser/open', {
+        pkg_id: 'com.ikenga.mcp-browser',
+        pane_id: 'b1',
+        url: 'https://accounts.google.com',
+        partition: 'default',
+        engine: 'chrome',
+      });
+      const parsed = JSON.parse(recorded[0]!.body);
+      assert.equal(parsed.engine, 'chrome');
     },
   );
 });
