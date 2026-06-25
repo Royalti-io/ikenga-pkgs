@@ -18,11 +18,15 @@ writeFileSync(FIX, `<!doctype html><meta charset=utf-8><title>Engine Fixture</ti
 <script>document.getElementById('go').addEventListener('click',()=>{document.getElementById('out').textContent='clicked';});</script>
 </body>`);
 
+// Isolate the persistent managed profile to a temp dir (don't touch ~/.ikenga)
+// and run headless so CI has no display dependency.
+process.env.IKENGA_PW_PROFILES_DIR = mkdtempSync(path.join(os.tmpdir(), 'ik-pw-profiles-'));
+
 test('Playwright engine satisfies the /iyke/browser/* verb contract (managed)', async () => {
   const eng = new PlaywrightBrowserEngine();
   try {
     // open
-    const opened = await eng.open({ pane_id: 'p1', url: 'file://' + FIX, mode: 'managed' });
+    const opened = await eng.open({ pane_id: 'p1', url: 'file://' + FIX, mode: 'managed', headless: true });
     assert.equal(opened.mode, 'managed');
 
     // snapshot -> refs

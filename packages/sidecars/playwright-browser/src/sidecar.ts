@@ -33,6 +33,7 @@ async function handle(path: string, body: Body): Promise<unknown> {
         mode: body.mode as Mode,
         partition: body.partition,
         attach_target: body.attach_target,
+        headless: typeof body.headless === 'boolean' ? body.headless : undefined,
       });
     case '/iyke/browser/launch_profile':
       return engine.launchProfile({ dir: body.dir, port: body.port });
