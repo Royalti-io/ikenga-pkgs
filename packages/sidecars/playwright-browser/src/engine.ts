@@ -13,6 +13,8 @@
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 import os from 'node:os';
 import path from 'node:path';
+import fs from 'node:fs';
+import { spawn } from 'node:child_process';
 
 export type Mode = 'managed' | 'attach';
 
@@ -55,9 +57,35 @@ export interface OpenInput {
   url: string;
   mode?: Mode;
   partition?: string;
+  /** attach mode only: which Chrome target to drive.
+   *  "new"    = open a fresh tab (context.newPage()), non-invasive — DEFAULT.
+   *  "active" = adopt the first open tab (legacy behavior).
+   *  "<id>"   = adopt the page whose CDP target id / url matches.
+   *  In every case the page is navigated only if `url` is a non-empty,
+   *  non-about:blank value. */
+  attach_target?: AttachTarget;
 }
 
+/** "new" | "active" | a CDP target id (any other string). */
+export type AttachTarget = 'new' | 'active' | (string & {});
+
 const DEFAULT_PARTITION = 'default';
+const DEFAULT_ATTACH_TARGET: AttachTarget = 'new';
+
+/** OS Chrome profile, enumerated from the user-data-dir's Local State. */
+export interface ChromeProfile {
+  dir: string;
+  name: string;
+  running: boolean;
+}
+
+/** A live CDP target (window/tab) on a running debug Chrome. */
+export interface ChromeCdpTarget {
+  targetId: string;
+  title: string;
+  url: string;
+  kind: string;
+}
 
 // The snapshot tagger: runs in the page, clears prior refs, assigns `e<N>` to
 // every interactive element, returns the structured node list. `refs invalidate
@@ -115,10 +143,11 @@ export class PlaywrightBrowserEngine {
       page = context.pages()[0] ?? (await context.newPage());
       await page.goto(input.url, { waitUntil: 'load' });
     } else {
-      // attach: connect over CDP to the user's everyday Chrome and adopt its
-      // live/active tab as this pane's page, so every downstream verb
-      // (snapshot/click/fill/eval/screenshot via data-ik-ref) works unchanged.
-      ({ context, page } = await this.attach(input.url));
+      // attach: connect over CDP to the user's everyday Chrome and adopt a tab
+      // (new / active / a specific target) as this pane's page, so every
+      // downstream verb (snapshot/click/fill/eval/screenshot via data-ik-ref)
+      // works unchanged.
+      ({ context, page } = await this.attach(input.url, input.attach_target ?? DEFAULT_ATTACH_TARGET));
     }
 
     this.sessions.set(input.pane_id, { context, page, mode, partition, paused: false });
@@ -126,10 +155,15 @@ export class PlaywrightBrowserEngine {
   }
 
   /** Attach to the user's everyday Chrome over CDP. Reuses one shared Browser
-   *  connection across panes; adopts the active tab (or opens a new one) and
-   *  navigates it to `url`. Throws a precise, actionable error if the endpoint
-   *  is unreachable — never a bare stub. */
-  private async attach(url: string): Promise<{ context: BrowserContext; page: Page }> {
+   *  connection across panes; the `target` selects which tab to drive (new /
+   *  active / a specific CDP target id or url). The page is navigated only when
+   *  `url` is meaningful (non-empty and not about:blank), so the default "new"
+   *  path never hijacks an existing tab. Throws a precise, actionable error if
+   *  the endpoint is unreachable — never a bare stub. */
+  private async attach(
+    url: string,
+    target: AttachTarget = DEFAULT_ATTACH_TARGET,
+  ): Promise<{ context: BrowserContext; page: Page }> {
     // ⚠ RUNTIME: attach must run on NODE, not Bun. `connectOverCDP` speaks CDP
     // over a WebSocket; Bun's WS transport hangs Playwright's connect handshake
     // (verified: raw WS opens 101 on Bun, but connectOverCDP times out; Node
@@ -161,11 +195,57 @@ export class PlaywrightBrowserEngine {
 
     const browser = this.attachBrowser;
     // Adopt the first existing context (the user's real profile) or, if Chrome
-    // exposed none, create one. Then take the active/live tab.
+    // exposed none, create one.
     const context = browser.contexts()[0] ?? (await browser.newContext());
-    const page = context.pages().find((p) => !p.isClosed()) ?? (await context.newPage());
-    await page.goto(url, { waitUntil: 'load' });
+
+    let page: Page;
+    if (target === 'new') {
+      // Least invasive: a fresh tab. Never touches the user's existing tabs.
+      page = await context.newPage();
+    } else if (target === 'active') {
+      // Legacy behavior: adopt the first live tab.
+      page = context.pages().find((p) => !p.isClosed()) ?? (await context.newPage());
+    } else {
+      // Adopt a specific tab. Match by CDP target id first (queried out-of-band
+      // via /json so we don't need a private Playwright API), then fall back to
+      // an exact url match; finally to a substring url match.
+      const pages = context.pages().filter((p) => !p.isClosed());
+      const urlForTarget = await this.urlForTargetId(target);
+      page =
+        (urlForTarget ? pages.find((p) => p.url() === urlForTarget) : undefined) ??
+        pages.find((p) => p.url() === target) ??
+        pages.find((p) => p.url().includes(target)) ??
+        undefined!;
+      if (!page) {
+        throw new Error(
+          `attach_target "${target}" did not match any open tab. ` +
+            `Call GET /iyke/browser/targets for the current target ids / urls.`,
+        );
+      }
+    }
+
+    // Navigate only when the caller actually asked for a url. A blank/about:blank
+    // url means "drive whatever is there" and must not disturb the tab.
+    if (this.shouldNavigate(url)) await page.goto(url, { waitUntil: 'load' });
     return { context, page };
+  }
+
+  /** Resolve a CDP target id to its url via the raw `/json` listing, so the
+   *  "<id>" attach path can match a Playwright Page (whose CDP id isn't exposed
+   *  by the public API). Returns undefined if it can't be resolved. */
+  private async urlForTargetId(targetId: string): Promise<string | undefined> {
+    try {
+      const { targets } = await this.targets();
+      return targets.find((t) => t.targetId === targetId)?.url;
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** A url worth navigating to: present and not the blank page. */
+  private shouldNavigate(url: string | undefined): boolean {
+    const u = (url ?? '').trim();
+    return u.length > 0 && u !== 'about:blank';
   }
 
   private session(pane_id: string): Session {
@@ -317,6 +397,201 @@ export class PlaywrightBrowserEngine {
       pane_id, current_url: s.page.url(), mode: s.mode, partition: s.partition,
     }));
     return { panes };
+  }
+
+  // ─── Profiles / targets / launch (WP-1 + WP-3) ──────────────────────────
+  // These are chrome-only *global* queries — no pane/session involved. They
+  // back the FE picker: list on-disk profiles, list live debug-Chrome tabs,
+  // and launch a chosen profile into debug mode so it becomes attachable.
+
+  /** The OS-correct Chrome user-data-dir (where "Local State" + profile dirs
+   *  live). Overridable with IKENGA_PW_CHROME_DATA_DIR for tests / non-default
+   *  installs. */
+  private chromeDataDir(): string {
+    const override = process.env.IKENGA_PW_CHROME_DATA_DIR?.trim();
+    if (override) return override;
+    const home = os.homedir();
+    switch (process.platform) {
+      case 'darwin':
+        return path.join(home, 'Library', 'Application Support', 'Google', 'Chrome');
+      case 'win32':
+        return path.join(
+          process.env.LOCALAPPDATA ?? path.join(home, 'AppData', 'Local'),
+          'Google',
+          'Chrome',
+          'User Data',
+        );
+      default:
+        return path.join(home, '.config', 'google-chrome');
+    }
+  }
+
+  /** WP-1: enumerate OS Chrome profiles from Local State → profile.info_cache.
+   *  `running` is best-effort (a SingletonLock present in the profile dir). This
+   *  is distinct from the Ikenga named partitions used by managed mode. */
+  async profiles(): Promise<{ profiles: ChromeProfile[] }> {
+    const dataDir = this.chromeDataDir();
+    let infoCache: Record<string, { name?: string }> = {};
+    try {
+      const raw = fs.readFileSync(path.join(dataDir, 'Local State'), 'utf8');
+      const parsed = JSON.parse(raw) as { profile?: { info_cache?: Record<string, { name?: string }> } };
+      infoCache = parsed.profile?.info_cache ?? {};
+    } catch {
+      // No Local State (Chrome never run / not installed) → no profiles.
+      return { profiles: [] };
+    }
+    const profiles = Object.entries(infoCache).map(([dir, info]) => ({
+      dir,
+      name: (info?.name ?? dir).trim() || dir,
+      running: this.profileRunning(dataDir, dir),
+    }));
+    return { profiles };
+  }
+
+  /** Best-effort: is this profile currently open? Chrome holds a SingletonLock
+   *  in the profile directory while running. Symlink on Linux/mac, file on Win;
+   *  presence either way is the signal. */
+  private profileRunning(dataDir: string, dir: string): boolean {
+    try {
+      fs.lstatSync(path.join(dataDir, dir, 'SingletonLock'));
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** The attach CDP endpoint (env override or the default port). */
+  private attachEndpoint(): string {
+    return process.env[ATTACH_ENDPOINT_ENV]?.trim() || DEFAULT_ATTACH_ENDPOINT;
+  }
+
+  /** WP-1: probe the attach endpoint for live tabs. Never throws — if no debug
+   *  Chrome is reachable, returns `{ endpoint: null, targets: [] }` so the FE
+   *  can show the "start Chrome with --remote-debugging-port" hint. */
+  async targets(): Promise<{ endpoint: string | null; targets: ChromeCdpTarget[] }> {
+    const endpoint = this.attachEndpoint();
+    try {
+      // /json/version is the liveness probe; /json is the tab list.
+      const version = await fetch(`${endpoint}/json/version`, {
+        signal: AbortSignal.timeout(2_000),
+      });
+      if (!version.ok) return { endpoint: null, targets: [] };
+      const listRes = await fetch(`${endpoint}/json`, { signal: AbortSignal.timeout(2_000) });
+      if (!listRes.ok) return { endpoint, targets: [] };
+      const raw = (await listRes.json()) as Array<{
+        id?: string;
+        title?: string;
+        url?: string;
+        type?: string;
+      }>;
+      const targets = (Array.isArray(raw) ? raw : [])
+        .filter((t) => (t.type ?? 'page') === 'page')
+        .map((t) => ({
+          targetId: t.id ?? '',
+          title: t.title ?? '',
+          url: t.url ?? '',
+          kind: t.type ?? 'page',
+        }));
+      return { endpoint, targets };
+    } catch {
+      return { endpoint: null, targets: [] };
+    }
+  }
+
+  /** Resolve the installed Chrome ('chrome' channel) executable. Playwright's
+   *  public `executablePath()` only points at its bundled Chromium, so we
+   *  resolve the real Chrome by the platform's well-known install locations
+   *  (first existing wins). Overridable with IKENGA_PW_CHROME_BINARY. */
+  private chromeExecutable(): string {
+    const override = process.env.IKENGA_PW_CHROME_BINARY?.trim();
+    if (override) return override;
+    const candidates =
+      process.platform === 'darwin'
+        ? ['/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']
+        : process.platform === 'win32'
+          ? [
+              path.join(
+                process.env['PROGRAMFILES'] ?? 'C:\\Program Files',
+                'Google',
+                'Chrome',
+                'Application',
+                'chrome.exe',
+              ),
+              path.join(
+                process.env['PROGRAMFILES(X86)'] ?? 'C:\\Program Files (x86)',
+                'Google',
+                'Chrome',
+                'Application',
+                'chrome.exe',
+              ),
+            ]
+          : [
+              '/usr/bin/google-chrome',
+              '/usr/bin/google-chrome-stable',
+              '/opt/google/chrome/chrome',
+              '/usr/bin/chromium',
+              '/usr/bin/chromium-browser',
+            ];
+    for (const c of candidates) {
+      try {
+        fs.accessSync(c, fs.constants.X_OK);
+        return c;
+      } catch {
+        // try next
+      }
+    }
+    // Last resort: the bundled Chromium. Honors the contract ("the installed
+    // Chrome … or the 'chrome' channel") as a graceful fallback rather than a
+    // hard failure when Chrome isn't at a standard path.
+    return chromium.executablePath();
+  }
+
+  /** WP-3: launch the installed Chrome on a chosen on-disk profile in debug
+   *  mode so it becomes attachable. Refuses if that profile is already running
+   *  (Chrome's singleton would just focus the existing window and ignore the
+   *  debug flags). Returns the endpoint once the CDP port answers. */
+  async launchProfile(input: { dir: string; port?: number }): Promise<{ ok: true; endpoint: string }> {
+    const dir = input.dir;
+    const port = input.port ?? 9222;
+    const dataDir = this.chromeDataDir();
+
+    if (this.profileRunning(dataDir, dir)) {
+      throw new Error(
+        `Chrome profile "${dir}" is already running. Quit it first, or attach to it ` +
+          `if it was started with --remote-debugging-port. (A running profile holds a ` +
+          `SingletonLock; relaunching just focuses the existing window and ignores the ` +
+          `debug flags.)`,
+      );
+    }
+
+    const exe = this.chromeExecutable();
+    const endpoint = `http://127.0.0.1:${port}`;
+    const args = [
+      `--profile-directory=${dir}`,
+      `--remote-debugging-port=${port}`,
+      `--remote-allow-origins=${endpoint}`,
+      `--user-data-dir=${dataDir}`,
+    ];
+    const child = spawn(exe, args, { detached: true, stdio: 'ignore' });
+    child.unref();
+
+    // Wait for the CDP port to come up (bounded). The first /json/version 200
+    // means it's attachable.
+    const deadline = Date.now() + 15_000;
+    let lastErr = '';
+    while (Date.now() < deadline) {
+      try {
+        const res = await fetch(`${endpoint}/json/version`, { signal: AbortSignal.timeout(1_000) });
+        if (res.ok) return { ok: true, endpoint };
+      } catch (e) {
+        lastErr = e instanceof Error ? e.message : String(e);
+      }
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    throw new Error(
+      `Launched Chrome for profile "${dir}" but its CDP endpoint at ${endpoint} never ` +
+        `came up within 15s${lastErr ? ` (last: ${lastErr})` : ''}.`,
+    );
   }
 
   async shutdown() {

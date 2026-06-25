@@ -27,7 +27,15 @@ async function handle(path: string, body: Body): Promise<unknown> {
   const id = body.pane_id as string;
   switch (path) {
     case '/iyke/browser/open':
-      return engine.open({ pane_id: id, url: body.url, mode: body.mode as Mode, partition: body.partition });
+      return engine.open({
+        pane_id: id,
+        url: body.url,
+        mode: body.mode as Mode,
+        partition: body.partition,
+        attach_target: body.attach_target,
+      });
+    case '/iyke/browser/launch_profile':
+      return engine.launchProfile({ dir: body.dir, port: body.port });
     case '/iyke/browser/goto': return engine.goto(id, body.url);
     case '/iyke/browser/back': return engine.back(id);
     case '/iyke/browser/forward': return engine.forward(id);
@@ -69,6 +77,8 @@ export function serve(port = 0): Server {
     (async () => {
       const url = new URL(req.url ?? '/', 'http://127.0.0.1');
       if (url.pathname === '/iyke/browser/list' && req.method === 'GET') return sendJson(res, await engine.list());
+      if (url.pathname === '/iyke/browser/profiles' && req.method === 'GET') return sendJson(res, await engine.profiles());
+      if (url.pathname === '/iyke/browser/targets' && req.method === 'GET') return sendJson(res, await engine.targets());
       if (url.pathname === '/healthz') return sendJson(res, { ok: true });
       if (req.method !== 'POST') return sendJson(res, { error: `method ${req.method} not allowed` }, 405);
       const body = await readBody(req);
