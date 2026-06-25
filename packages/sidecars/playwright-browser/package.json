@@ -6,6 +6,7 @@
   "license": "Apache-2.0",
   "type": "module",
   "scripts": {
+    "build": "bun build src/sidecar.ts --target node --outfile dist/sidecar.js --external playwright --external playwright-core",
     "test": "node --test --import=tsx 'src/**/*.test.ts'",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
