@@ -4,7 +4,7 @@
 import os from 'node:os';
 import path from 'node:path';
 import { writeFileSync } from 'node:fs';
-import { serve } from './sidecar.ts';
+import { serve, portOf } from './sidecar.ts';
 
 const FIX = path.join(os.tmpdir(), `ik-pw-sc-${process.pid}.html`);
 writeFileSync(FIX, `<!doctype html><meta charset=utf-8><title>Sidecar Fixture</title><body>
@@ -15,7 +15,8 @@ writeFileSync(FIX, `<!doctype html><meta charset=utf-8><title>Sidecar Fixture</t
 </body>`);
 
 const server = serve(0);
-const base = `http://127.0.0.1:${server.port}`;
+const PORT = await portOf(server);
+const base = `http://127.0.0.1:${PORT}`;
 const PKG = 'com.ikenga.mcp-browser', PANE = 'p1';
 let fails = 0;
 const ok = (name: string, cond: boolean, msg: string) => { if (!cond) fails++; console.log(`  ${cond ? 'PASS' : 'FAIL'} ${name.padEnd(11)} ${msg}`); };
@@ -49,8 +50,8 @@ try {
   const list2 = await get('/iyke/browser/list');
   ok('close', list2.panes?.length === 0, `${list2.panes?.length} pane(s) after close`);
 
-  console.log(`\nRESULT: ${fails === 0 ? 'PASS' : 'FAIL'} — ${6 - fails}/6 verbs over HTTP (port ${server.port})`);
+  console.log(`\nRESULT: ${fails === 0 ? 'PASS' : 'FAIL'} — ${6 - fails}/6 verbs over HTTP (port ${PORT})`);
 } finally {
-  server.stop();
+  server.close();
 }
 process.exit(fails === 0 ? 0 : 1);
