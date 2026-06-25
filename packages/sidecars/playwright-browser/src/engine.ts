@@ -130,6 +130,12 @@ export class PlaywrightBrowserEngine {
    *  navigates it to `url`. Throws a precise, actionable error if the endpoint
    *  is unreachable — never a bare stub. */
   private async attach(url: string): Promise<{ context: BrowserContext; page: Page }> {
+    // ⚠ RUNTIME: attach must run on NODE, not Bun. `connectOverCDP` speaks CDP
+    // over a WebSocket; Bun's WS transport hangs Playwright's connect handshake
+    // (verified: raw WS opens 101 on Bun, but connectOverCDP times out; Node
+    // connects fine). Managed mode works on Bun because it drives a launched
+    // browser over a pipe, not a ws. So the sidecar that serves attach panes is
+    // spawned with `node --import tsx`, not `bun run`. See attach.live.ts.
     const endpoint = process.env[ATTACH_ENDPOINT_ENV]?.trim() || DEFAULT_ATTACH_ENDPOINT;
 
     if (!this.attachBrowser || !this.attachBrowser.isConnected()) {

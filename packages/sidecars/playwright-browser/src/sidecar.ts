@@ -1,20 +1,20 @@
 // WP-04 (transport): a localhost HTTP service exposing the Playwright verb engine
 // in the EXACT /iyke/browser/* request/response shapes, so the shell bridge can
 // reverse-proxy `mode:attach|managed` to it (replacing the in-process chromiumoxide
-// dispatch). Runs on Bun (Bun.serve). The shell spawns it as a long-lived sidecar
-// and discovers the port from the `IKENGA_PW_READY {port}` stdout line.
+// dispatch). Runs on NODE (`node --import tsx`) — NOT Bun: Playwright's
+// connectOverCDP (attach mode) hangs on Bun's WebSocket transport. The shell
+// spawns it as a long-lived sidecar and discovers the port from the
+// `IKENGA_PW_READY {port}` stdout line.
 //
 // Wire shape mirrors the existing bridge: every body carries {pkg_id, pane_id, …};
 // responses are the same JSON the chromiumoxide path returned (so @ikenga/mcp-browser
 // and the iyke CLI don't change).
 
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { pathToFileURL } from 'node:url';
 import { PlaywrightBrowserEngine, type Mode } from './engine.ts';
 
 const engine = new PlaywrightBrowserEngine();
-const json = (data: unknown, status = 200) =>
-  new Response(JSON.stringify(data), { status, headers: { 'content-type': 'application/json' } });
-const err = (e: unknown, status = 500) =>
-  json({ error: e instanceof Error ? e.message : String(e) }, status);
 
 type Body = Record<string, any>;
 
@@ -49,31 +49,52 @@ async function handle(path: string, body: Body): Promise<unknown> {
   }
 }
 
-export function serve(port = 0) {
-  return Bun.serve({
-    port,
-    hostname: '127.0.0.1',
-    async fetch(req) {
-      const url = new URL(req.url);
-      try {
-        if (url.pathname === '/iyke/browser/list' && req.method === 'GET') return json(await engine.list());
-        if (url.pathname === '/healthz') return json({ ok: true });
-        if (req.method !== 'POST') return err(`method ${req.method} not allowed`, 405);
-        const body = (await req.json().catch(() => ({}))) as Body;
-        return json(await handle(url.pathname, body));
-      } catch (e) {
-        return err(e);
-      }
-    },
+function sendJson(res: ServerResponse, data: unknown, status = 200): void {
+  const s = JSON.stringify(data);
+  res.writeHead(status, { 'content-type': 'application/json' });
+  res.end(s);
+}
+
+function readBody(req: IncomingMessage): Promise<Body> {
+  return new Promise((resolve) => {
+    let buf = '';
+    req.on('data', (c) => { buf += c; });
+    req.on('end', () => { try { resolve(buf ? JSON.parse(buf) : {}); } catch { resolve({}); } });
+    req.on('error', () => resolve({}));
+  });
+}
+
+export function serve(port = 0): Server {
+  const server = createServer((req, res) => {
+    (async () => {
+      const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+      if (url.pathname === '/iyke/browser/list' && req.method === 'GET') return sendJson(res, await engine.list());
+      if (url.pathname === '/healthz') return sendJson(res, { ok: true });
+      if (req.method !== 'POST') return sendJson(res, { error: `method ${req.method} not allowed` }, 405);
+      const body = await readBody(req);
+      sendJson(res, await handle(url.pathname, body));
+    })().catch((e) => sendJson(res, { error: e instanceof Error ? e.message : String(e) }, 500));
+  });
+  server.listen(port, '127.0.0.1');
+  return server;
+}
+
+/** Resolve a server's bound port once it's listening. */
+export function portOf(server: Server): Promise<number> {
+  return new Promise((resolve) => {
+    const get = () => { const a = server.address(); resolve(typeof a === 'object' && a ? a.port : 0); };
+    if (server.listening) get();
+    else server.once('listening', get);
   });
 }
 
 // Entry point: start + announce the port for the shell to discover.
-if (import.meta.main) {
+const isEntry =
+  typeof process.argv[1] === 'string' && import.meta.url === pathToFileURL(process.argv[1]).href;
+if (isEntry) {
   const server = serve(Number(process.env.IKENGA_PW_PORT ?? 0));
-  // eslint-disable-next-line no-console
-  console.log(`IKENGA_PW_READY ${server.port}`);
-  const shutdown = async () => { await engine.shutdown(); server.stop(); process.exit(0); };
+  portOf(server).then((port) => console.log(`IKENGA_PW_READY ${port}`));
+  const shutdown = async () => { await engine.shutdown(); server.close(); process.exit(0); };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);
 }
