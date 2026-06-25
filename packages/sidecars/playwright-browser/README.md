@@ -1,4 +1,4 @@
-# @ikenga/sidecar-playwright-browser
+# @ikenga/pkg-browser
 
 The browser engine behind Ikenga's `/iyke/browser/*` contract — a Playwright verb engine the shell (and its agents) use to drive Chrome. Replaces the Rust chromiumoxide engine ([ADR-018](https://github.com/Royalti-io/ikenga/blob/main/docs/adr/018-chrome-automation-adopt-playwright.md)).
 
@@ -20,10 +20,10 @@ The shell resolves the sidecar in this order: **`IKENGA_PW_SIDECAR` env → inst
 
 ```bash
 # 1) install the engine (bundles Playwright — ~3.7 MB)
-npm install -g @ikenga/sidecar-playwright-browser
+npm install -g @ikenga/pkg-browser
 
 # 2) point the shell at it (add to ~/.bashrc to persist)
-export IKENGA_PW_SIDECAR="$(npm root -g)/@ikenga/sidecar-playwright-browser/dist/sidecar.js"
+export IKENGA_PW_SIDECAR="$(npm root -g)/@ikenga/pkg-browser/dist/sidecar.js"
 
 # 3) (re)start the Ikenga shell — chrome panes now resolve to this engine
 ```
@@ -36,13 +36,13 @@ Then drive it:
 
 **Standalone** (no shell — a script or your own MCP host): the pkg is a self-contained HTTP server.
 ```bash
-IKENGA_PW_PORT=9333 node "$(npm root -g)/@ikenga/sidecar-playwright-browser/dist/sidecar.js"
+IKENGA_PW_PORT=9333 node "$(npm root -g)/@ikenga/pkg-browser/dist/sidecar.js"
 # → prints `IKENGA_PW_READY 9333`; POST the /iyke/browser/* verbs to it.
 ```
 
 ## Coming: one-command install via the Ọba registry
 
-`ikenga add @ikenga/sidecar-playwright-browser` (and the in-shell store) need this pkg in the **signed Ọba registry**. That's pending two things: it diverges from the registry's `@ikenga/pkg-*` naming convention (a rename-republish or a manual index entry), and the index must be re-signed with the registry's minisign key. Until then, use the npm + `IKENGA_PW_SIDECAR` path above.
+`ikenga add @ikenga/pkg-browser` (and the in-shell store) need this pkg in the **signed Ọba registry**. That's pending two things: it diverges from the registry's `@ikenga/pkg-*` naming convention (a rename-republish or a manual index entry), and the index must be re-signed with the registry's minisign key. Until then, use the npm + `IKENGA_PW_SIDECAR` path above.
 
 ## Verbs
 
