@@ -2,7 +2,7 @@
   "name": "@ikenga/sidecar-playwright-browser",
   "version": "0.1.0",
   "private": false,
-  "description": "Playwright verb engine behind Ikenga's /iyke/browser/* contract — replaces the Rust chromiumoxide Chrome engine (ADR-018). Managed (dedicated profile) + Attach (everyday Chrome via the official Playwright extension).",
+  "description": "Playwright verb engine behind Ikenga's /iyke/browser/* contract \u2014 replaces the Rust chromiumoxide Chrome engine (ADR-018). Managed (dedicated profile) + Attach (everyday Chrome via the official Playwright extension).",
   "license": "Apache-2.0",
   "type": "module",
   "files": [
@@ -14,7 +14,8 @@
   "scripts": {
     "build": "bun build src/sidecar.ts --target node --outfile dist/sidecar.js --external playwright --external playwright-core",
     "test": "node --test --import=tsx 'src/**/*.test.ts'",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "publish:flat": "bash scripts/publish-flat.sh"
   },
   "dependencies": {
     "playwright": "^1.50.0"
