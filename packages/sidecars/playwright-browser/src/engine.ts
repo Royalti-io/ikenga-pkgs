@@ -42,6 +42,31 @@ export interface Target {
 const ATTACH_ENDPOINT_ENV = 'IKENGA_PW_ATTACH_ENDPOINT';
 const DEFAULT_ATTACH_ENDPOINT = 'http://127.0.0.1:9222';
 
+// managed mode: a PERSISTENT per-partition profile so platform logins survive
+// across runs ("log in once, the agent reuses the session" — Need-1). The shell
+// overrides IKENGA_PW_PROFILES_DIR to its app-data dir; standalone defaults to
+// ~/.ikenga/managed-profiles. NEVER os.tmpdir() (that was ephemeral → forced a
+// re-login every run).
+const PROFILES_DIR_ENV = 'IKENGA_PW_PROFILES_DIR';
+const HEADLESS_ENV = 'IKENGA_PW_HEADLESS';
+
+/** Persistent profile directory for a managed partition. */
+function managedProfileDir(partition: string): string {
+  const root =
+    process.env[PROFILES_DIR_ENV]?.trim() || path.join(os.homedir(), '.ikenga', 'managed-profiles');
+  return path.join(root, partition);
+}
+
+/** Managed default is HEADFUL (visible — for human review/login). Opt into
+ *  headless per-pane (`headless:true`) or process-wide (`IKENGA_PW_HEADLESS=1`). */
+function resolveHeadless(explicit?: boolean): boolean {
+  if (typeof explicit === 'boolean') return explicit;
+  const env = process.env[HEADLESS_ENV];
+  if (env === '1') return true;
+  if (env === '0') return false;
+  return false;
+}
+
 export interface SnapshotNode {
   ref: string;
   tag: string;
@@ -64,6 +89,10 @@ export interface OpenInput {
    *  In every case the page is navigated only if `url` is a non-empty,
    *  non-about:blank value. */
   attach_target?: AttachTarget;
+  /** managed mode only: run with a visible window (`false`, the DEFAULT — so a
+   *  human can watch / log in / review, Need-1) or headless (`true`, autonomous).
+   *  Omit to inherit `IKENGA_PW_HEADLESS` (1/0) or the headful default. */
+  headless?: boolean;
 }
 
 /** "new" | "active" | a CDP target id (any other string). */
@@ -135,10 +164,10 @@ export class PlaywrightBrowserEngine {
     let context: BrowserContext;
     let page: Page;
     if (mode === 'managed') {
-      const profileDir = path.join(os.tmpdir(), `ikenga-pw-${partition}`);
+      const profileDir = managedProfileDir(partition);
       context = await chromium.launchPersistentContext(profileDir, {
         channel: 'chrome',
-        headless: process.env.IKENGA_PW_HEADLESS !== '0',
+        headless: resolveHeadless(input.headless),
       });
       page = context.pages()[0] ?? (await context.newPage());
       await page.goto(input.url, { waitUntil: 'load' });
