@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Publish @ikenga/sidecar-playwright-browser with a clean, kernel-installable
+# Publish @ikenga/pkg-browser with a clean, kernel-installable
 # tarball.
 #
 # WHY THIS EXISTS (not changesets / pnpm publish): the pkg vendors Playwright via

@@ -13,6 +13,6 @@
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
   "ignore": [
-    "@ikenga/sidecar-playwright-browser"
+    "@ikenga/pkg-browser"
   ]
 }
