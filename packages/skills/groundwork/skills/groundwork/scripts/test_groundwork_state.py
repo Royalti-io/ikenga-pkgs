@@ -176,6 +176,62 @@ try:
     check("--with-briefs attaches brief", "GOAL" in (wp_b.get("brief") or ""))
     check("--with-briefs stops brief at rule", "Tracking protocol" not in (wp_b.get("brief") or ""))
 
+    # ---- explorer-data (file-tree model for artifact/explorer.html) ----
+    print("explorer-data:")
+    # drop a design mockup so we can assert html is referenced, not embedded
+    open(os.path.join(plan,"designs","option-a.html"),"w").write("<!doctype html><h1>mock design</h1>")
+    ed = json.loads(run("explorer-data","--plan",plan).stdout)
+    flat=[]; _w=lambda ns:[ (flat.append(n), n.get("children") and _w(n["children"])) for n in ns]; _w(ed["tree"])
+    by={n["path"]:n for n in flat}
+    check("explorer-data emits non-empty tree", len(ed["tree"])>0)
+    check("explorer-data emits stats", all(k in ed.get("stats",{}) for k in ("files","embedded","referenced")))
+    check("spine markdown embedded with content",
+          by.get("01-plan.md",{}).get("embedded") is True and "content" in by.get("01-plan.md",{}))
+    check("design html referenced, not embedded",
+          by.get("designs/option-a.html",{}).get("type")=="design" and by["designs/option-a.html"].get("embedded") is False)
+    check("design html kind=design", by.get("designs/option-a.html",{}).get("kind")=="design")
+    check("explorer-data passes ids registry through", "WP-01" in ed.get("ids",{}))
+    # idempotency: the volatile self-files must NOT be in the model (else every re-run drifts)
+    check("explorer-data excludes .groundwork.json", ".groundwork.json" not in by)
+    check("explorer-data excludes artifact/explorer.html", "artifact/explorer.html" not in by)
+    # symlink-loop guard: a dir symlink to an ancestor must not explode the tree
+    try:
+        os.symlink("..", os.path.join(plan, "designs", "loop"))
+        ed_loop = json.loads(run("explorer-data","--plan",plan).stdout)
+        check("explorer-data bounds symlink loops", ed_loop["stats"]["files"] < 60)
+        os.remove(os.path.join(plan, "designs", "loop"))
+    except (OSError, NotImplementedError):
+        pass  # platform without symlink support
+
+    # ---- plans-index-data + write-region-plain (cross-plan) ----
+    print("plans-index-data:")
+    proot = os.path.join(tmp, "plansroot"); os.makedirs(proot, exist_ok=True)
+    for nm, prof in (("alpha", "software"), ("beta", "general")):
+        run("scaffold", "--plan", os.path.join(proot, nm), "--profiles-root", PROFILES, "--profile", prof, "--goal", f"{nm} goal")
+    os.makedirs(os.path.join(proot, "not-a-plan"))  # no .groundwork.json — must be skipped
+    pi = json.loads(run("plans-index-data", "--plans-dir", proot).stdout)
+    check("plans-index finds both plans, skips non-plan", pi["stats"]["count"] == 2)
+    check("plans-index lists alpha+beta", {p["slug"] for p in pi["plans"]} == {"alpha", "beta"})
+    check("plans-index by_profile", pi["stats"]["by_profile"].get("software") == 1 and pi["stats"]["by_profile"].get("general") == 1)
+    a = next(p for p in pi["plans"] if p["slug"] == "alpha")
+    check("plans-index rollup carries wps/has/drift", all(k in a for k in ("wps", "has", "drift", "gates")))
+    # write-region-plain: anchorless fence write, idempotent
+    idx = os.path.join(proot, "_index.html")
+    open(idx, "w").write('<x>\n<!-- groundwork:auto:start plans-index-data -->\nnull\n<!-- groundwork:auto:end plans-index-data -->\n</x>')
+    r1 = json.loads(run("write-region-plain", "--file", idx, "--id", "plans-index-data", "--content", '{"a":1}').stdout)
+    check("write-region-plain writes", r1["result"] == "WRITTEN")
+    r2 = json.loads(run("write-region-plain", "--file", idx, "--id", "plans-index-data", "--content", '{"a":1}').stdout)
+    check("write-region-plain idempotent (UNCHANGED on re-run)", r2["result"] == "UNCHANGED")
+    # --html-script-safe: embedded </script> must be neutralized so it can't break the <script> fence
+    run("write-region-plain", "--file", idx, "--id", "plans-index-data",
+        "--content", '{"c":"x</script><img>&y"}', "--html-script-safe")
+    inner = open(idx).read().split("start plans-index-data")[1].split("end plans-index-data")[0]
+    check("html-script-safe removes literal </script>", "</script>" not in inner)
+    check("html-script-safe emits \\u003c escapes", "\\u003c/script" in inner)
+    import json as _json
+    check("html-script-safe still valid JSON (round-trips)",
+          _json.loads(inner[inner.index("{"):inner.rindex("}")+1])["c"] == "x</script><img>&y")
+
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)
 finally:

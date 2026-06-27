@@ -1,4 +1,4 @@
-<!-- GENERATED — edit the canonical repo royalti-io/groundwork instead. Synced by sync-from-canonical.mjs. -->
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # groundwork — plan state, identity & idempotency
 
 The reference every action obeys. If two actions disagree about what is "generated" versus "hand-written," the bug is here, not in the actions. Read this once; the action files are thin and assume these rules.
@@ -36,6 +36,9 @@ python3 <skill>/scripts/groundwork_state.py <subcommand> [args]
   register-id      --plan DIR --id ID --doc DOC [--field k=v ...]
   board-data       --plan DIR
   status-data      --plan DIR [--profiles-root DIR]
+  explorer-data    --plan DIR                                # typed file-tree model for artifact/explorer.html
+  plans-index-data --plans-dir DIR                           # cross-plan rollup of every plan under a plans/ dir
+  write-region-plain --file PATH --id ID (--content STR | --content-file P)  # anchorless fence write (plans-index)
 ```
 
 Every subcommand prints a JSON result to stdout (parse it to report back). Exit codes: `0` ok · `1` hard error/refusal · `2` missing/corrupt anchor · `3` spine-gate refusal. The contract details below define *why* each behaves as it does; the script is *how*.
@@ -312,9 +315,13 @@ Inside HTML, JSON, or any non-markdown file, use the same `<!-- … -->` form wh
 | `artifact/orchestrate.workflow.js` | `*` (whole-file) | `orchestrate --emit-workflow` |
 | `artifact/board.html` | `board-data` | `refresh-board` |
 | `artifact/board.html` | `board-meta` | `refresh-board` |
+| `artifact/explorer.html` | `explorer-data` | `explorer` |
+| `artifact/explorer.html` | `explorer-meta` | `explorer` |
 | `artifact/index.html` | `spec-state` | `refresh-living-spec` |
 
-`artifact/index.html` is the **living spec** — scaffolded from `profiles/_shared/templates/artifact/index.html` at `init` and updated only inside the `spec-state` fence by `refresh-living-spec`. Everything outside the fence (the hand-authored Overview tab) is preserved across re-runs. `artifact/board.html` is the generated tracking board — `refresh-board` owns it.
+`artifact/index.html` is the **living spec** — scaffolded from `profiles/_shared/templates/artifact/index.html` at `init` and updated only inside the `spec-state` fence by `refresh-living-spec`. Everything outside the fence (the hand-authored Overview tab) is preserved across re-runs. `artifact/board.html` is the generated tracking board — `refresh-board` owns it. `artifact/explorer.html` is the generated file-explorer — `explorer` owns its two fences (`explorer-data`/`explorer-meta`) and nothing else; it *opens* `board.html`, `index.html`, and `designs/*.html` as iframe tabs but never writes them. Both `explorer-data` and `explorer-meta` use the `<!-- … -->` comment fence form (they live inside `<script type="application/json">` blocks, like `board-data`). Because they sit inside a `<script>` element, every write to them passes **`write-region --html-script-safe`** (and `write-region-plain --html-script-safe` for the plans-index), which escapes `<`/`>`/`&` to `\uXXXX` so an embedded file body containing a literal `</script>` can't terminate the block (a JSON-parse break → silent mock fallback, and an HTML-injection → XSS). The escapes round-trip through `JSON.parse` to the original characters. *(The pre-existing `board-data` fence shares this latent exposure for `--with-briefs`; a follow-up should apply the same flag there.)*
+
+The cross-plan **`plans-index`** action is the one writer that is **not** anchor-scoped: its output `<plans-dir>/_index.html` spans many plans and belongs to no single `.groundwork.json`, so it is not listed in any `docs` map and uses the anchorless `write-region-plain` (idempotent by content-equality, no hash registry) on the `plans-index-data` / `plans-index-meta` fences. It only ever reads the plans it lists — never writes into them.
 
 `09-orchestration.md` is the one file an action may rewrite whole. It is *generated*; the convention is "delete and re-author from `05` + `.groundwork.json`," not "edit in place." If the user has added hand-written sections, they go above an explicit `<!-- groundwork:auto:start orchestration -->` fence; everything outside survives.
 

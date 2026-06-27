@@ -1,4 +1,4 @@
-<!-- GENERATED — edit the canonical repo royalti-io/groundwork instead. Synced by sync-from-canonical.mjs. -->
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `refresh-living-spec` — regenerate the artifact/index.html spec-state fence
 
 **Loaded when**: the user runs `groundwork refresh-living-spec`, or any time the Phasing / Decisions / Risks tabs in `artifact/index.html` have fallen behind the docs.

@@ -1,4 +1,4 @@
-<!-- GENERATED — edit the canonical repo royalti-io/groundwork instead. Synced by sync-from-canonical.mjs. -->
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # `artifact/assets/`
 
 Non-code artifacts the living spec or the tracking board embeds: logos, screenshots, brand marks, exported diagrams, icon SVGs.
