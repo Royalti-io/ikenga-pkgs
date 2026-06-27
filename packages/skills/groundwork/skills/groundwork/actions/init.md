@@ -1,4 +1,4 @@
-<!-- GENERATED — edit the canonical repo royalti-io/groundwork instead. Synced by sync-from-canonical.mjs. -->
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `init` — scaffolder
 
 **Loaded when**: the user wants to scaffold a new groundwork plan folder, or runs an action against a folder that has no `.groundwork.json`.

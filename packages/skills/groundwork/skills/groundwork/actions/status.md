@@ -1,4 +1,4 @@
-<!-- GENERATED — edit the canonical repo royalti-io/groundwork instead. Synced by sync-from-canonical.mjs. -->
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `status` — read-only health report
 
 **Loaded when**: the user asks "where are we" / runs `groundwork status`.
@@ -148,10 +148,11 @@ The "Next suggested actions" section is rule-based, not heuristic:
 | Whole-file drift of `01`/`05` since last `orchestrate` | `groundwork orchestrate` |
 | Whole-file drift of inputs since last `refresh-board` | `groundwork refresh-board` |
 | `spec-state` fence in `artifact/index.html` is empty (`generated_at: null`) or its inputs drifted since `refresh_living_spec.last_run` | `groundwork refresh-living-spec` |
+| `artifact/explorer.html` exists and ≥1 spine/sub-plan doc shows whole-file drift (its embedded snapshot is behind) | `groundwork explorer` |
 | `clarify` would `fail` | "fix `<N>` blockers before orchestrating" |
 | Plan has never been orchestrated and clarify passes | `groundwork orchestrate` |
 
-Print at most three suggestions, prioritized in the order above.
+Print at most three suggestions, prioritized in the order above. The `explorer` suggestion sits **below** board + living-spec staleness on purpose — it's a convenience view, not a gate, so it never crowds out a more important refresh in the three-suggestion cap.
 
 ---
 

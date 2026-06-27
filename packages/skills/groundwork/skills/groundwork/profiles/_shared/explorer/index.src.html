@@ -1,0 +1,1159 @@
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
+<!doctype html>
+<html lang="en" data-theme="A" data-mode="dark" data-density="comfortable">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>groundwork — plan explorer</title>
+
+  <!-- ─────────────────────────────────────────────────────────────────────
+       Ikenga artifact manifest. Sibling to board.html (id groundwork-board);
+       this is the FILE EXPLORER for the whole plan folder — a left file-tree +
+       right tabbed type-dispatched viewer. No engineInvoke: read/browse surface
+       that routes via art.sendToActiveSession, never a fresh session. fallback
+       dataTag points at `explorer-mock-data` so a fresh open shows real-looking
+       content before `groundwork explorer` writes into the `explorer-data` fence.
+       ────────────────────────────────────────────────────────────────────── -->
+  <script type="application/json" id="ikenga-manifest">
+  {
+    "format": "ikenga-artifact", "formatVersion": "0.1",
+    "id": "groundwork-explorer", "name": "groundwork plan explorer", "version": "1.0.0",
+    "description": "File explorer + tabbed viewer for a groundwork plan folder. Left tree, right type-dispatched viewer (markdown / iframe / image / pdf / json / code). Reads explorer-data from a fenced JSON block; falls back to mock data if absent.",
+    "license": "Apache-2.0", "icon": { "lucide": "folder-tree" },
+    "capabilities": {},
+    "fallback": { "mode": "mock", "dataTag": "explorer-mock-data", "banner": "No explorer-data fence — showing mock plan." },
+    "pin":      { "suggested": true, "section": "Planning", "label": "Files" },
+    "requires": { "ikenga": ">=0.4", "bridge": "^1.0" }
+  }
+  </script>
+
+  <!-- ─── Live data (written by `groundwork explorer` inside fences) ─── -->
+  <script type="application/json" id="explorer-data">
+  <!-- groundwork:auto:start explorer-data -->
+  null
+  <!-- groundwork:auto:end explorer-data -->
+  </script>
+
+  <script type="application/json" id="explorer-meta">
+  <!-- groundwork:auto:start explorer-meta -->
+  { "title": "{{plan_title}}", "profile": "{{profile}}", "plan_folder": "{{plan_folder}}", "plan_slug": "{{plan_slug}}", "goal": "{{goal}}", "root_rel": "..", "refreshed": null }
+  <!-- groundwork:auto:end explorer-meta -->
+  </script>
+
+  <!-- ─── Per-plan view config. Agents may hand-tune this block to shape the
+       view for the plan at hand (default left mode, label, feature flags).
+       The _shared base ships an empty object; profile overlays pre-populate it.
+       Recognized keys: defaultMode ("tree"|"gallery"|"media"), railOpen (bool),
+       designLightDark (bool), highlightPublish (bool), title (string). ─── -->
+  <script type="application/json" id="explorer-overlay">
+  {}
+  </script>
+
+  <!-- ─── Mock data for standalone/preview rendering before the action runs ─── -->
+  <script type="application/json" id="explorer-mock-data">
+  {
+    "plan": { "title": "Example plan — file explorer", "profile": "software", "goal": "Browse a groundwork plan folder", "slug": "example-plan" },
+    "tree": [
+      { "name": "00-README.md", "path": "00-README.md", "type": "markdown", "kind": "spine", "registered": true, "embedded": true, "size": 320,
+        "content": "# Example plan\n\nThis is the **mock** explorer. Run `groundwork explorer` in a real plan folder to populate it.\n\n<!-- groundwork:auto:start status-block -->\n_Generated region — status block._\n<!-- groundwork:auto:end status-block -->\n\nHand-authored prose lives outside the fences.",
+        "badges": { "drift": "in-sync", "fences": ["spine-index", "status-block"] } },
+      { "name": "01-plan.md", "path": "01-plan.md", "type": "markdown", "kind": "spine", "registered": true, "embedded": true, "size": 210,
+        "content": "# Plan\n\n- WP-01 — the first work package\n- WP-02 — the second\n\n## Risks\n\n- The mock has no real risks." },
+      { "name": "05-tracking.md", "path": "05-tracking.md", "type": "markdown", "kind": "spine", "registered": true, "embedded": true, "size": 160,
+        "content": "# Tracking\n\n| WP | status |\n|----|--------|\n| WP-01 | in_progress |\n| WP-02 | queued |" },
+      { "name": "artifact", "path": "artifact", "type": "dir", "kind": "dir", "registered": true, "empty": false, "children": [
+        { "name": "board.html", "path": "artifact/board.html", "type": "html-artifact", "kind": "artifact", "registered": true, "embedded": false, "size": 81000 }
+      ] },
+      { "name": "designs", "path": "designs", "type": "dir", "kind": "dir", "registered": true, "empty": false, "children": [
+        { "name": "option-a.html", "path": "designs/option-a.html", "type": "design", "kind": "design", "registered": true, "embedded": false, "size": 12000,
+          "badges": { "design": { "phase": "P1", "wp": "WP-01", "locked": true, "locked_in": "Round 2" } } }
+      ] }
+    ],
+    "ids": {
+      "WP-01": { "title": "First work package", "wave": 0, "status": "in_progress" },
+      "WP-02": { "title": "Second work package", "wave": 1, "status": "queued" }
+    },
+    "designs": { "designs/option-a.html": { "phase": "P1", "wp": "WP-01", "locked": true, "locked_in": "Round 2" } },
+    "subplans": {},
+    "stats": { "files": 4, "dirs": 2, "embedded": 3, "referenced": 1, "embedded_bytes": 690, "truncated": [] }
+  }
+  </script>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300..600&family=Inter:wght@300..600&family=JetBrains+Mono:wght@400..500&display=swap" rel="stylesheet">
+
+  <style>
+    /* ═══════════════════════════════════════════════════════════════════════
+       @ikenga/tokens — copied verbatim from the board template so the explorer
+       shares the canonical palette + the shell theme/mode/density handshake.
+       ═════════════════════════════════════════════════════════════════════ */
+    :root {
+      --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+      --space-5: 20px; --space-6: 24px; --space-8: 32px;
+      --radius-xs: 3px; --radius-sm: 5px; --radius-md: 8px; --radius-lg: 12px;
+      --radius-xl: 16px; --radius-pill: 999px;
+      --font-display: 'Fraunces', ui-serif, Georgia, serif;
+      --font-body:    'Inter', system-ui, sans-serif;
+      --font-mono:    'JetBrains Mono', ui-monospace, SF Mono, Menlo, monospace;
+      --text-h1: 32px; --text-h2: 24px; --text-h3: 18px;
+      --text-body-lg: 16px; --text-body: 14px; --text-body-sm: 13px;
+      --text-caption: 12px; --text-micro: 11px;
+      --motion-fast: 120ms; --motion-base: 180ms; --motion-slow: 260ms;
+      --ease-calm: cubic-bezier(0.2, 0.6, 0.2, 1);
+      --ease-decisive: cubic-bezier(0.4, 0, 0.2, 1);
+      color-scheme: dark;
+    }
+    :root[data-density="compact"]     { --row-h: 28px; --row-pad-y: 5px;  --body-size: 13px; --body-lead: 1.4; --gap: 4px; }
+    :root[data-density="comfortable"] { --row-h: 36px; --row-pad-y: 8px;  --body-size: 14px; --body-lead: 1.55; --gap: 8px; }
+    :root[data-density="spacious"]    { --row-h: 44px; --row-pad-y: 11px; --body-size: 16px; --body-lead: 1.6; --gap: 12px; }
+
+    [data-theme="A"][data-mode="dark"], :root[data-theme="A"]:not([data-mode]) {
+      color-scheme: dark;
+      --bg-base: hsl(28, 18%, 4%);    --bg-surface: hsl(28, 14%, 7%);
+      --bg-raised: hsl(28, 11%, 11%); --bg-sunken: hsl(28, 22%, 2.5%);
+      --fg: hsl(36, 28%, 90%); --fg-muted: hsl(32, 11%, 56%); --fg-faint: hsl(28, 9%, 36%);
+      --border: hsl(28, 14%, 15%); --border-soft: hsl(28, 14%, 11%);
+      --primary: hsl(20, 50%, 34%); --primary-fg: hsl(36, 30%, 92%); --primary-soft: hsl(20, 40%, 14%);
+      --achievement: hsl(42, 78%, 54%); --achievement-soft: hsl(42, 48%, 18%);
+      --danger: hsl(8, 68%, 46%); --danger-fg: hsl(0, 0%, 98%); --danger-soft: hsl(8, 50%, 16%);
+      --systemic: hsl(170, 28%, 34%); --systemic-soft: hsl(170, 22%, 16%);
+      --rule: hsl(28, 14%, 18%); --chip-carve: hsl(28, 14%, 32%);
+      --shadow-1: 0 1px 2px rgba(0,0,0,.55), 0 0 0 1px rgba(0,0,0,.25);
+      --shadow-2: 0 4px 12px -2px rgba(0,0,0,.55);
+      --shadow-3: 0 12px 28px -8px rgba(0,0,0,.6);
+    }
+    [data-theme="A"][data-mode="light"] {
+      color-scheme: light;
+      --bg-base: hsl(36, 22%, 96%);   --bg-surface: hsl(36, 18%, 93%);
+      --bg-raised: hsl(36, 14%, 89%); --bg-sunken: hsl(36, 26%, 98%);
+      --fg: hsl(28, 30%, 14%); --fg-muted: hsl(28, 14%, 38%); --fg-faint: hsl(28, 12%, 56%);
+      --border: hsl(32, 16%, 78%); --border-soft: hsl(32, 16%, 84%);
+      --primary: hsl(20, 50%, 34%); --primary-fg: hsl(36, 26%, 98%); --primary-soft: hsl(20, 50%, 90%);
+      --achievement: hsl(42, 78%, 42%); --achievement-soft: hsl(42, 60%, 90%);
+      --danger: hsl(8, 68%, 42%); --danger-fg: hsl(0, 0%, 98%); --danger-soft: hsl(8, 60%, 92%);
+      --systemic: hsl(170, 36%, 32%); --systemic-soft: hsl(170, 30%, 90%);
+      --rule: hsl(36, 14%, 84%); --chip-carve: hsl(28, 14%, 62%);
+      --shadow-1: 0 1px 2px rgba(28,18,8,.08);
+      --shadow-2: 0 4px 12px -2px rgba(28,18,8,.10);
+      --shadow-3: 0 12px 28px -8px rgba(28,18,8,.14);
+    }
+    [data-theme="B"][data-mode="light"], :root[data-theme="B"]:not([data-mode]) {
+      color-scheme: light;
+      --bg-base: hsl(36, 28%, 96%);   --bg-surface: hsl(36, 22%, 94%);
+      --bg-raised: hsl(36, 18%, 90%); --bg-sunken: hsl(36, 32%, 98%);
+      --fg: hsl(28, 30%, 12%); --fg-muted: hsl(28, 14%, 38%); --fg-faint: hsl(28, 12%, 56%);
+      --border: hsl(32, 18%, 80%); --border-soft: hsl(32, 18%, 86%);
+      --primary: hsl(42, 82%, 46%); --primary-fg: hsl(28, 30%, 8%); --primary-soft: hsl(42, 60%, 88%);
+      --achievement: hsl(14, 72%, 46%); --achievement-soft: hsl(14, 60%, 90%);
+      --danger: hsl(8, 68%, 42%); --danger-fg: hsl(0, 0%, 98%); --danger-soft: hsl(8, 60%, 92%);
+      --systemic: hsl(170, 36%, 32%); --systemic-soft: hsl(170, 30%, 90%);
+      --rule: hsl(36, 14%, 84%); --chip-carve: hsl(28, 14%, 62%);
+      --shadow-1: 0 1px 2px rgba(28,18,8,.08);
+      --shadow-2: 0 4px 12px -2px rgba(28,18,8,.10);
+      --shadow-3: 0 12px 28px -8px rgba(28,18,8,.14);
+    }
+    [data-theme="B"][data-mode="dark"] {
+      color-scheme: dark;
+      --bg-base: hsl(36, 12%, 8%);    --bg-surface: hsl(36, 10%, 12%);
+      --bg-raised: hsl(36, 8%, 16%);  --bg-sunken: hsl(36, 16%, 6%);
+      --fg: hsl(40, 28%, 92%); --fg-muted: hsl(36, 10%, 62%); --fg-faint: hsl(36, 8%, 42%);
+      --border: hsl(36, 12%, 22%); --border-soft: hsl(36, 12%, 18%);
+      --primary: hsl(42, 84%, 60%); --primary-fg: hsl(36, 30%, 8%); --primary-soft: hsl(42, 60%, 18%);
+      --achievement: hsl(14, 76%, 56%); --achievement-soft: hsl(14, 50%, 18%);
+      --danger: hsl(8, 70%, 52%); --danger-fg: hsl(0, 0%, 98%); --danger-soft: hsl(8, 50%, 18%);
+      --systemic: hsl(170, 32%, 46%); --systemic-soft: hsl(170, 25%, 18%);
+      --rule: hsl(36, 12%, 22%); --chip-carve: hsl(36, 12%, 38%);
+      --shadow-1: 0 1px 2px rgba(0,0,0,.55);
+      --shadow-2: 0 4px 12px -2px rgba(0,0,0,.55);
+      --shadow-3: 0 12px 28px -8px rgba(0,0,0,.6);
+    }
+    [data-theme="C"][data-mode="dark"], :root[data-theme="C"]:not([data-mode]) {
+      color-scheme: dark;
+      --bg-base: hsl(180, 14%, 7%);   --bg-surface: hsl(180, 12%, 11%);
+      --bg-raised: hsl(180, 10%, 15%);--bg-sunken: hsl(180, 18%, 5%);
+      --fg: hsl(40, 18%, 90%); --fg-muted: hsl(180, 8%, 60%); --fg-faint: hsl(180, 8%, 42%);
+      --border: hsl(180, 12%, 22%); --border-soft: hsl(180, 12%, 18%);
+      --primary: hsl(170, 35%, 50%); --primary-fg: hsl(180, 18%, 6%); --primary-soft: hsl(170, 30%, 18%);
+      --achievement: hsl(40, 58%, 64%); --achievement-soft: hsl(40, 30%, 18%);
+      --danger: hsl(8, 70%, 50%); --danger-fg: hsl(0, 0%, 98%); --danger-soft: hsl(8, 50%, 18%);
+      --systemic: hsl(220, 22%, 56%); --systemic-soft: hsl(220, 14%, 18%);
+      --rule: hsl(180, 12%, 22%); --chip-carve: hsl(180, 12%, 38%);
+      --shadow-1: 0 1px 2px rgba(0,0,0,.6);
+      --shadow-2: 0 4px 12px -2px rgba(0,0,0,.6);
+      --shadow-3: 0 12px 28px -8px rgba(0,0,0,.65);
+    }
+    [data-theme="C"][data-mode="light"] {
+      color-scheme: light;
+      --bg-base: hsl(180, 10%, 95%);  --bg-surface: hsl(180, 8%, 92%);
+      --bg-raised: hsl(180, 6%, 88%); --bg-sunken: hsl(180, 12%, 97%);
+      --fg: hsl(200, 22%, 14%); --fg-muted: hsl(200, 10%, 38%); --fg-faint: hsl(200, 8%, 58%);
+      --border: hsl(180, 12%, 80%); --border-soft: hsl(180, 12%, 86%);
+      --primary: hsl(170, 42%, 34%); --primary-fg: hsl(180, 12%, 97%); --primary-soft: hsl(170, 30%, 88%);
+      --achievement: hsl(40, 64%, 38%); --achievement-soft: hsl(40, 50%, 90%);
+      --danger: hsl(8, 70%, 42%); --danger-fg: hsl(0, 0%, 98%); --danger-soft: hsl(8, 60%, 92%);
+      --systemic: hsl(220, 24%, 40%); --systemic-soft: hsl(220, 22%, 90%);
+      --rule: hsl(180, 12%, 80%); --chip-carve: hsl(200, 8%, 58%);
+      --shadow-1: 0 1px 2px rgba(20,28,32,.08);
+      --shadow-2: 0 4px 12px -2px rgba(20,28,32,.10);
+      --shadow-3: 0 12px 28px -8px rgba(20,28,32,.14);
+    }
+
+    /* ═════════════════════════════ Explorer chrome ═════════════════════════ */
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; background: var(--bg-base); }
+    body {
+      font-family: var(--font-body); font-size: var(--body-size, var(--text-body)); line-height: var(--body-lead, 1.55);
+      color: var(--fg); -webkit-font-smoothing: antialiased;
+      transition: background var(--motion-slow) var(--ease-calm), color var(--motion-slow) var(--ease-calm);
+    }
+    button { font-family: inherit; }
+    .mono { font-family: var(--font-mono); }
+
+    /* The load-bearing clamp: a single full-height flex column that never page-
+       scrolls, so the sidebar + viewer scroll independently (cross-browser,
+       WebKitGTK included). Copied intent from the board's .shell. */
+    .shell { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; background: var(--bg-base); }
+
+    /* Top bar */
+    .topbar {
+      display: flex; align-items: center; gap: var(--space-3);
+      padding: var(--space-2) var(--space-4);
+      border-bottom: 1px solid var(--border-soft); background: var(--bg-surface);
+      flex-shrink: 0;
+    }
+    .topbar-titles { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .topbar-eyebrow {
+      font-family: var(--font-mono); font-size: 10px; letter-spacing: .14em; text-transform: uppercase;
+      color: var(--fg-faint); display: inline-flex; align-items: center; gap: 6px;
+    }
+    .topbar-eyebrow .dot-tint { width: 6px; height: 6px; border-radius: 50%; background: var(--primary); }
+    .topbar-title {
+      font-family: var(--font-display); font-weight: 500; font-size: clamp(15px, 1.4vw, 19px);
+      letter-spacing: -.01em; color: var(--fg); margin: 0; line-height: 1.2;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 52vw;
+    }
+    .topbar-spacer { flex: 1; }
+    .topbar-actions { display: flex; align-items: center; gap: var(--space-2); flex-shrink: 0; }
+
+    .seg { display: inline-flex; background: var(--bg-base); border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: 2px; gap: 2px; }
+    .seg button {
+      font-size: var(--text-micro); font-weight: 500; padding: 3px 9px; border-radius: var(--radius-sm);
+      border: 0; background: transparent; color: var(--fg-muted); cursor: pointer;
+      display: inline-flex; align-items: center; gap: 5px;
+    }
+    .seg button:hover { color: var(--fg); }
+    .seg button.is-on { background: var(--bg-raised); color: var(--fg); box-shadow: var(--shadow-1); }
+    .seg button.is-on svg { color: var(--primary); }
+    .seg svg { width: 13px; height: 13px; opacity: .8; }
+
+    .iconbtn {
+      width: 30px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
+      background: var(--bg-base); border: 1px solid var(--border-soft); color: var(--fg-muted);
+      border-radius: var(--radius-sm); cursor: pointer; transition: border-color var(--motion-fast) var(--ease-calm), color var(--motion-fast) var(--ease-calm);
+    }
+    .iconbtn:hover { border-color: var(--primary); color: var(--fg); }
+    .iconbtn.is-on { border-color: var(--primary); color: var(--primary); }
+    .iconbtn svg { width: 15px; height: 15px; }
+
+    .host-badge {
+      font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+      padding: 3px 8px; border-radius: var(--radius-pill);
+      background: var(--bg-base); border: 1px solid var(--border-soft); color: var(--fg-faint);
+    }
+    .host-badge.in-shell { background: var(--systemic-soft); border-color: var(--systemic); color: var(--systemic); }
+    .host-badge.mock { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); }
+
+    /* Workspace grid: sidebar | main | (optional) rail */
+    .workspace { flex: 1; display: grid; grid-template-columns: var(--sidebar-w, 296px) 1fr; min-height: 0; min-width: 0; }
+    .workspace.with-rail { grid-template-columns: var(--sidebar-w, 296px) 1fr var(--rail-w, 300px); }
+
+    /* Sidebar */
+    .sidebar { border-right: 1px solid var(--border-soft); background: var(--bg-surface); display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+    .sidebar-head { padding: var(--space-2) var(--space-3); border-bottom: 1px solid var(--border-soft); display: flex; align-items: center; gap: var(--space-2); }
+    .sidebar-head .seg { flex: 1; }
+    .sidebar-head .seg button { flex: 1; justify-content: center; }
+    .sidebar-stats { font-family: var(--font-mono); font-size: 10px; color: var(--fg-faint); padding: 4px var(--space-3); border-bottom: 1px solid var(--border-soft); letter-spacing: .03em; }
+    .sidebar-body { flex: 1; overflow: auto; padding: var(--space-2) var(--space-1) var(--space-4); }
+
+    /* Search */
+    .search { padding: var(--space-2) var(--space-3) 0; }
+    .search-box { display: flex; align-items: center; gap: 6px; background: var(--bg-base); border: 1px solid var(--border-soft); border-radius: var(--radius-sm); padding: 5px 8px; }
+    .search-box:focus-within { border-color: var(--primary); }
+    .search-box svg { color: var(--fg-faint); flex-shrink: 0; }
+    .search-box input { flex: 1; min-width: 0; border: 0; background: transparent; outline: 0; color: var(--fg); font-size: var(--text-body-sm); font-family: inherit; }
+    .search-box input::placeholder { color: var(--fg-faint); }
+    .search-clear { color: var(--fg-faint); cursor: pointer; display: inline-flex; flex-shrink: 0; }
+    .search-clear:hover { color: var(--fg); }
+    .search-kbd { font-family: var(--font-mono); font-size: 9px; color: var(--fg-faint); border: 1px solid var(--border-soft); border-radius: var(--radius-xs); padding: 1px 5px; flex-shrink: 0; }
+    .results { padding: var(--space-2) var(--space-1); }
+    .results-head { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--fg-faint); padding: 4px 8px var(--space-2); }
+    .result { display: block; width: 100%; text-align: left; border: 0; background: transparent; cursor: pointer; border-radius: var(--radius-sm); padding: 6px 8px; color: var(--fg); }
+    .result:hover { background: var(--bg-raised); }
+    .result.is-active { background: var(--primary-soft); box-shadow: inset 2px 0 0 var(--primary); }
+    .result-name { display: flex; align-items: center; gap: 6px; font-size: var(--text-body-sm); }
+    .result-name .tree-icon { width: 14px; }
+    .result-name .rn-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .result-path { font-family: var(--font-mono); font-size: 9.5px; color: var(--fg-faint); margin: 2px 0 0 20px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .result-snip { font-size: 11px; color: var(--fg-muted); margin: 3px 0 0 20px; line-height: 1.4; max-height: 2.9em; overflow: hidden; }
+    .result-snip mark, .result-name mark { background: var(--achievement-soft); color: var(--achievement); border-radius: 2px; padding: 0 1px; }
+    .result-badge { margin-left: auto; font-family: var(--font-mono); font-size: 8.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-faint); border: 1px solid var(--border-soft); border-radius: var(--radius-xs); padding: 0 4px; flex-shrink: 0; }
+    .results-empty { padding: var(--space-5) var(--space-4); text-align: center; color: var(--fg-faint); font-size: var(--text-body-sm); }
+
+    /* Tree */
+    .tree-node { user-select: none; }
+    .tree-row {
+      display: flex; align-items: center; gap: 6px; width: 100%;
+      padding: 3px 6px; border: 0; background: transparent; color: var(--fg); cursor: pointer;
+      border-radius: var(--radius-sm); text-align: left; font-size: var(--text-body-sm); line-height: 1.3;
+      transition: background var(--motion-fast) var(--ease-calm);
+    }
+    .tree-row:hover { background: var(--bg-raised); }
+    .tree-row.is-active { background: var(--primary-soft); box-shadow: inset 2px 0 0 var(--primary); }
+    .tree-caret { width: 12px; flex-shrink: 0; color: var(--fg-faint); display: inline-flex; align-items: center; justify-content: center; transition: transform var(--motion-fast) var(--ease-calm); }
+    .tree-caret.open { transform: rotate(90deg); }
+    .tree-icon { width: 15px; height: 15px; flex-shrink: 0; color: var(--fg-muted); display: inline-flex; align-items: center; justify-content: center; }
+    .tree-icon svg { width: 14px; height: 14px; }
+    .tree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tree-name.is-dir { font-weight: 500; }
+    .tree-badges { display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0; }
+    .tree-children { margin-left: 10px; border-left: 1px dashed var(--border-soft); padding-left: 2px; }
+
+    .group-label {
+      font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .12em; text-transform: uppercase;
+      color: var(--fg-faint); padding: var(--space-3) var(--space-3) 4px; margin-top: var(--space-2);
+    }
+    .group-label:first-child { margin-top: 0; }
+
+    /* mini badges */
+    .b { display: inline-flex; align-items: center; gap: 3px; font-family: var(--font-mono); font-size: 8.5px; letter-spacing: .04em; text-transform: uppercase; padding: 1px 4px; border-radius: var(--radius-xs); border: 1px solid var(--border-soft); color: var(--fg-muted); background: var(--bg-sunken); white-space: nowrap; }
+    .b-lock { color: var(--achievement); border-color: var(--achievement-soft); background: var(--achievement-soft); }
+    .b-open { color: var(--fg-faint); border-style: dashed; }
+    .b-warn { color: var(--danger); border-color: var(--danger-soft); background: var(--danger-soft); }
+    .b-tint { color: var(--primary); border-color: var(--primary-soft); background: var(--primary-soft); }
+    .b-sys  { color: var(--systemic); border-color: var(--systemic-soft); background: var(--systemic-soft); }
+    .dot-drift { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+    .dot-drift.insync { background: var(--achievement); }
+    .dot-drift.drift  { background: var(--danger); }
+
+    /* Gallery / media grids */
+    .grid { display: grid; gap: var(--space-3); padding: var(--space-3); grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+    .gcard { border: 1px solid var(--border-soft); border-radius: var(--radius-md); overflow: hidden; background: var(--bg-base); cursor: pointer; transition: border-color var(--motion-fast) var(--ease-calm), transform var(--motion-fast) var(--ease-calm); display: flex; flex-direction: column; }
+    .gcard:hover { border-color: var(--primary); transform: translateY(-1px); }
+    .gcard.is-active { border-color: var(--primary); box-shadow: 0 0 0 2px var(--primary-soft); }
+    .gthumb { position: relative; height: 132px; overflow: hidden; background: var(--bg-sunken); border-bottom: 1px solid var(--border-soft); }
+    .gthumb iframe { position: absolute; top: 0; left: 0; width: 200%; height: 200%; transform: scale(.5); transform-origin: top left; border: 0; pointer-events: none; background: #fff; }
+    .gthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .gthumb-ph { width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: var(--fg-faint); font-family: var(--font-mono); font-size: 10px; text-align: center; padding: 8px; }
+    .gmeta { padding: 7px 9px; display: flex; flex-direction: column; gap: 4px; }
+    .gname { font-size: 11.5px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .gtags { display: flex; gap: 4px; flex-wrap: wrap; }
+
+    /* Main column + tabs */
+    .main { display: flex; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; }
+    .tabbar { display: flex; align-items: stretch; overflow-x: auto; background: var(--bg-sunken); border-bottom: 1px solid var(--border-soft); flex-shrink: 0; min-height: 34px; }
+    .tabbar::-webkit-scrollbar { height: 0; }
+    .tab {
+      display: inline-flex; align-items: center; gap: 7px; padding: 0 var(--space-2) 0 var(--space-3);
+      border: 0; border-right: 1px solid var(--border-soft); background: transparent; color: var(--fg-muted);
+      cursor: pointer; font-size: var(--text-body-sm); white-space: nowrap; max-width: 240px;
+      transition: background var(--motion-fast) var(--ease-calm), color var(--motion-fast) var(--ease-calm);
+    }
+    .tab:hover { background: var(--bg-raised); color: var(--fg); }
+    .tab.is-active { background: var(--bg-base); color: var(--fg); box-shadow: inset 0 2px 0 var(--primary); }
+    .tab .tab-name { overflow: hidden; text-overflow: ellipsis; }
+    .tab .tab-x { width: 16px; height: 16px; border-radius: var(--radius-xs); display: inline-flex; align-items: center; justify-content: center; color: var(--fg-faint); flex-shrink: 0; }
+    .tab .tab-x:hover { background: var(--bg-sunken); color: var(--fg); }
+    .tab-icon { display: inline-flex; color: var(--fg-faint); }
+    .tab-icon svg { width: 13px; height: 13px; }
+
+    .subtabs { display: flex; align-items: center; gap: var(--space-3); padding: 6px var(--space-4); border-bottom: 1px solid var(--border-soft); background: var(--bg-surface); flex-shrink: 0; }
+    .subtab { font-family: var(--font-mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; padding: 3px 0; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--fg-muted); cursor: pointer; }
+    .subtab:hover { color: var(--fg); }
+    .subtab.is-on { color: var(--fg); border-bottom-color: var(--primary); }
+    .subtab-spacer { flex: 1; }
+    .subtab-path { font-family: var(--font-mono); font-size: 10px; color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .viewer { flex: 1; overflow: auto; min-height: 0; position: relative; }
+    .viewer.is-frame { overflow: hidden; display: flex; }
+    .frame { flex: 1; width: 100%; height: 100%; border: 0; background: #fff; }
+    .viewer-pad { padding: var(--space-5) var(--space-6); max-width: 920px; }
+
+    .empty {
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3);
+      height: 100%; color: var(--fg-muted); text-align: center; padding: var(--space-8);
+    }
+    .empty .empty-glyph { color: var(--fg-faint); }
+    .empty h3 { font-family: var(--font-display); font-weight: 500; color: var(--fg); margin: 0; font-size: var(--text-h3); }
+    .empty p { margin: 0; font-size: var(--text-body-sm); max-width: 44ch; line-height: 1.55; }
+
+    /* placeholder card for referenced nodes opened detached from the folder */
+    .ph-card {
+      margin: var(--space-5) auto; max-width: 560px;
+      border: 1px dashed var(--border); border-radius: var(--radius-lg); background: var(--bg-surface);
+      padding: var(--space-5); display: flex; flex-direction: column; gap: var(--space-3); align-items: flex-start;
+    }
+    .ph-card .ph-eyebrow { font-family: var(--font-mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--fg-faint); }
+    .ph-card h3 { font-family: var(--font-display); font-weight: 500; margin: 0; font-size: var(--text-h3); color: var(--fg); }
+    .ph-card .ph-meta { font-family: var(--font-mono); font-size: 11px; color: var(--fg-muted); }
+    .ph-card .ph-row { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+
+    .btn {
+      height: 30px; padding: 0 var(--space-3); background: var(--bg-base); border: 1px solid var(--border-soft);
+      color: var(--fg); border-radius: var(--radius-sm); cursor: pointer; font-size: var(--text-body-sm); font-weight: 500;
+      display: inline-flex; align-items: center; gap: 6px; transition: border-color var(--motion-fast) var(--ease-calm);
+    }
+    .btn:hover { border-color: var(--primary); }
+    .btn.is-primary { background: var(--primary); color: var(--primary-fg); border-color: transparent; }
+    .btn svg { width: 14px; height: 14px; }
+
+    .frame-caption {
+      font-family: var(--font-mono); font-size: 10px; color: var(--fg-faint); letter-spacing: .04em;
+      padding: 4px var(--space-4); border-top: 1px solid var(--border-soft); background: var(--bg-sunken); flex-shrink: 0;
+    }
+
+    /* code / json */
+    pre.code { margin: 0; padding: var(--space-5) var(--space-6); font-family: var(--font-mono); font-size: 12.5px; line-height: 1.65; color: var(--fg); white-space: pre; tab-size: 2; }
+
+    /* image lightbox */
+    .img-wrap { display: flex; align-items: flex-start; justify-content: center; padding: var(--space-5); min-height: 100%; }
+    .img-wrap img { max-width: 100%; height: auto; border-radius: var(--radius-md); box-shadow: var(--shadow-2); cursor: zoom-in; background: var(--bg-sunken); }
+    .img-wrap.zoom img { max-width: none; cursor: zoom-out; }
+    .svg-wrap { display: flex; align-items: center; justify-content: center; padding: var(--space-6); min-height: 100%; }
+    .svg-wrap svg { max-width: 100%; max-height: 70vh; }
+
+    /* markdown body */
+    .md-body { color: var(--fg); font-size: var(--text-body); line-height: 1.66; }
+    .md-body > *:first-child { margin-top: 0; }
+    .md-body h1 { font-family: var(--font-display); font-weight: 500; font-size: 26px; letter-spacing: -.012em; margin: 1.4em 0 .5em; line-height: 1.2; }
+    .md-body h2 { font-family: var(--font-display); font-weight: 500; font-size: 20px; letter-spacing: -.008em; margin: 1.5em 0 .5em; padding-bottom: .25em; border-bottom: 1px solid var(--border-soft); }
+    .md-body h3 { font-weight: 600; font-size: 16px; margin: 1.4em 0 .45em; color: var(--fg); }
+    .md-body h4 { font-weight: 600; font-size: 14px; margin: 1.3em 0 .4em; color: var(--fg-muted); text-transform: none; }
+    .md-body p { margin: .6em 0; }
+    .md-body a { color: var(--primary); text-decoration: none; border-bottom: 1px solid var(--primary-soft); }
+    .md-body a:hover { border-bottom-color: var(--primary); }
+    .md-body ul, .md-body ol { margin: .5em 0; padding-left: 1.5em; }
+    .md-body li { margin: .25em 0; }
+    .md-body code { font-family: var(--font-mono); font-size: 12px; background: var(--bg-sunken); border: 1px solid var(--border-soft); border-radius: var(--radius-xs); padding: 1px 5px; }
+    .md-body pre { background: var(--bg-sunken); border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: var(--space-3) var(--space-4); overflow-x: auto; margin: .8em 0; }
+    .md-body pre code { background: transparent; border: 0; padding: 0; font-size: 12.5px; line-height: 1.6; }
+    .md-body blockquote { border-left: 3px solid var(--border); margin: .8em 0; padding: .2em 0 .2em 1em; color: var(--fg-muted); }
+    .md-body table { border-collapse: collapse; width: 100%; margin: .9em 0; font-size: var(--text-body-sm); display: block; overflow-x: auto; }
+    .md-body th, .md-body td { border: 1px solid var(--border-soft); padding: 6px 10px; text-align: left; }
+    .md-body th { background: var(--bg-sunken); font-family: var(--font-mono); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-muted); font-weight: 500; }
+    .md-body hr { border: 0; border-top: 1px solid var(--border-soft); margin: 1.4em 0; }
+    .md-body img { max-width: 100%; border-radius: var(--radius-sm); }
+
+    /* generated-region wrapper — visibly separates groundwork:auto fences from prose */
+    .gw-auto { position: relative; margin: .9em 0; padding: var(--space-2) var(--space-4) var(--space-2) var(--space-4); border-left: 2px solid var(--systemic); background: color-mix(in srgb, var(--systemic-soft) 40%, transparent); border-radius: 0 var(--radius-sm) var(--radius-sm) 0; }
+    .gw-auto-label { font-family: var(--font-mono); font-size: 9px; letter-spacing: .1em; text-transform: uppercase; color: var(--systemic); margin-bottom: 4px; display: inline-flex; align-items: center; gap: 5px; }
+    .gw-auto-label::before { content: ''; width: 5px; height: 5px; border-radius: 50%; background: var(--systemic); }
+
+    /* Rail */
+    .rail { border-left: 1px solid var(--border-soft); background: var(--bg-surface); overflow: auto; min-height: 0; }
+    .rail-inner { padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-4); }
+    .rail-card { background: var(--bg-base); border: 1px solid var(--border-soft); border-radius: var(--radius-md); padding: var(--space-3); }
+    .rail-label { font-family: var(--font-mono); font-size: 10px; letter-spacing: .12em; text-transform: uppercase; color: var(--fg-faint); margin-bottom: var(--space-2); display: block; }
+    .rail-title { font-family: var(--font-display); font-weight: 500; font-size: var(--text-h3); color: var(--fg); margin: 0 0 var(--space-1); word-break: break-word; line-height: 1.25; }
+    .rail-kv { display: grid; grid-template-columns: 78px 1fr; gap: 5px var(--space-2); font-size: var(--text-body-sm); margin-top: var(--space-2); }
+    .rail-k { font-family: var(--font-mono); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--fg-faint); }
+    .rail-v { color: var(--fg-muted); word-break: break-word; }
+    .rail-v.mono { font-family: var(--font-mono); font-size: 11px; }
+    .rail-actions { display: flex; flex-direction: column; gap: var(--space-2); }
+    .rail-actions .btn { width: 100%; justify-content: center; }
+    .rail-tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: var(--space-2); }
+
+    ::-webkit-scrollbar { width: 9px; height: 9px; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+
+    .toast { position: fixed; bottom: var(--space-4); left: 50%; transform: translateX(-50%); z-index: 200; background: var(--bg-raised); border: 1px solid var(--border); color: var(--fg); font-size: var(--text-body-sm); padding: var(--space-2) var(--space-3); border-radius: var(--radius-md); box-shadow: var(--shadow-3); animation: toast-in .18s var(--ease-calm); }
+    @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 6px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+    @media (max-width: 760px) {
+      .workspace, .workspace.with-rail { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+    }
+  </style>
+
+  <!--
+    Bridge polyfill — `art` shape mirrors the real Ikenga AppBridge. Copied from
+    the board template so the explorer behaves identically: standalone it is a
+    no-op (inShell=false); in-shell the host receives state/notes/pin and routes
+    sendToActiveSession. Theme/mode/density push from the shell is honored here.
+  -->
+  <script>
+  window.__groundwork_bridge_polyfill__ = {
+    init: function () {
+      function post(kind, payload) {
+        try { if (window.parent && window.parent !== window) window.parent.postMessage({ __iyke: true, kind, payload }, '*'); } catch (e) {}
+      }
+      const inShell = !!(window.parent && window.parent !== window);
+      window.addEventListener('message', (ev) => {
+        const m = ev.data;
+        if (!m || !m.__iyke || m.kind !== 'host-context') return;
+        const ctx = m.payload || {};
+        if (ctx.theme)   document.documentElement.setAttribute('data-theme', ctx.theme);
+        if (ctx.mode)    document.documentElement.setAttribute('data-mode',  ctx.mode);
+        if (ctx.density) document.documentElement.setAttribute('data-density', ctx.density);
+      });
+      return Promise.resolve({
+        host: { kind: inShell ? 'ikenga' : 'browser' },
+        publishState: (key, value) => post('state', { key, value }),
+        sendToActiveSession: (args) => {
+          if (!inShell) return Promise.resolve({ ok: false, reason: 'no-shell' });
+          return new Promise((resolve) => {
+            const reqId = 'stas-' + Math.random().toString(36).slice(2) + '-' + Date.now();
+            const onMsg = (ev) => {
+              const m = ev.data;
+              if (!m || !m.__iyke || m.kind !== 'host.sendToActiveSession:result' || m.request_id !== reqId) return;
+              window.removeEventListener('message', onMsg);
+              clearTimeout(timer);
+              resolve(m.payload || { ok: false, reason: 'empty-payload' });
+            };
+            const timer = setTimeout(() => { window.removeEventListener('message', onMsg); resolve({ ok: false, reason: 'timeout' }); }, 180000);
+            window.addEventListener('message', onMsg);
+            window.parent.postMessage({ __iyke: true, kind: 'host.sendToActiveSession', request_id: reqId, payload: args }, '*');
+          });
+        },
+        pin: () => { post('pin', {}); },
+        notes: {
+          send: (text, opts) => {
+            post('notes.send', { text, ...opts });
+            if (!inShell) { try { navigator.clipboard.writeText(text); } catch (e) {} }
+          },
+        },
+        inShell,
+      });
+    }
+  };
+  </script>
+
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react@18.3.1/umd/react.production.min.js"></script>
+  <script crossorigin src="https://cdn.jsdelivr.net/npm/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@babel/standalone@7.25.6/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+
+  <!-- Live-reload (dev): when served over http(s) as a top-level page, poll this
+       file's Last-Modified and reload when `groundwork watch` rewrites it. No-op
+       on file:// and inside the Ikenga shell (embedded iframe). -->
+  <script>
+  (function () {
+    if (location.protocol !== 'http:' && location.protocol !== 'https:') return;
+    if (window.parent && window.parent !== window) return;
+    var baseline = null;
+    setInterval(function () {
+      fetch(location.href, { method: 'HEAD', cache: 'no-store' }).then(function (r) {
+        var lm = r.headers.get('last-modified');
+        if (lm == null) return;
+        if (baseline == null) { baseline = lm; return; }
+        if (lm !== baseline) location.reload();
+      }).catch(function () {});
+    }, 4000);
+  })();
+  </script>
+</head>
+
+<body>
+  <div id="root"><div style="padding:var(--space-6);color:var(--fg-muted);font-size:var(--text-body-sm)">Initializing…</div></div>
+
+  <script type="text/babel" data-presets="env,react">
+  (function () {
+    const { useState, useEffect, useMemo, useRef, useCallback, Fragment } = React;
+
+    /* ── data plumbing ─────────────────────────────────────────────────── */
+    function readJson(id) {
+      const el = document.getElementById(id);
+      if (!el) return null;
+      const raw = (el.textContent || '').trim();
+      if (!raw) return null;
+      // Extract the outermost { } / [ ] span. We must NOT globally strip HTML
+      // comments — the embedded markdown carries `<!-- groundwork:auto -->`
+      // fence markers inside JSON string values, and those must survive so the
+      // viewer can highlight generated regions. The surrounding fence + meta
+      // comment lines sit OUTSIDE the braces, so a brace-span slice drops them.
+      const fo = raw.indexOf('{'), fa = raw.indexOf('[');
+      let start = -1, closeCh = '}';
+      if (fo >= 0 && (fa < 0 || fo < fa)) { start = fo; closeCh = '}'; }
+      else if (fa >= 0) { start = fa; closeCh = ']'; }
+      if (start < 0) return null;
+      const end = raw.lastIndexOf(closeCh);
+      if (end < start) return null;
+      try { return JSON.parse(raw.slice(start, end + 1)); } catch (e) { return null; }
+    }
+    const META = readJson('explorer-meta') || {};
+    const OVERLAY = readJson('explorer-overlay') || {};
+    let DATA = readJson('explorer-data');
+    let USING_MOCK = false;
+    if (!DATA || !DATA.tree) { DATA = readJson('explorer-mock-data') || { tree: [], ids: {}, stats: {} }; USING_MOCK = true; }
+    const ROOT_REL = (META.root_rel || '..').replace(/\/+$/, '');
+    const PROFILE = (DATA.plan && DATA.plan.profile) || META.profile || 'software';
+
+    if (window.marked) marked.setOptions({ gfm: true, breaks: false, headerIds: false, mangle: false });
+
+    /* ── icons (inline, lucide-ish) ────────────────────────────────────── */
+    const I = {
+      chevron: 'M9 18l6-6-6-6',
+      folder: 'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z',
+      file: 'M14 3v5h5M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z',
+      md: 'M4 5h16v14H4zM7 15V9l3 3 3-3v6M17 12v3M15 13l2 2 2-2',
+      img: 'M3 5h18v14H3zM3 16l5-5 4 4 3-3 6 6',
+      code: 'M8 6l-5 6 5 6M16 6l5 6-5 6',
+      html: 'M5 4l1.5 16L12 22l5.5-2L19 4zM8 8h8l-.5 4-3.5 1-3.5-1',
+      pdf: 'M14 3v5h5M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM8 13h1.5a1.2 1.2 0 0 1 0 2.4H8zM8 13v4M15 13v4M15 13h1.6M15 15h1.4',
+      design: 'M12 3l8 4.5v9L12 21l-8-4.5v-9zM12 3v18M4 7.5l8 4.5 8-4.5',
+      x: 'M6 6l12 12M18 6L6 18',
+      tree: 'M9 4h11M9 9h11M9 14h11M9 19h11M4 4h.01M4 9h.01M4 14h.01M4 19h.01',
+      grid: 'M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z',
+      media: 'M3 5h18v12H3zM3 17l6-6 4 4 3-3 5 5M8 9a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3',
+      info: 'M12 8h.01M11 12h1v4h1M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+      copy: 'M9 9h10v10H9zM5 15V5h10',
+      send: 'M22 2L11 13M22 2l-7 20-4-9-9-4z',
+      anchor: 'M12 5a2 2 0 1 0 0-4 2 2 0 0 0 0 4zM12 7v14M5 12a7 7 0 0 0 14 0M5 12H3M19 12h2',
+      search: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20.5 20.5l-4.2-4.2',
+    };
+    function Icon({ d, size }) {
+      return (
+        <svg viewBox="0 0 24 24" width={size || 14} height={size || 14} fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+          {d.split('M').filter(Boolean).map((seg, i) => <path key={i} d={'M' + seg} />)}
+        </svg>
+      );
+    }
+    function typeIcon(t) {
+      return { 'markdown': I.md, 'html-artifact': I.html, 'design': I.design, 'image': I.img,
+               'svg': I.img, 'pdf': I.pdf, 'json': I.code, 'code': I.code, 'text': I.file,
+               'dir': I.folder, 'anchor': I.anchor }[t] || I.file;
+    }
+
+    /* ── markdown render with fence-region highlighting ────────────────── */
+    const stripMeta = (t) => t.replace(/^[ \t]*<!--[ \t]*last_action:[\s\S]*?-->[ \t]*$/gm, '');
+    function mdHtml(t) {
+      if (!window.marked) return (t || '').replace(/</g, '&lt;');
+      const html = marked.parse(t || '');
+      return window.DOMPurify ? DOMPurify.sanitize(html) : esc(t || '');
+    }
+    function renderMarkdownSegments(raw) {
+      const re = /<!--\s*groundwork:auto:(start|end)\s+([\w-]+)\s*-->/g;
+      const out = []; let last = 0, m, cur = null;
+      const pushHand = (txt) => { if (txt && txt.trim()) out.push({ auto: false, html: mdHtml(txt) }); };
+      while ((m = re.exec(raw)) !== null) {
+        const seg = raw.slice(last, m.index);
+        if (cur) cur.body += seg; else pushHand(seg);
+        if (m[1] === 'start') { cur = { id: m[2], body: '' }; }
+        else { if (cur) { out.push({ auto: true, id: cur.id, html: mdHtml(stripMeta(cur.body)) }); cur = null; } }
+        last = re.lastIndex;
+      }
+      const tail = raw.slice(last);
+      if (cur) out.push({ auto: true, id: cur.id, html: mdHtml(stripMeta(cur.body)) });
+      else pushHand(tail);
+      return out;
+    }
+
+    /* ── tree helpers ──────────────────────────────────────────────────── */
+    function flatten(nodes, acc) { acc = acc || []; for (const n of nodes || []) { acc.push(n); if (n.children) flatten(n.children, acc); } return acc; }
+    const ALL = flatten(DATA.tree);
+    const byPath = {}; ALL.forEach((n) => { byPath[n.path] = n; });
+    function srcFor(path) { return ROOT_REL + '/' + path; }
+
+    const KIND_GROUPS = [
+      ['spine', 'Spine'], ['subplan', 'Sub-plans'], ['artifact', 'Artifact'],
+      ['design', 'Designs'], ['draft', 'Drafts'], ['parts', 'Parts'],
+      ['asset', 'Assets'], ['anchor', 'State'], ['other', 'Other'],
+    ];
+
+    /* ── small persistence (localStorage; works standalone + webview) ──── */
+    const PKEY = 'gw-explorer:' + ((DATA.plan && DATA.plan.slug) || META.plan_slug || 'plan');
+    function loadState() { try { return JSON.parse(localStorage.getItem(PKEY) || '{}'); } catch (e) { return {}; } }
+    function saveState(s) { try { localStorage.setItem(PKEY, JSON.stringify(s)); } catch (e) {} }
+
+    /* ── badges ────────────────────────────────────────────────────────── */
+    function NodeBadges({ node }) {
+      const b = node.badges || {};
+      const out = [];
+      if (b.drift === 'drift') out.push(<span key="d" className="dot-drift drift" title="drifted from last groundwork write" />);
+      else if (b.drift === 'in-sync') out.push(<span key="d" className="dot-drift insync" title="in sync" />);
+      if (b.design) out.push(<span key="l" className={'b ' + (b.design.locked ? 'b-lock' : 'b-open')} title={b.design.locked_in || ''}>{b.design.locked ? 'lock' : 'wip'}</span>);
+      if (b.subplan) out.push(<span key="s" className="b b-tint" title={b.subplan.ref || 'cross-cutting'}>{b.subplan.archetype || 'subplan'}</span>);
+      // actionable docs (PUBLISH-NOW.md, ACTION-*.md) read as instructions, not plan prose
+      if (/^(publish|action|urgent|now)\b/i.test(node.name) || /publish-now/i.test(node.name)) out.push(<span key="a" className="b b-warn" title="actionable — not a planning doc">action</span>);
+      if (node.registered === false && node.type !== 'dir') out.push(<span key="u" className="b b-open" title="present on disk, not in .groundwork.json">unreg</span>);
+      return out.length ? <span className="tree-badges">{out}</span> : null;
+    }
+
+    /* ── tree view ─────────────────────────────────────────────────────── */
+    function TreeNode({ node, depth, open, toggle, activePath, onOpen }) {
+      const isDir = node.type === 'dir';
+      const isOpen = open[node.path] !== undefined ? open[node.path] : depth < 1;
+      return (
+        <div className="tree-node">
+          <button className={'tree-row' + (activePath === node.path ? ' is-active' : '')}
+            style={{ paddingLeft: 6 + depth * 4 }}
+            onClick={() => isDir ? toggle(node.path, !isOpen) : onOpen(node)}>
+            <span className={'tree-caret' + (isDir && isOpen ? ' open' : '')}>{isDir ? <Icon d={I.chevron} size={12} /> : null}</span>
+            <span className="tree-icon"><Icon d={typeIcon(node.kind === 'anchor' ? 'anchor' : node.type)} /></span>
+            <span className={'tree-name' + (isDir ? ' is-dir' : '')}>{node.name}{isDir && node.empty ? ' ·' : ''}</span>
+            <NodeBadges node={node} />
+          </button>
+          {isDir && isOpen && node.children && node.children.length > 0 && (
+            <div className="tree-children">
+              {node.children.map((c) => <TreeNode key={c.path} node={c} depth={depth + 1} open={open} toggle={toggle} activePath={activePath} onOpen={onOpen} />)}
+            </div>
+          )}
+          {isDir && isOpen && node.empty && (
+            <div className="tree-children"><div style={{ padding: '3px 10px', color: 'var(--fg-faint)', fontSize: 11, fontFamily: 'var(--font-mono)' }}>intentionally empty</div></div>
+          )}
+        </div>
+      );
+    }
+
+    /* ── lazy iframe thumbnail — only mounts when scrolled near the viewport.
+       Critical for design-system plans: a flowrights-scale gallery has 80+
+       mockups, and mounting that many live iframes at once crashes the tab. ── */
+    function LazyThumb({ node }) {
+      const ref = useRef(null);
+      const [show, setShow] = useState(false);
+      useEffect(() => {
+        const el = ref.current; if (!el || show) return;
+        if (typeof IntersectionObserver === 'undefined') { setShow(true); return; }
+        const io = new IntersectionObserver((es) => { if (es.some((e) => e.isIntersecting)) { setShow(true); io.disconnect(); } }, { rootMargin: '250px' });
+        io.observe(el);
+        return () => io.disconnect();
+      }, [show]);
+      return (
+        <div className="gthumb" ref={ref}>
+          {show ? <iframe src={srcFor(node.path)} title={node.name} loading="lazy" sandbox="allow-scripts allow-same-origin" />
+                : <div className="gthumb-ph">{(node.name.split('.').pop() || 'file').toUpperCase()}</div>}
+        </div>
+      );
+    }
+
+    /* ── gallery (designs) ─────────────────────────────────────────────── */
+    function Gallery({ nodes, activePath, onOpen }) {
+      if (!nodes.length) return <div className="empty"><div className="empty-glyph"><Icon d={I.design} size={30} /></div><h3>No designs</h3><p>This plan has no <code>designs/</code> mockups yet.</p></div>;
+      return (
+        <div className="grid">
+          {nodes.map((n) => (
+            <div key={n.path} className={'gcard' + (activePath === n.path ? ' is-active' : '')} onClick={() => onOpen(n)}>
+              <LazyThumb node={n} />
+              <div className="gmeta">
+                <span className="gname">{n.name}</span>
+                <div className="gtags"><NodeBadges node={n} />{n.badges && n.badges.design && n.badges.design.wp ? <span className="b b-sys">{n.badges.design.wp}</span> : null}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    /* ── media (images + slide/pdf renderers) ──────────────────────────── */
+    function MediaGrid({ nodes, activePath, onOpen }) {
+      if (!nodes.length) return <div className="empty"><div className="empty-glyph"><Icon d={I.media} size={30} /></div><h3>No media</h3><p>No images, PDFs, or slide renderers found.</p></div>;
+      return (
+        <div className="grid">
+          {nodes.map((n) => (
+            <div key={n.path} className={'gcard' + (activePath === n.path ? ' is-active' : '')} onClick={() => onOpen(n)}>
+              {n.type === 'image' ? <div className="gthumb"><img src={srcFor(n.path)} alt={n.name} loading="lazy" onError={(e) => { e.target.style.display = 'none'; }} /></div>
+                : n.type === 'svg' && n.embedded ? <div className="gthumb"><div className="gthumb-ph" dangerouslySetInnerHTML={{ __html: window.DOMPurify ? DOMPurify.sanitize(n.content, { USE_PROFILES: { svg: true, svgFilters: true } }) : '' }} /></div>
+                : (n.type === 'design' || n.type === 'html-artifact') ? <LazyThumb node={n} />
+                : <div className="gthumb"><div className="gthumb-ph">{n.type.toUpperCase()}</div></div>}
+              <div className="gmeta"><span className="gname">{n.name}</span></div>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    /* ── viewers ───────────────────────────────────────────────────────── */
+    function MarkdownView({ node, sub }) {
+      if (!node.embedded || node.content == null) return <ReferencedCard node={node} reason="Markdown body wasn't embedded (over the size budget). Open it from the plan folder." />;
+      if (sub === 'raw') return <pre className="code">{node.content}</pre>;
+      const segs = renderMarkdownSegments(node.content);
+      return (
+        <div className="viewer-pad md-body">
+          {segs.map((s, i) => s.auto
+            ? <div className="gw-auto" key={i}><div className="gw-auto-label">generated · {s.id}</div><div dangerouslySetInnerHTML={{ __html: s.html }} /></div>
+            : <div key={i} dangerouslySetInnerHTML={{ __html: s.html }} />)}
+        </div>
+      );
+    }
+    function CodeView({ node }) {
+      if (!node.embedded || node.content == null) return <ReferencedCard node={node} reason="File content wasn't embedded. Open it from the plan folder." />;
+      let body = node.content;
+      if (node.type === 'json') { try { body = JSON.stringify(JSON.parse(node.content), null, 2); } catch (e) {} }
+      return <pre className="code">{body}</pre>;
+    }
+    function SvgView({ node }) {
+      if (node.embedded && node.content != null) {
+        const clean = window.DOMPurify ? DOMPurify.sanitize(node.content, { USE_PROFILES: { svg: true, svgFilters: true } }) : '';
+        return <div className="svg-wrap" dangerouslySetInnerHTML={{ __html: clean }} />;
+      }
+      return <div className="img-wrap"><img src={srcFor(node.path)} alt={node.name} onError={(e) => { e.target.replaceWith(document.createTextNode('')); }} /></div>;
+    }
+    function ImageView({ node }) {
+      const [zoom, setZoom] = useState(false);
+      const [err, setErr] = useState(false);
+      if (err) return <ReferencedCard node={node} reason="Image preview loads when the explorer is opened from inside the plan folder." />;
+      return <div className={'img-wrap' + (zoom ? ' zoom' : '')} onClick={() => setZoom(!zoom)}><img src={srcFor(node.path)} alt={node.name} onError={() => setErr(true)} /></div>;
+    }
+    function FrameView({ node, sub, theme }) {
+      const ref = useRef(null);
+      const [loaded, setLoaded] = useState(false);
+      const [graceOver, setGraceOver] = useState(false);
+      // reset load tracking per node; after a short grace, if the frame still
+      // hasn't fired `load`, it almost certainly couldn't resolve (lone upload /
+      // detached file) — only THEN do we surface the hint. A working preview
+      // (in-folder / in-shell) shows no caption at all.
+      useEffect(() => {
+        setLoaded(false); setGraceOver(false);
+        const t = setTimeout(() => setGraceOver(true), 2500);
+        return () => clearTimeout(t);
+      }, [node.path]);
+      useEffect(() => {
+        const f = ref.current; if (!f) return;
+        const push = () => { try { f.contentWindow.postMessage({ __iyke: true, kind: 'host-context', payload: theme }, '*'); } catch (e) {} };
+        const onLoad = () => { setLoaded(true); push(); };
+        f.addEventListener('load', onLoad); push();
+        return () => f.removeEventListener('load', onLoad);
+      }, [node.path, theme.theme, theme.mode, theme.density]);
+      if (sub === 'source') return <FrameSource node={node} />;
+      const pdf = node.type === 'pdf';
+      return (
+        <Fragment>
+          <iframe ref={ref} className="frame" src={srcFor(node.path)} title={node.name}
+            sandbox={pdf ? undefined : 'allow-scripts allow-same-origin allow-popups allow-forms'} />
+          {!loaded && graceOver && (
+            <div className="frame-caption">preview didn’t load — <code>{srcFor(node.path)}</code> resolves when the explorer is opened from inside the plan folder</div>
+          )}
+        </Fragment>
+      );
+    }
+    function FrameSource({ node }) {
+      const [state, setState] = useState({ loading: true, text: null });
+      useEffect(() => {
+        let alive = true;
+        fetch(srcFor(node.path)).then((r) => r.text()).then((t) => { if (alive) setState({ loading: false, text: t }); })
+          .catch(() => { if (alive) setState({ loading: false, text: null }); });
+        return () => { alive = false; };
+      }, [node.path]);
+      if (state.loading) return <div className="empty"><p>Loading source…</p></div>;
+      if (state.text == null) return <ReferencedCard node={node} reason="Source is fetched live — available in the Ikenga shell or when opened from the plan folder (browsers block file:// fetches)." />;
+      return <pre className="code">{state.text}</pre>;
+    }
+    function ReferencedCard({ node, reason }) {
+      const copy = () => { try { navigator.clipboard.writeText(node.path); } catch (e) {} };
+      return (
+        <div className="viewer-pad">
+          <div className="ph-card">
+            <span className="ph-eyebrow">{node.type} · referenced</span>
+            <h3>{node.name}</h3>
+            <p style={{ color: 'var(--fg-muted)', fontSize: 13, margin: 0, lineHeight: 1.55 }}>{reason}</p>
+            <div className="ph-meta">{node.path} · {fmtBytes(node.size)}</div>
+            <div className="ph-row">
+              <button className="btn" onClick={copy}><Icon d={I.copy} />copy path</button>
+              <a className="btn" href={srcFor(node.path)} target="_blank" rel="noreferrer"><Icon d={I.html} />open directly</a>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function fmtBytes(n) { if (n == null) return '—'; if (n < 1024) return n + ' B'; if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'; return (n / 1048576).toFixed(2) + ' MB'; }
+
+    function subtabsFor(node) {
+      if (!node) return [];
+      if (node.type === 'markdown') return [['rendered', 'Rendered'], ['raw', 'Raw']];
+      if (node.type === 'design' || node.type === 'html-artifact' || node.type === 'pdf') return [['preview', 'Preview'], ['source', 'Source']];
+      return [];
+    }
+
+    function Viewer({ node, sub, theme }) {
+      if (!node) return (
+        <div className="empty">
+          <div className="empty-glyph"><Icon d={I.tree} size={34} /></div>
+          <h3>{(DATA.plan && DATA.plan.title) || META.title || 'Plan explorer'}</h3>
+          <p>Pick a file on the left to open it here. Markdown renders inline; the board, the living spec, and designs open as live previews.</p>
+        </div>
+      );
+      const isFrame = (node.type === 'html-artifact' || node.type === 'design' || node.type === 'pdf') && sub !== 'source';
+      return (
+        <div className={'viewer' + (isFrame ? ' is-frame' : '')}>
+          {node.type === 'markdown' ? <MarkdownView node={node} sub={sub} />
+            : (node.type === 'html-artifact' || node.type === 'design' || node.type === 'pdf') ? <FrameView node={node} sub={sub} theme={theme} />
+            : node.type === 'image' ? <ImageView node={node} />
+            : node.type === 'svg' ? <SvgView node={node} />
+            : (node.type === 'code' || node.type === 'json' || node.type === 'text') ? <CodeView node={node} />
+            : <ReferencedCard node={node} reason="No inline viewer for this file type." />}
+        </div>
+      );
+    }
+
+    /* ── rail ──────────────────────────────────────────────────────────── */
+    function Rail({ node, art, toast }) {
+      if (!node) return (
+        <div className="rail"><div className="rail-inner"><div className="rail-card"><span className="rail-label">Details</span><p style={{ color: 'var(--fg-muted)', fontSize: 13, margin: 0 }}>Select a file to see its metadata, IDs, and quick actions.</p></div>
+          <div className="rail-card"><span className="rail-label">Plan</span>
+            <div className="rail-kv">
+              <span className="rail-k">profile</span><span className="rail-v">{PROFILE}</span>
+              <span className="rail-k">files</span><span className="rail-v">{DATA.stats ? DATA.stats.files : ALL.filter(n => n.type !== 'dir').length}</span>
+              <span className="rail-k">embedded</span><span className="rail-v">{DATA.stats ? DATA.stats.embedded : '—'}</span>
+              <span className="rail-k">referenced</span><span className="rail-v">{DATA.stats ? DATA.stats.referenced : '—'}</span>
+            </div></div></div></div>
+      );
+      const b = node.badges || {};
+      const sendToChat = async () => {
+        const txt = 'Look at `' + node.path + '` in this groundwork plan.';
+        if (art.inShell && art.sendToActiveSession) { const r = await art.sendToActiveSession({ prompt: txt, source: 'explorer' }); if (!r.ok) { try { navigator.clipboard.writeText(txt); } catch (e) {} toast('Copied reference'); } else toast('Sent to chat'); }
+        else { try { navigator.clipboard.writeText(txt); } catch (e) {} toast('Copied reference'); }
+      };
+      const copyPath = () => { try { navigator.clipboard.writeText(node.path); } catch (e) {} toast('Path copied'); };
+      return (
+        <div className="rail"><div className="rail-inner">
+          <div className="rail-card">
+            <span className="rail-label">{node.type}{node.kind && node.kind !== node.type ? ' · ' + node.kind : ''}</span>
+            <h3 className="rail-title">{node.name}</h3>
+            <div className="rail-tags"><NodeBadges node={node} /></div>
+            <div className="rail-kv">
+              <span className="rail-k">path</span><span className="rail-v mono">{node.path}</span>
+              <span className="rail-k">size</span><span className="rail-v">{fmtBytes(node.size)}</span>
+              <span className="rail-k">source</span><span className="rail-v">{node.embedded ? 'embedded' : (node.type === 'dir' ? '—' : 'referenced')}</span>
+              {b.design ? <Fragment><span className="rail-k">design</span><span className="rail-v">{b.design.phase || '—'}{b.design.wp ? ' · ' + b.design.wp : ''}{b.design.locked ? ' · locked (' + (b.design.locked_in || '') + ')' : ''}</span></Fragment> : null}
+              {b.subplan ? <Fragment><span className="rail-k">subplan</span><span className="rail-v">{b.subplan.archetype} · {b.subplan.ref || 'cross-cutting'} · {b.subplan.status}</span></Fragment> : null}
+              {b.fences ? <Fragment><span className="rail-k">fences</span><span className="rail-v mono">{b.fences.join(', ')}</span></Fragment> : null}
+              {b.dirty_regions ? <Fragment><span className="rail-k">dirty</span><span className="rail-v mono" style={{ color: 'var(--danger)' }}>{b.dirty_regions.join(', ')}</span></Fragment> : null}
+            </div>
+          </div>
+          <div className="rail-card">
+            <span className="rail-label">Actions</span>
+            <div className="rail-actions">
+              <button className="btn" onClick={copyPath}><Icon d={I.copy} />Copy path</button>
+              <button className="btn" onClick={sendToChat}><Icon d={I.send} />Send to chat</button>
+            </div>
+          </div>
+        </div></div>
+      );
+    }
+
+    /* ── search (filename + full-text over embedded content) ───────────── */
+    function esc(s) { return (s || '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+    function highlight(text, q) {
+      const e = esc(text);
+      if (!q) return e;
+      const re = new RegExp('(' + q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig');
+      return e.replace(re, '<mark>$1</mark>');
+    }
+    function searchPlan(q) {
+      const ql = q.toLowerCase();
+      const out = [];
+      for (const n of ALL) {
+        if (n.type === 'dir') continue;
+        const nameMatch = n.name.toLowerCase().includes(ql) || n.path.toLowerCase().includes(ql);
+        let snip = null, contentMatch = false;
+        if (n.embedded && n.content) {
+          const i = n.content.toLowerCase().indexOf(ql);
+          if (i >= 0) {
+            contentMatch = true;
+            const s = Math.max(0, i - 32);
+            snip = (s > 0 ? '…' : '') + n.content.slice(s, i + ql.length + 56).replace(/\s+/g, ' ').trim() + '…';
+          }
+        }
+        if (nameMatch || contentMatch) out.push({ n, nameMatch, contentMatch, snip });
+        if (out.length >= 300) break;
+      }
+      out.sort((a, b) => (b.nameMatch ? 1 : 0) - (a.nameMatch ? 1 : 0));
+      return out;
+    }
+    function SearchResults({ q, onOpen, activePath }) {
+      const results = useMemo(() => searchPlan(q), [q]);
+      if (!results.length) return <div className="results-empty">No files match “{q}”.</div>;
+      return (
+        <div className="results">
+          <div className="results-head">{results.length}{results.length >= 300 ? '+' : ''} match{results.length === 1 ? '' : 'es'}</div>
+          {results.map(({ n, nameMatch, contentMatch, snip }) => (
+            <button key={n.path} className={'result' + (activePath === n.path ? ' is-active' : '')} onClick={() => onOpen(n)}>
+              <div className="result-name">
+                <span className="tree-icon"><Icon d={typeIcon(n.kind === 'anchor' ? 'anchor' : n.type)} /></span>
+                <span className="rn-text" dangerouslySetInnerHTML={{ __html: highlight(n.name, q) }} />
+                <span className="result-badge">{nameMatch ? 'name' : 'text'}</span>
+              </div>
+              {contentMatch && snip ? <div className="result-snip" dangerouslySetInnerHTML={{ __html: highlight(snip, q) }} /> : <div className="result-path">{n.path}</div>}
+            </button>
+          ))}
+        </div>
+      );
+    }
+
+    /* ── app ───────────────────────────────────────────────────────────── */
+    const designNodes = ALL.filter((n) => n.type === 'design');
+    const mediaNodes = ALL.filter((n) => n.type === 'image' || n.type === 'pdf' || n.type === 'svg');
+    function profileDefaultMode() {
+      if (OVERLAY.defaultMode) return OVERLAY.defaultMode;
+      if (PROFILE === 'design-system' && designNodes.length) return 'gallery';
+      if (PROFILE === 'content' && mediaNodes.length) return 'media';
+      return 'tree';
+    }
+
+    function App({ art }) {
+      const persisted = loadState();
+      const [theme, setTheme] = useState(() => ({
+        theme: document.documentElement.getAttribute('data-theme') || 'A',
+        mode: document.documentElement.getAttribute('data-mode') || 'dark',
+        density: document.documentElement.getAttribute('data-density') || 'comfortable',
+      }));
+      const [leftMode, setLeftMode] = useState(persisted.leftMode || profileDefaultMode());
+      const [query, setQuery] = useState('');
+      const searchRef = useRef(null);
+      const [openTabs, setOpenTabs] = useState(persisted.openTabs && persisted.openTabs.filter((p) => byPath[p]) || []);
+      const [active, setActive] = useState(persisted.active && byPath[persisted.active] ? persisted.active : null);
+      const [subBy, setSubBy] = useState({});
+      const [openDirs, setOpenDirs] = useState(persisted.openDirs || {});
+      const [railOpen, setRailOpen] = useState(persisted.railOpen != null ? persisted.railOpen : (OVERLAY.railOpen != null ? OVERLAY.railOpen : true));
+      const [toastMsg, setToastMsg] = useState(null);
+      const toastTimer = useRef(null);
+      const toast = (m) => { setToastMsg(m); clearTimeout(toastTimer.current); toastTimer.current = setTimeout(() => setToastMsg(null), 1800); };
+
+      useEffect(() => { saveState({ leftMode, openTabs, active, openDirs, railOpen }); }, [leftMode, openTabs, active, openDirs, railOpen]);
+      useEffect(() => { if (art.inShell && art.pin) { try { art.pin(); } catch (e) {} } }, []);
+      // keyboard: '/' focuses search, Esc clears it
+      useEffect(() => {
+        const onKey = (e) => {
+          const tag = document.activeElement && document.activeElement.tagName;
+          if (e.key === '/' && tag !== 'INPUT' && tag !== 'TEXTAREA') { e.preventDefault(); searchRef.current && searchRef.current.focus(); }
+          else if (e.key === 'Escape' && query) { setQuery(''); }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+      }, [query]);
+      useEffect(() => { if (art.publishState) art.publishState('explorer', { active, leftMode, openCount: openTabs.length }); }, [active, leftMode, openTabs.length]);
+
+      // mirror shell theme pushes onto local state (so iframes re-receive)
+      useEffect(() => {
+        const obs = new MutationObserver(() => setTheme({
+          theme: document.documentElement.getAttribute('data-theme') || 'A',
+          mode: document.documentElement.getAttribute('data-mode') || 'dark',
+          density: document.documentElement.getAttribute('data-density') || 'comfortable',
+        }));
+        obs.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-mode', 'data-density'] });
+        return () => obs.disconnect();
+      }, []);
+
+      const setThemeAttr = (k, v) => { document.documentElement.setAttribute('data-' + k, v); setTheme((t) => ({ ...t, [k]: v })); };
+
+      const openNode = useCallback((node) => {
+        if (!node || node.type === 'dir') return;
+        setOpenTabs((tabs) => tabs.includes(node.path) ? tabs : [...tabs, node.path]);
+        setActive(node.path);
+        if (art.publishState) art.publishState('selection', { path: node.path, kind: node.kind });
+      }, [art]);
+      const closeTab = (path, e) => {
+        e && e.stopPropagation();
+        setOpenTabs((tabs) => { const idx = tabs.indexOf(path); const next = tabs.filter((p) => p !== path);
+          if (active === path) setActive(next.length ? next[Math.min(idx, next.length - 1)] : null);
+          return next; });
+      };
+      const toggleDir = (path, val) => setOpenDirs((d) => ({ ...d, [path]: val }));
+
+      const activeNode = active ? byPath[active] : null;
+      const subs = subtabsFor(activeNode);
+      const sub = activeNode ? (subBy[active] || (subs[0] && subs[0][0])) : null;
+
+      const modes = [['tree', 'Tree', I.tree]];
+      if (designNodes.length) modes.push(['gallery', 'Gallery', I.grid]);
+      if (mediaNodes.length) modes.push(['media', 'Media', I.media]);
+
+      // grouped tree top level
+      const grouped = useMemo(() => {
+        const groups = {}; DATA.tree.forEach((n) => { (groups[n.kind === 'dir' ? dirGroup(n) : n.kind] = groups[n.kind === 'dir' ? dirGroup(n) : n.kind] || []).push(n); });
+        return groups;
+      }, []);
+      function dirGroup(n) { const map = { artifact: 'artifact', designs: 'design', drafts: 'draft', parts: 'parts', foundations: 'parts' }; return map[n.name] || 'other'; }
+
+      return (
+        <div className="shell">
+          <div className="topbar">
+            <div className="topbar-titles">
+              <span className="topbar-eyebrow"><span className="dot-tint" />groundwork · explorer{USING_MOCK ? ' · mock' : ''}</span>
+              <h1 className="topbar-title">{OVERLAY.title || (DATA.plan && DATA.plan.title) || META.title || 'Plan explorer'}</h1>
+            </div>
+            <div className="topbar-spacer" />
+            <div className="topbar-actions">
+              <span className={'host-badge ' + (USING_MOCK ? 'mock' : (art.inShell ? 'in-shell' : ''))}>{USING_MOCK ? 'mock' : (art.inShell ? 'in-shell' : 'browser')}</span>
+              <div className="seg" title="theme">
+                {['A', 'B', 'C'].map((t) => <button key={t} className={theme.theme === t ? 'is-on' : ''} onClick={() => setThemeAttr('theme', t)}>{t}</button>)}
+              </div>
+              <div className="seg" title="mode">
+                {['dark', 'light'].map((md) => <button key={md} className={theme.mode === md ? 'is-on' : ''} onClick={() => setThemeAttr('mode', md)}>{md[0].toUpperCase()}</button>)}
+              </div>
+              <button className={'iconbtn' + (railOpen ? ' is-on' : '')} title="toggle details" onClick={() => setRailOpen(!railOpen)}><Icon d={I.info} /></button>
+            </div>
+          </div>
+
+          <div className={'workspace' + (railOpen ? ' with-rail' : '')}>
+            <div className="sidebar">
+              <div className="search">
+                <div className="search-box">
+                  <Icon d={I.search} size={13} />
+                  <input ref={searchRef} value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search files + contents…" spellCheck={false} />
+                  {query ? <span className="search-clear" onClick={() => setQuery('')}><Icon d={I.x} size={12} /></span> : <span className="search-kbd">/</span>}
+                </div>
+              </div>
+              {!query.trim() && (
+                <div className="sidebar-head">
+                  <div className="seg">
+                    {modes.map(([m, label, ic]) => <button key={m} className={leftMode === m ? 'is-on' : ''} onClick={() => setLeftMode(m)}><Icon d={ic} size={12} />{label}</button>)}
+                  </div>
+                </div>
+              )}
+              {DATA.stats && !query.trim() && <div className="sidebar-stats">{DATA.stats.files} files · {DATA.stats.embedded} embedded · {DATA.stats.referenced} referenced{DATA.stats.truncated && DATA.stats.truncated.length ? ' · ' + DATA.stats.truncated.length + ' over budget' : ''}</div>}
+              <div className="sidebar-body">
+                {query.trim() ? <SearchResults q={query.trim()} onOpen={openNode} activePath={active} /> : (
+                  <Fragment>
+                    {leftMode === 'tree' && KIND_GROUPS.map(([k, label]) => grouped[k] && grouped[k].length ? (
+                      <Fragment key={k}>
+                        <div className="group-label">{label}</div>
+                        {grouped[k].map((n) => <TreeNode key={n.path} node={n} depth={0} open={openDirs} toggle={toggleDir} activePath={active} onOpen={openNode} />)}
+                      </Fragment>
+                    ) : null)}
+                    {leftMode === 'gallery' && <Gallery nodes={designNodes} activePath={active} onOpen={openNode} />}
+                    {leftMode === 'media' && <MediaGrid nodes={mediaNodes} activePath={active} onOpen={openNode} />}
+                  </Fragment>
+                )}
+              </div>
+            </div>
+
+            <div className="main">
+              {openTabs.length > 0 && (
+                <div className="tabbar">
+                  {openTabs.map((p) => { const n = byPath[p]; if (!n) return null; return (
+                    <button key={p} className={'tab' + (active === p ? ' is-active' : '')} onClick={() => setActive(p)}>
+                      <span className="tab-icon"><Icon d={typeIcon(n.kind === 'anchor' ? 'anchor' : n.type)} size={13} /></span>
+                      <span className="tab-name">{n.name}</span>
+                      <span className="tab-x" onClick={(e) => closeTab(p, e)}><Icon d={I.x} size={12} /></span>
+                    </button>
+                  ); })}
+                </div>
+              )}
+              {activeNode && subs.length > 0 && (
+                <div className="subtabs">
+                  {subs.map(([s, label]) => <button key={s} className={'subtab' + (sub === s ? ' is-on' : '')} onClick={() => setSubBy((x) => ({ ...x, [active]: s }))}>{label}</button>)}
+                  <span className="subtab-spacer" />
+                  <span className="subtab-path">{activeNode.path}</span>
+                </div>
+              )}
+              <Viewer node={activeNode} sub={sub} theme={theme} />
+            </div>
+
+            {railOpen && <Rail node={activeNode} art={art} toast={toast} />}
+          </div>
+
+          {toastMsg && <div className="toast">{toastMsg}</div>}
+        </div>
+      );
+    }
+
+    window.__groundwork_bridge_polyfill__.init().then((art) =>
+      ReactDOM.createRoot(document.getElementById('root')).render(<App art={art} />));
+  })();
+  </script>
+</body>
+</html>

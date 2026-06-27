@@ -1,7 +1,7 @@
 {
   "name": "@ikenga/skill-groundwork",
   "version": "0.3.1",
-  "description": "Reusable research → design → plan → orchestrate → act skill for Claude Code.",
+  "description": "Reusable research \u2192 design \u2192 plan \u2192 orchestrate \u2192 act skill for Claude Code.",
   "keywords": [
     "claude",
     "claude-code",
@@ -32,6 +32,7 @@
     "skills/"
   ],
   "scripts": {
-    "sync:from-canonical": "node ./scripts/sync-from-canonical.mjs"
+    "sync:from-dev": "node ./scripts/sync-from-dev.mjs",
+    "build:mirror": "node ./scripts/build-mirror.mjs"
   }
 }

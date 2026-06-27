@@ -1,4 +1,4 @@
-<!-- GENERATED — edit the canonical repo royalti-io/groundwork instead. Synced by sync-from-canonical.mjs. -->
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # agent: reviewer
 
 Brief template the `review` action passes to a spawned agent.

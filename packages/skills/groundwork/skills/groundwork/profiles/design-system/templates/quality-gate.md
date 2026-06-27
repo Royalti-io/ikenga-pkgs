@@ -1,4 +1,4 @@
-<!-- GENERATED — edit the canonical repo royalti-io/groundwork instead. Synced by sync-from-canonical.mjs. -->
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # Quality gate — per-part review checklist
 
 Run at the **review** step of every part (with `groundwork review` / `impeccable`), before flipping it to `stable`/locked. Pass/fail each item; record blockers. Condensed from Nielsen's 10 heuristics + WCAG 2.2 **AA**.

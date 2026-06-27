@@ -1,4 +1,4 @@
-<!-- GENERATED — edit the canonical repo royalti-io/groundwork instead. Synced by sync-from-canonical.mjs. -->
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `review` — gap-analysis pass → new Round → ID-driven re-sync
 
 **Loaded when**: the user wants to critique the plan (or a design), surface gaps, and fold them into the docs.

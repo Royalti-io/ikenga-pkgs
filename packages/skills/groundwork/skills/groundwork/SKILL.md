@@ -17,7 +17,8 @@ description: |
   ("plan a feature," "scaffold a plan folder," "set up groundwork for…"),
   references an existing plans/ folder by groundwork structure, or runs
   any of these actions: groundwork init / research / design / subplan /
-  review / clarify / orchestrate / refresh-board / refresh-living-spec / status.
+  review / clarify / orchestrate / refresh-board / refresh-living-spec /
+  explorer / plans-index / status.
 
   DO NOT TRIGGER for one-off code changes, single-document writeups, ADRs,
   or content that fits in a single markdown file — those don't need a
@@ -25,7 +26,7 @@ description: |
   (dashboard, mockup), route to ikenga-artifact-builder instead.
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, Agent, Skill, Workflow, TaskCreate, TaskUpdate, TaskList, TaskGet
 ---
-<!-- GENERATED — edit the canonical repo royalti-io/groundwork instead. Synced by sync-from-canonical.mjs. -->
+<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 
 # groundwork — research → plan → orchestrate → act, packaged
 
@@ -52,6 +53,8 @@ Surface model:
 | Action: `orchestrate` | Generates `09-orchestration.md` from `05` | When ready to kick off |
 | Action: `refresh-board` | (Re)generates `artifact/board.html` | Whenever board falls behind |
 | Action: `refresh-living-spec` | Regenerates the `spec-state` fence inside `artifact/index.html` (Phasing/Decisions/Risks tabs) from `.groundwork.json` + `04` + `05` + `01 §Risks` | When the living-spec's auto tabs fall behind |
+| Action: `explorer` | (Re)generates `artifact/explorer.html` — a file-tree + tabbed viewer (with **search**) of the whole plan folder; sibling to the board (opens it as a tab) | Browse the plan's files as one navigable view |
+| Action: `plans-index` | (Re)generates `<plans-dir>/_index.html` — a **cross-plan** dashboard: one card per plan with status rollups + drill-in to each plan's explorer/board | See every plan in a project at once |
 | Action: `status` | Read-only freshness + ID + design-coverage + sub-plan report | Anytime |
 
 `init` is the one entry point that doesn't require an existing `.groundwork.json`. Every other action refuses to run without one (and tells the user to run `init` first).
@@ -72,6 +75,8 @@ Match the user's request against the table; load the matching action file and fo
 | "groundwork clarify", "ready to orchestrate?" | [`actions/clarify.md`](actions/clarify.md) | Scan for open questions + unspecified IDs + missing locked designs |
 | "groundwork orchestrate", "generate 09", "wave plan" | [`actions/orchestrate.md`](actions/orchestrate.md) | Runs clarify first; emits `09-orchestration.md` (`--emit-workflow` → runnable `.workflow.js` + offer to run) |
 | "refresh the board", "update artifact/board.html" | [`actions/refresh-board.md`](actions/refresh-board.md) | Re-derive board data from current docs |
+| "groundwork explorer", "browse the plan files", "view/open the plan folder", "file explorer for this plan" | [`actions/explorer.md`](actions/explorer.md) | Build the typed file-tree model + write `artifact/explorer.html` (sibling to the board) |
+| "groundwork plans-index", "index all the plans", "plans overview/dashboard", "every plan in this project" | [`actions/plans-index.md`](actions/plans-index.md) | Scan a `plans/` dir + write the cross-plan `<plans-dir>/_index.html` |
 | "refresh the living spec", "update artifact/index.html", "the Phasing/Decisions/Risks tabs are stale" | [`actions/refresh-living-spec.md`](actions/refresh-living-spec.md) | Regenerate only the `spec-state` fence (Phasing/Decisions/Risks); the hand-authored Overview tab is never touched |
 | "groundwork status", "where are we" | [`actions/status.md`](actions/status.md) | Read-only report |
 
@@ -125,6 +130,8 @@ groundwork *composes* existing skills rather than reimplementing them. Soft depe
 | Capability | Preferred skill | Fallback |
 |---|---|---|
 | Plan-board artifact | `ikenga-artifact-builder` | Self-contained template at `profiles/_shared/board/index.html` |
+| Plan-explorer artifact | — *(no file-explorer archetype fits; always the static template)* | Self-contained template at `profiles/_shared/explorer/index.html` (+ `design-system` / `content` overlays). **Fully offline** — React + `marked` + `DOMPurify` are inlined and the JSX is pre-transpiled (no Babel/CDN at runtime; rebuild from `*.src.html` via `scripts/build-offline-artifacts.mjs`) |
+| Cross-plan dashboard | — *(static template)* | Self-contained template at `profiles/_shared/plans-index/index.html`; **fully offline** (inlined libs, pre-transpiled); written anchorless (`write-region-plain`) since it spans many plans |
 | Design-quality spine (every `design` run) | `huashu-design` *(always engaged at step 2, regardless of surface)* | Plain self-contained HTML under Claude's own craft direction |
 | Interactive / data-bearing design mockup | `ikenga-artifact-builder` *(layered with huashu)* | Plain self-contained HTML (studio's mockups needed nothing more) |
 | Scroll-driven narrative mockup | `scrollytelling` *(layered with huashu)* | Plain self-contained HTML |
@@ -185,11 +192,19 @@ groundwork/
 │   ├── orchestrate.md
 │   ├── refresh-board.md
 │   ├── refresh-living-spec.md                ← regenerate the spec-state fence in artifact/index.html
+│   ├── explorer.md                           ← (re)generate artifact/explorer.html (file-tree + viewer + search)
+│   ├── plans-index.md                        ← (re)generate <plans-dir>/_index.html (cross-plan dashboard)
 │   └── status.md
 ├── agents/
 │   ├── researcher.md                         ← brief template the research action spawns
 │   ├── reviewer.md                           ← brief template the review action spawns
 │   └── orchestrator.md                       ← brief template the orchestrate action spawns
+├── scripts/
+│   ├── groundwork_state.py                   ← byte-exact state executor (all subcommands)
+│   ├── generate_explorer.py                  ← automate `explorer` for one plan / all plans (--all-under --missing-only)
+│   ├── generate_plans_index.py               ← automate `plans-index` for a plans/ dir
+│   ├── watch.py                              ← live-refresh an explorer / index as files change
+│   └── build-offline-artifacts.mjs           ← rebuild the offline index.html from *.src.html (inlines libs, transpiles JSX)
 └── profiles/
     ├── _shared/
     │   ├── profile.json                      ← base vocab + spine list
@@ -209,7 +224,10 @@ groundwork/
     │   │       ├── manifest.json
     │   │       ├── orchestrate.workflow.js   ← runnable twin of 09 (--emit-workflow)
     │   │       └── data/                     ← optional external data sources
-    │   └── board/index.html                  ← self-contained Mission Control + Wave-toggle
+    │   ├── board/index.html                  ← self-contained Mission Control + Wave-toggle
+    │   ├── explorer/                         ← index.src.html (readable JSX source) → index.html (built, offline)
+    │   │   └── …                              ← file-tree + tabbed viewer + search; base, profile-adaptive
+    │   └── plans-index/                       ← index.src.html → index.html (built, offline); cross-plan dashboard
     ├── software/                             ← `extends: _shared`, produces_designs: true
     │   ├── profile.json
     │   └── templates/                        ← thin overlays (only the docs that differ)
@@ -218,10 +236,12 @@ groundwork/
     │   └── templates/
     ├── content/                              ← `extends: _shared`, produces_designs: true (key art)
     │   ├── profile.json
-    │   └── templates/
+    │   ├── templates/
+    │   └── explorer/index.html               ← media-first explorer overlay
     └── design-system/                        ← `extends: _shared`, +parts-template + quality-gate docs
         ├── profile.json
-        └── templates/
+        ├── templates/
+        └── explorer/index.html               ← gallery-first explorer overlay
 ```
 
 The reference instance — the canonical worked example of every artifact in this spine — is `plans/studio/` in this workspace. Re-derive the spine from it on major `spine_version` bumps.

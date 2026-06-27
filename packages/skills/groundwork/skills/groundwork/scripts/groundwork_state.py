@@ -53,6 +53,17 @@ def _now() -> str:
     return _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _html_script_escape(s: str) -> str:
+    """Make a JSON document safe to splice inside an HTML <script> element.
+    Neutralizes `<` / `>` / `&` (and the U+2028/U+2029 JS line separators) so an
+    embedded file body containing a literal `</script>` (common in code/markdown)
+    can't terminate the block — which would both break JSON.parse (silent fallback
+    to mock) and inject live HTML (XSS). Each replacement is a valid JSON \\u escape,
+    so JSON.parse round-trips it back to the original character in the app."""
+    return (s.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
+             .replace(chr(0x2028), "\u2028").replace(chr(0x2029), "\u2029"))
+
+
 def sha256_text(s: str) -> str:
     return "sha256:" + hashlib.sha256(s.encode("utf-8")).hexdigest()
 
@@ -524,6 +535,8 @@ def cmd_write_region(args):
     action = args.action
     new_content = args.content if args.content is not None else read_file(args.content_file)
     new_content = new_content.strip("\n")
+    if getattr(args, "html_script_safe", False):
+        new_content = _html_script_escape(new_content)
     new_hash = sha256_text(new_content.strip())
 
     text = read_file(full)
@@ -750,6 +763,326 @@ def cmd_status_data(args):
         "research": anchor.get("research", {}),
         "profile_conformance": profiles_report,
     })
+
+
+# --------------------------------------------------------------------------- #
+# command: explorer-data
+# --------------------------------------------------------------------------- #
+
+# Extension → viewer type. `design` is derived from path (under designs/), not here.
+_EXPLORER_EXT_TYPE = {
+    ".md": "markdown", ".markdown": "markdown", ".mdx": "markdown",
+    ".html": "html-artifact", ".htm": "html-artifact",
+    ".png": "image", ".jpg": "image", ".jpeg": "image", ".gif": "image",
+    ".webp": "image", ".avif": "image", ".bmp": "image", ".ico": "image",
+    ".svg": "svg", ".pdf": "pdf", ".json": "json",
+    ".js": "code", ".mjs": "code", ".cjs": "code", ".ts": "code", ".tsx": "code",
+    ".jsx": "code", ".css": "code", ".scss": "code", ".py": "code", ".sh": "code",
+    ".rb": "code", ".go": "code", ".rs": "code", ".yml": "code", ".yaml": "code",
+    ".toml": "code", ".sql": "code",
+    ".txt": "text", ".csv": "text", ".log": "text", ".env": "text",
+}
+# Types whose content we embed verbatim into explorer-data (cheap text). Everything
+# else (image / pdf / html-artifact / design) is referenced by relative path so the
+# artifact stays small and relative token/asset imports keep resolving.
+_EXPLORER_EMBED_TYPES = {"markdown", "svg", "json", "code", "text"}
+_EXPLORER_SKIP_DIRS = {".git", "node_modules", "__pycache__", ".next", "dist",
+                       "build", ".turbo", ".cache", ".vercel"}
+_EXPLORER_SKIP_FILES = {".DS_Store", "Thumbs.db"}
+# Self-referential / volatile files excluded from the model so re-runs are a true
+# no-op. `.groundwork.json` is machine state that *this* action mutates (via
+# write-region) every run, and `artifact/explorer.html` is the artifact itself —
+# embedding either makes the model churn on every regenerate. Their content/size
+# changing each run would otherwise make `explorer` perpetually "drifted".
+_EXPLORER_SELF_SKIP = {".groundwork.json", "artifact/explorer.html"}
+_EXPLORER_PER_FILE_CAP = 96 * 1024      # 96 KB — no single embed bigger than this
+_EXPLORER_TOTAL_BUDGET = 768 * 1024     # 768 KB total embed — well under the 2 MB error
+# Embed priority (lower = embedded first, so the planning core never loses to the
+# long tail of parts/ mockup-spec docs). Within a tier, smaller files win.
+_EXPLORER_PRIORITY = {"spine": 0, "subplan": 1, "draft": 2, "artifact": 2,
+                      "anchor": 3, "parts": 4, "asset": 4, "design": 5, "other": 4}
+
+
+def _explorer_node_type(name: str, relposix: str) -> str:
+    ext = os.path.splitext(name)[1].lower()
+    t = _EXPLORER_EXT_TYPE.get(ext, "file")
+    # A .html under designs/ is a design mockup, not a generic artifact.
+    if t == "html-artifact" and (relposix == "designs" or relposix.startswith("designs/")):
+        t = "design"
+    return t
+
+
+def _explorer_node_kind(relposix: str, name: str, anchor: dict) -> str:
+    if relposix == ".groundwork.json":
+        return "anchor"
+    if relposix in anchor.get("subplans", {}):
+        return "subplan"
+    if relposix in anchor.get("designs", {}):
+        return "design"
+    # top-level numbered docs
+    m = re.match(r"^(\d\d)-.*\.md$", name)
+    if m and "/" not in relposix:
+        n = m.group(1)
+        if n in {"00", "01", "02", "03", "04", "05", "09"}:
+            return "spine"
+        return "subplan"
+    head = relposix.split("/", 1)[0]
+    if head == "artifact":
+        return "asset" if "/assets/" in ("/" + relposix) else "artifact"
+    if head == "designs":
+        return "design"
+    if head == "drafts":
+        return "draft"
+    if head in {"assets", "foundations", "parts"}:
+        return head if head != "assets" else "asset"
+    return "other"
+
+
+def _explorer_badges(relposix: str, ntype: str, kind: str, anchor: dict) -> dict:
+    b = {}
+    d = anchor.get("designs", {}).get(relposix)
+    if d:
+        b["design"] = {"phase": d.get("phase"), "wp": d.get("wp"),
+                       "locked": d.get("locked", False), "locked_in": d.get("locked_in")}
+    sp = anchor.get("subplans", {}).get(relposix)
+    if sp:
+        b["subplan"] = {"archetype": sp.get("archetype"), "ref": sp.get("ref"),
+                        "status": sp.get("status", "active")}
+    # drift state for tracked docs is computed by the walker once content is read
+    # (it needs the file body); referenced files carry the node.registered flag only.
+    return b
+
+
+def _explorer_walk(plan: str, rel: str, anchor: dict, budget: dict) -> dict | None:
+    """Build a typed tree node for `<plan>/<rel>` (rel uses os.sep). Returns None
+    for skipped entries. Mutates budget['spent'] / budget['truncated']."""
+    full = os.path.join(plan, rel) if rel else plan
+    name = os.path.basename(rel) if rel else os.path.basename(os.path.normpath(plan))
+    relposix = rel.replace(os.sep, "/")
+
+    if os.path.isdir(full):
+        # Skip noise dirs — but only for descendants, never the plan root itself
+        # (a plan legitimately named `build`/`dist`/… must still render).
+        if rel and name in _EXPLORER_SKIP_DIRS:
+            return None
+        # Symlink-loop / re-entry guard: a dir symlink pointing at an ancestor would
+        # otherwise recurse until ELOOP, producing a phantom tree that eats the embed
+        # budget. Skip any real directory we've already entered.
+        try:
+            real = os.path.realpath(full)
+        except OSError:
+            real = full
+        if real in budget["seen_dirs"]:
+            return None
+        budget["seen_dirs"].add(real)
+        children = []
+        try:
+            entries = sorted(os.listdir(full))
+        except OSError:
+            entries = []
+        for child in entries:
+            if child in _EXPLORER_SKIP_FILES:
+                continue
+            node = _explorer_walk(plan, os.path.join(rel, child) if rel else child, anchor, budget)
+            if node is not None:
+                children.append(node)
+        # dotfiles last, then alpha (numeric-prefixed docs sort first naturally)
+        children.sort(key=lambda n: (n["name"].startswith("."), n["name"].lower()))
+        budget["dirs"] += 1
+        return {"name": name, "path": relposix, "type": "dir", "kind": "dir",
+                "registered": True, "children": children, "empty": len(children) == 0}
+
+    # file
+    if name in _EXPLORER_SKIP_FILES or name == ".gitkeep" or relposix in _EXPLORER_SELF_SKIP:
+        return None
+    ntype = _explorer_node_type(name, relposix)
+    kind = _explorer_node_kind(relposix, name, anchor)
+    try:
+        size = os.path.getsize(full)
+    except OSError:
+        size = 0
+    registered = (relposix in anchor.get("docs", {}) or relposix in anchor.get("subplans", {})
+                  or relposix in anchor.get("designs", {}) or relposix == ".groundwork.json")
+    badges = _explorer_badges(relposix, ntype, kind, anchor)
+    node = {"name": name, "path": relposix, "type": ntype, "kind": kind,
+            "registered": registered, "size": size}
+    budget["files"] += 1
+
+    if ntype in _EXPLORER_EMBED_TYPES:
+        node["embedded"] = False  # decided in the greedy priority pass after the walk
+        budget["embeddable"].append((node, full, relposix, size))
+    else:
+        node["embedded"] = False
+        budget["referenced"] += 1
+    if badges:
+        node["badges"] = badges
+    return node
+
+
+def _explorer_embed_pass(anchor: dict, budget: dict):
+    """Second phase: embed file contents in priority order until the budget is
+    spent, so the planning core (spine, subplans, quality-gate) always wins over
+    the long tail of parts/ mockup specs. Computes drift for tracked docs here,
+    where the body is in hand."""
+    def rank(item):
+        node, _full, _rel, size = item
+        tier = _EXPLORER_PRIORITY.get(node["kind"], 4)
+        if node["name"] == "quality-gate.md":
+            tier = 1
+        return (tier, size)
+    for node, full, relposix, size in sorted(budget["embeddable"], key=rank):
+        if size > _EXPLORER_PER_FILE_CAP or budget["spent"] + size > _EXPLORER_TOTAL_BUDGET:
+            budget["truncated"].append(relposix)
+            continue
+        try:
+            with open(full, "r", encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except OSError:
+            budget["truncated"].append(relposix)
+            continue
+        node["content"] = text
+        node["embedded"] = True
+        budget["spent"] += size
+        budget["embedded"] += 1
+        # refine drift state for tracked docs now that we have content
+        doc = anchor.get("docs", {}).get(relposix)
+        if doc:
+            badges = node.setdefault("badges", {})
+            whole_ok = sha256_text(text) == doc.get("hash")
+            dirty = [reg["id"] for reg in doc.get("generated_regions", [])
+                     if (region_content_hash(text, reg["id"]) or reg["hash"]) != reg["hash"]]
+            badges["drift"] = "in-sync" if (whole_ok and not dirty) else "drift"
+            if dirty:
+                badges["dirty_regions"] = dirty
+            fences = [reg["id"] for reg in doc.get("generated_regions", [])]
+            if fences:
+                badges["fences"] = fences
+
+
+def cmd_explorer_data(args):
+    plan = args.plan
+    anchor = load_anchor(plan)
+    budget = {"spent": 0, "files": 0, "dirs": 0, "embedded": 0,
+              "referenced": 0, "truncated": [], "embeddable": [], "seen_dirs": set()}
+    root = _explorer_walk(plan, "", anchor, budget)
+    _explorer_embed_pass(anchor, budget)
+    tree = root["children"] if root else []
+    emit({
+        "plan": {"title": _plan_title(plan, anchor), "profile": anchor.get("profile"),
+                 "goal": anchor.get("goal"),
+                 "slug": os.path.basename(os.path.normpath(plan))},
+        "tree": tree,
+        "ids": anchor.get("ids", {}),
+        "designs": anchor.get("designs", {}),
+        "subplans": anchor.get("subplans", {}),
+        "research": {k: v.get("stamped") for k, v in anchor.get("research", {}).items()},
+        "stats": {"files": budget["files"], "dirs": budget["dirs"],
+                  "embedded": budget["embedded"], "referenced": budget["referenced"],
+                  "embedded_bytes": budget["spent"], "truncated": budget["truncated"]},
+    })
+
+
+# --------------------------------------------------------------------------- #
+# command: plans-index-data — cross-plan rollup for a whole plans/ directory
+# --------------------------------------------------------------------------- #
+
+def _plan_rollup(plan_dir: str, name: str) -> dict | None:
+    """Lightweight metadata-only rollup for one plan (no doc embedding). Returns
+    None if the dir isn't a groundwork plan or the anchor is corrupt."""
+    ap = os.path.join(plan_dir, ANCHOR)
+    if not os.path.exists(ap):
+        return None
+    try:
+        anchor = json.loads(read_file(ap))
+    except Exception:
+        return None
+    ids = anchor.get("ids", {})
+    wp = {}
+    for k, v in ids.items():
+        if k.startswith("WP-"):
+            s = v.get("status", "queued"); wp[s] = wp.get(s, 0) + 1
+    gates = [v for k, v in ids.items() if k.startswith("G-") and v.get("kind") == "freeze_gate"]
+    gate = {}
+    for v in gates:
+        s = v.get("status", "pending"); gate[s] = gate.get(s, 0) + 1
+    designs = anchor.get("designs", {})
+    subs = anchor.get("subplans", {})
+    # drift: any tracked doc whose on-disk hash diverged (or vanished)
+    drift = False
+    for rel, meta in anchor.get("docs", {}).items():
+        f = os.path.join(plan_dir, rel)
+        if not os.path.exists(f) or sha256_text(read_file(f)) != meta.get("hash"):
+            drift = True; break
+    return {
+        "slug": name, "path": name, "title": _plan_title(plan_dir, anchor),
+        "profile": anchor.get("profile"), "goal": anchor.get("goal"),
+        "updated": (anchor.get("updated") or "")[:10],
+        "wps": {"total": sum(wp.values()), **wp},
+        "gates": {"total": len(gates), **gate},
+        "designs": {"total": len(designs), "locked": sum(1 for x in designs.values() if x.get("locked"))},
+        "subplans": {"total": len(subs), "active": sum(1 for x in subs.values() if x.get("status", "active") == "active")},
+        "research": {k: v.get("stamped") for k, v in anchor.get("research", {}).items()},
+        "drift": drift,
+        "has": {"board": os.path.exists(os.path.join(plan_dir, "artifact", "board.html")),
+                "explorer": os.path.exists(os.path.join(plan_dir, "artifact", "explorer.html")),
+                "livingspec": os.path.exists(os.path.join(plan_dir, "artifact", "index.html"))},
+    }
+
+
+def cmd_plans_index_data(args):
+    root = args.plans_dir
+    plans = []
+    try:
+        entries = sorted(os.listdir(root))
+    except OSError:
+        entries = []
+    for name in entries:
+        d = os.path.join(root, name)
+        if not os.path.isdir(d):
+            continue
+        r = _plan_rollup(d, name)
+        if r is not None:
+            plans.append(r)
+    by_profile = {}
+    for p in plans:
+        by_profile[p["profile"]] = by_profile.get(p["profile"], 0) + 1
+    emit({
+        "root": {"name": os.path.basename(os.path.normpath(root)), "path": root},
+        "plans": plans,
+        "stats": {"count": len(plans), "by_profile": by_profile,
+                  "wps_total": sum(p["wps"]["total"] for p in plans),
+                  "wps_done": sum(p["wps"].get("done", 0) for p in plans),
+                  "drifted": sum(1 for p in plans if p["drift"])},
+    })
+
+
+def cmd_write_region_plain(args):
+    """Splice a fenced region in a STANDALONE file (no .groundwork.json anchor) —
+    for the cross-plan plans-index, which spans many plans and is owned by none.
+    Idempotent: compares the new content (excluding the meta line) to what's on
+    disk and writes only if changed."""
+    full = args.file
+    fid = args.id
+    new_content = (args.content if args.content is not None else read_file(args.content_file)).strip("\n")
+    if getattr(args, "html_script_safe", False):
+        new_content = _html_script_escape(new_content)
+    text = read_file(full)
+    r = find_region(text, fid)
+    if r is None:
+        die(f"fence '{fid}' not found in {full}", 1)
+    (s0, s1), (e0, e1), inner = r
+    if _strip_meta(inner).strip() == new_content.strip():
+        emit({"result": "UNCHANGED", "file": full, "id": fid}); return
+    start_line = text[s0:s1]
+    if start_line.lstrip().startswith("//"):
+        meta = f"// last_action: plans-index · {_now()}"
+    elif start_line.lstrip().startswith("#"):
+        meta = f"# last_action: plans-index · {_now()}"
+    else:
+        meta = f"<!-- last_action: plans-index · {_now()} -->"
+    new_text = text[:s1] + f"\n{meta}\n{new_content}\n" + text[e0:]
+    atomic_write(full, new_text)
+    emit({"result": "WRITTEN", "file": full, "id": fid})
 
 
 # --------------------------------------------------------------------------- #
@@ -1066,6 +1399,8 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--content")
     g.add_argument("--content-file")
     g.add_argument("--force", action="store_true")
+    g.add_argument("--html-script-safe", action="store_true",
+                   help="escape </script>-breaking chars (<>&) — for JSON written into an HTML <script> fence")
     g.set_defaults(func=cmd_write_region)
 
     g = sub.add_parser("next-id", help="compute the next free ID of a kind")
@@ -1106,6 +1441,28 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--plan", required=True)
     g.add_argument("--profiles-root")
     g.set_defaults(func=cmd_status_data)
+
+    g = sub.add_parser("explorer-data",
+                       help="emit the typed file-tree model for artifact/explorer.html "
+                            "(embeds markdown/text/code under a size budget; references "
+                            "html/design/image/pdf by relative path)")
+    g.add_argument("--plan", required=True)
+    g.set_defaults(func=cmd_explorer_data)
+
+    g = sub.add_parser("plans-index-data",
+                       help="emit a cross-plan rollup of every groundwork plan under a plans/ dir")
+    g.add_argument("--plans-dir", required=True)
+    g.set_defaults(func=cmd_plans_index_data)
+
+    g = sub.add_parser("write-region-plain",
+                       help="splice a fence in a standalone file (no anchor) — idempotent; for plans-index")
+    g.add_argument("--file", required=True)
+    g.add_argument("--id", required=True)
+    g.add_argument("--content")
+    g.add_argument("--content-file")
+    g.add_argument("--html-script-safe", action="store_true",
+                   help="escape </script>-breaking chars (<>&) — for JSON written into an HTML <script> fence")
+    g.set_defaults(func=cmd_write_region_plain)
 
     g = sub.add_parser("living-spec-data",
                        help="emit the structured skeleton for the spec-state fence "
