@@ -1,5 +1,11 @@
 # @ikenga/skill-groundwork
 
+## 0.4.0
+
+### Minor Changes
+
+- [#36](https://github.com/Royalti-io/ikenga-pkgs/pull/36) [`e76c90b`](https://github.com/Royalti-io/ikenga-pkgs/commit/e76c90bfb4b468e8ac12a08cd21fe65d981ecac0) Thanks [@nedjamez](https://github.com/nedjamez)! - Add the file **explorer** + cross-plan **plans-index** views to the groundwork skill: a file tree + tabbed viewer with full-text search, profile-adaptive gallery/media, fully-offline self-contained artifacts (run air-gapped / in Claude Desktop), plus live-refresh and bulk-generate tooling. Also restores the forward `dev → pkgs → mirror` sync flow (the `sync-from-canonical` reversal rested on a fabricated source-of-truth sign-off).
+
 ## 0.3.1
 
 ### Patch Changes
