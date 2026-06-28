@@ -1,0 +1,21 @@
+{
+  "id": "com.ikenga.skill-thunderbird",
+  "name": "Thunderbird Mail",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "skill",
+  "author": { "name": "Royalti", "key": "royalti" },
+
+  "permissions": {
+    "shell.execute": ["grep", "stat", "pgrep", "tail", "sed", "node", "npx"],
+    "fs.read": [
+      "$home/.thunderbird/**",
+      "$home/snap/thunderbird/**",
+      "$home/Library/Thunderbird/**",
+      "$home/.icedove/**"
+    ],
+    "fs.write": ["$pkg_data/**"],
+    "net": ["imap://*", "imaps://*"],
+    "vault.keys": ["*IMAP*"]
+  }
+}
