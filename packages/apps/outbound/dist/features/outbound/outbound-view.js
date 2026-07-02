@@ -2693,8 +2693,9 @@ function HashtagEditor({ hashtags, onChange, onUpdate }) {
 
 // Per-platform preview editor (design social §B): base body on the left, stacked
 // LinkedIn / X / Bluesky previews on the right with per-platform char caps; fan-out
-// rows + reject below. Body is editable locally; media + hashtags write back to
-// edited_json via updateDraft (the per-platform base body stays preview-only).
+// rows + reject below. Body, media and hashtags all write back to edited_json via
+// updateDraft; body persists on blur AND is flushed before Approve arms, so the
+// committed row always carries what the user last saw in the editor.
 function SocialEditor({ post, standalone, onApprove, approvePending, onReject, rejectPending, onRetry, rawStatus, commitError, armed, undoSecondsLeft, onCancelUndo }) {
   const canApprove = isApprovable({ raw_status: rawStatus });
   const [body, setBody] = useState(post?.content ?? '');
@@ -2702,13 +2703,32 @@ function SocialEditor({ post, standalone, onApprove, approvePending, onReject, r
   const [localHashtags, setLocalHashtags] = useState(post?.hashtags ?? []);
   const [mediaUpdatePending, setMediaUpdatePending] = useState(false);
   const [hashtagUpdatePending, setHashtagUpdatePending] = useState(false);
+  const [bodySaveError, setBodySaveError] = useState(null);
 
   // Reset local state when the selected post changes.
   useEffect(() => {
     setBody(post?.content ?? '');
     setLocalHashtags(post?.hashtags ?? []);
     setRejectOpen(false);
+    setBodySaveError(null);
   }, [post?.id]);
+
+  // Persist body edits through edited_json ({body} override wins in baseRow).
+  // Called on textarea blur (fire-and-forget) and awaited before Approve arms —
+  // an unsaved edit must never silently lose to the original payload on commit.
+  const bodyDirty = body !== (post?.content ?? '');
+  async function persistBody() {
+    if (standalone || !post?.id || !bodyDirty) return;
+    setBodySaveError(null);
+    try {
+      await updateDraft(post.id, { body });
+    } catch (e) {
+      const m = String(e?.message ?? e);
+      console.error('[outbound] body update failed:', m);
+      setBodySaveError(`Body edit not saved: ${m}`);
+      throw e;
+    }
+  }
 
   // Write media_url / hashtags through edited_json (host.paActions.update).
   // In standalone (fixture) mode there is no host write path — keep it a no-op
@@ -2768,7 +2788,7 @@ function SocialEditor({ post, standalone, onApprove, approvePending, onReject, r
       <div class="so-editor">
         <div>
           <div class="so-editor-pane-label"><span>Editor · base body</span></div>
-          <textarea class="so-text" value=${body} onInput=${(e) => setBody(e.target.value)}></textarea>
+          <textarea class="so-text" value=${body} onInput=${(e) => setBody(e.target.value)} onBlur=${() => persistBody().catch(() => {})}></textarea>
           <div class="char-rows">
             ${SOCIAL_PLATFORMS.map((p) => {
               const over = len - p.cap;
@@ -2834,7 +2854,7 @@ function SocialEditor({ post, standalone, onApprove, approvePending, onReject, r
         />
       ` : null}
 
-      <${CommitError} message=${commitError} />
+      <${CommitError} message=${commitError || bodySaveError} />
       ${canApprove ? html`
         <${ConsequenceLine}
           recipient=${post?.account || 'social accounts'}
@@ -2857,7 +2877,13 @@ function SocialEditor({ post, standalone, onApprove, approvePending, onReject, r
               style=${anyBlocked ? { opacity: 0.55, cursor: 'not-allowed' } : { background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
               disabled=${anyBlocked || approvePending}
               title=${anyBlocked ? 'Resolve over-cap platforms first' : 'Approve & schedule'}
-              onClick=${() => !anyBlocked && onApprove()}
+              onClick=${async () => {
+                if (anyBlocked) return;
+                // Flush any unsaved body edit BEFORE arming the undo countdown; if
+                // the save fails, do NOT arm — approving would ship stale content.
+                try { await persistBody(); } catch { return; }
+                onApprove();
+              }}
             >
               ${approvePending ? 'Scheduling…' : 'Approve & Schedule'}
             </button>

@@ -46,5 +46,12 @@
       "sales_deals"
     ],
     "vault.keys": []
-  }
+  },
+
+  "requires": [
+    {
+      "kind": "skill",
+      "name": "skill-research"
+    }
+  ]
 }

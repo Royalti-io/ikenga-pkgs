@@ -173,10 +173,14 @@ const REVIEWS_FIXTURE = [
 
 /** Map a strategic_initiatives row → an OKR fixture-shaped objective.
  *  area is derived from ties_to_goal (board grouping per the screen doc §4 step 4).
+ *  CAVEAT: strategic_initiatives.ties_to_goal is an INTEGER 0/1 flag (0030 schema),
+ *  not an area name — a bare flag value carries no grouping signal and must never
+ *  become a board column name, so flag-like values fall through to 'Company'.
  *  No strategy_key_results table yet → KR bars come from the overall status only. */
 function initiativeToObjective(r, i) {
-  const rawGoal = (r.ties_to_goal ?? r.area ?? '').toString();
-  const area = AREAS.find((a) => rawGoal.toLowerCase().includes(a.toLowerCase())) || rawGoal || 'Company';
+  const rawGoal = (r.ties_to_goal ?? r.area ?? '').toString().trim();
+  const goalText = /^(?:0|1|true|false)$/i.test(rawGoal) ? '' : rawGoal;
+  const area = AREAS.find((a) => goalText.toLowerCase().includes(a.toLowerCase())) || goalText || 'Company';
   // status → a coarse overall % proxy (no strategy_key_results live progress yet).
   const status = (r.status ?? '').toString().toLowerCase();
   const pct = status.includes('done') || status.includes('complete') ? 100
