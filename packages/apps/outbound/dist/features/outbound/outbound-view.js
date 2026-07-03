@@ -29,6 +29,7 @@ import {
   useQuery,
   useMutation,
   useQueryClient,
+  useAutoGrow,
 } from '../../lib/ui.js';
 import {
   hostDbQuery,
@@ -793,6 +794,7 @@ function FloatingUndoBar({ armed, secondsLeft, onCancel, subject, label = 'Sendi
 function EditPanel({ subject, body, onSave, onCancel, pending }) {
   const [subj, setSubj] = useState(subject ?? '');
   const [bod, setBod] = useState(body ?? '');
+  const bodRef = useAutoGrow(bod, { minHeight: 160 });
   return html`
     <div class="ob-edit-panel">
       <span class="ob-edit-label">Edit before approving</span>
@@ -802,7 +804,7 @@ function EditPanel({ subject, body, onSave, onCancel, pending }) {
       </label>
       <label class="ob-edit-field">
         <span>Body</span>
-        <textarea rows="6" value=${bod} onInput=${(e) => setBod(e.target.value)}></textarea>
+        <textarea ref=${bodRef} value=${bod} onInput=${(e) => setBod(e.target.value)} style=${{ overflow: 'hidden', resize: 'none' }}></textarea>
       </label>
       <div class="ob-edit-row">
         <button class="ob-btn-sm" onClick=${onCancel}>Cancel</button>
@@ -3155,6 +3157,7 @@ function SocialEditor({ post, standalone, onApprove, approvePending, onReject, r
   const [mediaUpdatePending, setMediaUpdatePending] = useState(false);
   const [hashtagUpdatePending, setHashtagUpdatePending] = useState(false);
   const [bodySaveError, setBodySaveError] = useState(null);
+  const soBodyRef = useAutoGrow(body, { minHeight: 180 });
 
   // Reset local state when the selected post changes.
   useEffect(() => {
@@ -3239,7 +3242,7 @@ function SocialEditor({ post, standalone, onApprove, approvePending, onReject, r
       <div class="so-editor">
         <div>
           <div class="so-editor-pane-label"><span>Editor · base body</span></div>
-          <textarea class="so-text" value=${body} onInput=${(e) => setBody(e.target.value)} onBlur=${() => persistBody().catch(() => {})}></textarea>
+          <textarea ref=${soBodyRef} class="so-text" value=${body} onInput=${(e) => setBody(e.target.value)} onBlur=${() => persistBody().catch(() => {})} style=${{ overflow: 'hidden', resize: 'none' }}></textarea>
           <div class="char-rows">
             ${SOCIAL_PLATFORMS.map((p) => {
               const over = len - p.cap;

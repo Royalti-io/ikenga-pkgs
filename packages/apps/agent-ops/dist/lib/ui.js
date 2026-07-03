@@ -148,3 +148,30 @@ export function Icon({ name, size = 16, className, strokeWidth = 2 }) {
     stroke-linejoin="round"
   ><path d=${path} /></svg>`;
 }
+
+// Auto-growing textarea hook — the body-editor pattern for outbox/detail panes.
+// A fixed-height textarea with an inner scrollbar reads as a cramped form
+// field; content-sized, it reads as a document the pane scrolls naturally
+// (the outer pane owns overflow). Sets height to scrollHeight on mount, on
+// value change, and on container resize; CSS `field-sizing: content` will
+// obsolete this once WebKitGTK ships it.
+//   const ref = useAutoGrow(value);
+//   html`<textarea ref=${ref} value=${value} ... style=${{ overflow: 'hidden', resize: 'none' }}></textarea>`
+export function useAutoGrow(value, { minHeight = 160 } = {}) {
+  const ref = React.useRef(null);
+  const fit = React.useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.max(minHeight, el.scrollHeight)}px`;
+  }, [minHeight]);
+  React.useLayoutEffect(fit, [fit, value]);
+  React.useEffect(() => {
+    const el = ref.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(fit);
+    ro.observe(el.parentElement ?? el);
+    return () => ro.disconnect();
+  }, [fit]);
+  return ref;
+}
