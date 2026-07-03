@@ -34,6 +34,7 @@ import {
   useQuery, useMutation, useQueryClient,
 } from '../../lib/ui.js';
 import { hostDbQuery, hostDbExec, setMenu, isStandalone } from '../../lib/bridge.js';
+import { dispatchItemAction } from '../../lib/dispatch.js';
 
 // ─── Stage enum ───────────────────────────────────────────────────────────────
 // Content editorial pipeline stages — idea → outline → draft → review → scheduled.
@@ -589,6 +590,12 @@ function PieceRow({ piece, isSelected, onClick }) {
 
 /** Piece detail pane (list mode) */
 function PieceDetail({ piece, transitions }) {
+  // Local dispatch feedback — flips true on click so the operator sees the
+  // hand-off landed and the same click can't double-seed the session. Resets
+  // when the selected piece changes.
+  const [sent, setSent] = useState(false);
+  useEffect(() => { setSent(false); }, [piece?.id]);
+
   if (!piece) {
     return html`<div class="ip-split-pane split-detail" style=${{ display:'flex', alignItems:'center', justifyContent:'center', color:'var(--fg-muted)', fontSize:'0.85rem' }}>
       Select a piece
@@ -597,6 +604,8 @@ function PieceDetail({ piece, transitions }) {
 
   const hasApprove = piece.next_action_mode === 'approve';
   const hasConfirm = piece.next_action_mode === 'confirm';
+
+  const onAct = () => { handleAction(piece); setSent(true); };
   const showButton = hasApprove || hasConfirm;
 
   return html`
@@ -628,9 +637,10 @@ function PieceDetail({ piece, transitions }) {
                   <button
                     class=${cn('btn', hasApprove ? 'affirmative' : '')}
                     type="button"
-                    onClick=${() => handleAction(piece)}
+                    disabled=${sent}
+                    onClick=${onAct}
                   >
-                    ${hasApprove ? 'Approve & run' : 'Confirm & run'}
+                    ${sent ? 'Sent to your Chi' : hasApprove ? 'Approve & run' : 'Confirm & run'}
                   </button>
                 </div>
               ` : null}
@@ -657,14 +667,38 @@ function PieceDetail({ piece, transitions }) {
   `;
 }
 
-/** No-op stub for approve/confirm action — real impl wires to host.dispatchAgentAction */
+/** Map a content_pieces row → the recipe-shared dispatch descriptor.
+ *  Recipe-shared shape (atelier-parity RECIPE 1 · dispatch-wire): each domain
+ *  pkg supplies its own row→descriptor mapper; the descriptor contract lives in
+ *  ../../lib/dispatch.js. */
+function pieceToDispatchItem(piece) {
+  return {
+    kind: 'content piece',
+    title: piece.title,
+    stage: STAGE_LABEL[piece.stage] ?? piece.stage,
+    nextAction: piece.next_action,
+    facts: [
+      ['Channel', piece.channel],
+      ['Format', piece.format],
+      ['Owner', piece.owner],
+      ['Due', piece.due_at],
+    ],
+  };
+}
+
+/**
+ * Approve/confirm the next action for a content piece.
+ *
+ * Wires to the ONLY honest agent-dispatch seam — host.sendToActiveSession via
+ * ../../lib/dispatch.js — which seeds a structured user turn into the shell's
+ * active Claude session (the agent then runs it through its privileged path).
+ * ux_mode maps: 'approve' → run-now framing, anything else → confirm framing.
+ * See ../../lib/dispatch.js for the seam rationale + the approve-run gap note.
+ * Fire-and-forget; .catch keeps a closed bridge from throwing into onClick.
+ */
 function handleAction(piece) {
-  if (!isStandalone()) {
-    hostDbExec(
-      `UPDATE content_pieces SET next_action_mode = 'silent' WHERE id = ?`,
-      [piece.id]
-    ).catch(() => {});
-  }
+  const mode = piece.next_action_mode === 'approve' ? 'approve' : 'confirm';
+  dispatchItemAction(pieceToDispatchItem(piece), mode, 'com.ikenga.content').catch(() => {});
 }
 
 /** Pipeline list mode — grouped by stage, split list + detail */

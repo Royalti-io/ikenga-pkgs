@@ -38,6 +38,7 @@ import {
   useQuery, useMutation, useQueryClient,
 } from '../../lib/ui.js';
 import { hostDbQuery, hostDbExec, hostSendToActiveSession, hostNavigate, setMenu, isStandalone } from '../../lib/bridge.js';
+import { applyFacet, RESET_FACET } from '../../lib/facet-filter.js';
 
 // ─── Type enum ──────────────────────────────────────────────────────────────
 // research_notes.entity_type maps to one of these display labels. The Reports
@@ -147,6 +148,24 @@ function isAgentOwner(owner) {
   return typeof owner === 'string' && /-agent$/.test(owner);
 }
 
+// ─── Sidebar facet predicates ─────────────────────────────────────────────────
+// Domain half of the facet-wire recipe: maps each filter-facet id (the
+// PkgMenuItem id the shell echoes back as royaltiSuite.activeFeature) to a
+// predicate over a report row. The generic applier lives in lib/facet-filter.js;
+// this map is where the domain columns (owner / is_stale / entity_type) live.
+// 'f:all' is intentionally ABSENT — RESET_FACET makes applyFacet return every
+// row. Keep each predicate in lockstep with its badge count in buildResearchMenu
+// (same expression) so the count and the filtered slice never disagree.
+const FACET_PREDICATES = {
+  'f:mine':         (r) => r.owner === 'nedjamez',
+  'f:agent-run':    (r) => isAgentOwner(r.owner),
+  'f:fresh':        (r) => r.is_stale === 0 || r.is_stale == null,
+  'f:t:persona':    (r) => typeKey(r.entity_type) === 'persona',
+  'f:t:competitor': (r) => typeKey(r.entity_type) === 'competitor',
+  'f:t:prospect':   (r) => typeKey(r.entity_type) === 'prospect',
+  'f:t:market':     (r) => typeKey(r.entity_type) === 'market',
+};
+
 // ─── Query keys ───────────────────────────────────────────────────────────────
 
 const QK = {
@@ -237,7 +256,7 @@ async function fetchSources() {
  *   - PkgMenuItem  { id, label, icon?, badge?, section?, disabled?, active? }
  *   - the shell relays clicks back via host-context re-emit → royaltiSuite.activeFeature = id.
  */
-function buildResearchMenu(activeView, reports) {
+function buildResearchMenu(activeView, reports, activeFacet) {
   const total = reports.length;
   const mine = reports.filter((r) => r.owner === 'nedjamez').length;
   const agentRun = reports.filter((r) => isAgentOwner(r.owner)).length;
@@ -245,7 +264,11 @@ function buildResearchMenu(activeView, reports) {
   const fresh = reports.filter((r) => r.is_stale === 0 || r.is_stale == null).length;
   const freshCount = isStandalone() ? 4 : fresh;
 
-  const filtersDim = activeView !== 0; // dim "By type" facets on non-list views (R23)
+  const onList = activeView === 0;
+  const filtersDim = !onList; // dim filter facets on non-list views (R23)
+  // A facet highlights only while the Reports list is the active view (dimmed
+  // facets never highlight — mirrors the shell's own `disabled ? false` rule).
+  const facetActive = (id) => onList && activeFacet === id;
 
   const viewItems = [
     { id: 'v:reports',  label: 'Reports',  icon: 'file-text', section: 'View', active: activeView === 0, badge: total > 0 ? total : undefined },
@@ -256,18 +279,19 @@ function buildResearchMenu(activeView, reports) {
   // "By owner / freshness" combined view group (the SIDEBAR.groups[0] in the mockup —
   // presented without a label, so use a single section header).
   const ownerItems = [
-    { id: 'f:all',       label: 'All research',     icon: 'file-text', section: 'Filter', active: activeView === 0, badge: total,             disabled: filtersDim },
-    { id: 'f:mine',      label: 'Mine',             icon: 'user',      section: 'Filter', active: false,            badge: mine || undefined, disabled: filtersDim },
-    { id: 'f:fresh',     label: 'Fresh this week',  icon: 'zap',       section: 'Filter', active: false,            badge: freshCount || undefined, hot: freshCount > 0, disabled: filtersDim },
-    { id: 'f:agent-run', label: 'Agent-run',        icon: 'cpu',       section: 'Filter', active: false,            badge: agentRun || undefined, disabled: filtersDim },
+    { id: 'f:all',       label: 'All research',     icon: 'file-text', section: 'Filter', active: facetActive('f:all'),       badge: total,             disabled: filtersDim },
+    { id: 'f:mine',      label: 'Mine',             icon: 'user',      section: 'Filter', active: facetActive('f:mine'),      badge: mine || undefined, disabled: filtersDim },
+    { id: 'f:fresh',     label: 'Fresh this week',  icon: 'zap',       section: 'Filter', active: facetActive('f:fresh'),     badge: freshCount || undefined, hot: freshCount > 0, disabled: filtersDim },
+    { id: 'f:agent-run', label: 'Agent-run',        icon: 'cpu',       section: 'Filter', active: facetActive('f:agent-run'), badge: agentRun || undefined, disabled: filtersDim },
   ];
 
-  // "By type" filter group.
+  // "By type" filter group. Badge counts derive from the FULL report list (not
+  // the filtered slice) so they stay live regardless of the active facet.
   const typeItems = [
-    { id: 'f:t:persona',    label: 'Personas / ICP', section: 'By type', active: false, badge: reports.filter((r) => typeKey(r.entity_type) === 'persona').length || undefined,    disabled: filtersDim },
-    { id: 'f:t:competitor', label: 'Competitor',     section: 'By type', active: false, badge: reports.filter((r) => typeKey(r.entity_type) === 'competitor').length || undefined, disabled: filtersDim },
-    { id: 'f:t:prospect',   label: 'Prospect',       section: 'By type', active: false, badge: reports.filter((r) => typeKey(r.entity_type) === 'prospect').length || undefined,   disabled: filtersDim },
-    { id: 'f:t:market',     label: 'Market / DDEX',  section: 'By type', active: false, badge: reports.filter((r) => typeKey(r.entity_type) === 'market').length || undefined,     disabled: filtersDim },
+    { id: 'f:t:persona',    label: 'Personas / ICP', section: 'By type', active: facetActive('f:t:persona'),    badge: reports.filter((r) => typeKey(r.entity_type) === 'persona').length || undefined,    disabled: filtersDim },
+    { id: 'f:t:competitor', label: 'Competitor',     section: 'By type', active: facetActive('f:t:competitor'), badge: reports.filter((r) => typeKey(r.entity_type) === 'competitor').length || undefined, disabled: filtersDim },
+    { id: 'f:t:prospect',   label: 'Prospect',       section: 'By type', active: facetActive('f:t:prospect'),   badge: reports.filter((r) => typeKey(r.entity_type) === 'prospect').length || undefined,   disabled: filtersDim },
+    { id: 'f:t:market',     label: 'Market / DDEX',  section: 'By type', active: facetActive('f:t:market'),     badge: reports.filter((r) => typeKey(r.entity_type) === 'market').length || undefined,     disabled: filtersDim },
   ];
 
   return [...viewItems, ...ownerItems, ...typeItems];
@@ -591,6 +615,10 @@ export function ResearchView({ activeFeature }) {
     return [0, 1, 2].includes(p) ? p : 0;
   });
   const [selected, setSelected] = useState(null);
+  // Last-applied sidebar filter facet id (e.g. 'f:mine', 'f:t:persona'). Kept so
+  // the sidebar can re-highlight it while the Reports list is active. Defaults to
+  // RESET_FACET ('f:all') = the unfiltered list.
+  const [activeFacet, setActiveFacet] = useState(RESET_FACET);
   const qc = useQueryClient();
 
   // ── Data queries ────────────────────────────────────────────────────────────
@@ -598,6 +626,15 @@ export function ResearchView({ activeFeature }) {
   const sourcesQ = useQuery({ queryKey: QK.sources, queryFn: fetchSources, enabled: activeView === 1 });
 
   const reports = reportsQ.data ?? [];
+
+  // ── Facet-filtered slice (the sidebar filter actually filters) ──────────────
+  // Generic applier (lift-ready) + the domain predicate map. Recomputes only
+  // when the source list or the active facet changes; badge counts in the menu
+  // still derive from the FULL list so they stay live.
+  const visibleReports = useMemo(
+    () => applyFacet(reports, activeFacet, FACET_PREDICATES),
+    [reports, activeFacet],
+  );
 
   // ── db-updated refresh (refresh on event, not remount) ──────────────────────
   useEffect(() => {
@@ -613,10 +650,24 @@ export function ResearchView({ activeFeature }) {
   // activeFeature carries royaltiSuite.activeFeature = the clicked item's id.
   useEffect(() => {
     if (!activeFeature) return;
-    if (activeFeature === 'v:reports') setActiveView(0);
-    else if (activeFeature === 'v:sources') setActiveView(1);
-    else if (activeFeature === 'v:personas') setActiveView(2);
-    // Filter items (f:*) are noted but don't change view state in v1.
+
+    // View switch (v:*).
+    if (activeFeature.startsWith('v:')) {
+      if (activeFeature === 'v:reports') setActiveView(0);
+      else if (activeFeature === 'v:sources') setActiveView(1);
+      else if (activeFeature === 'v:personas') setActiveView(2);
+      return;
+    }
+
+    // Filter facets (f:* incl. f:t:*) — list-only. Force the Reports view so a
+    // facet the user can't currently see can't be silently applied (mirrors
+    // tasks' setView('tasks')). 'f:all' resets to the unfiltered list; every
+    // other id sets the active facet, which applyFacet turns into the slice.
+    if (activeFeature.startsWith('f:')) {
+      setActiveView(0);
+      setActiveFacet(activeFeature);
+      return;
+    }
   }, [activeFeature]);
 
   // ── Persist view ────────────────────────────────────────────────────────────
@@ -635,8 +686,8 @@ export function ResearchView({ activeFeature }) {
   // ── setMenu publish ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (isStandalone()) return;
-    setMenu(buildResearchMenu(activeView, reports)).catch(() => {/* ignore */});
-  }, [activeView, reports]);
+    setMenu(buildResearchMenu(activeView, reports, activeFacet)).catch(() => {/* ignore */});
+  }, [activeView, reports, activeFacet]);
 
   // ── Hand-to-sales mutation (R-05 / R-06 cross-domain link) ──────────────────
   // approve-mode action: surface the dossier in the dock chat (approve-gate),
@@ -678,7 +729,7 @@ export function ResearchView({ activeFeature }) {
 
   // ── Head label ──────────────────────────────────────────────────────────────
   const headLabel = activeView === 0
-    ? `Research · ${reports.length} open`
+    ? `Research · ${visibleReports.length}${activeFacet !== RESET_FACET ? ` of ${reports.length}` : ''} open`
     : activeView === 1
       ? `Sources · ${(sourcesQ.data ?? SOURCES_FIXTURE).length} monitored`
       : 'Personas';
@@ -689,9 +740,9 @@ export function ResearchView({ activeFeature }) {
   if (activeView === 0) {
     if (reportsQ.isLoading) body = html`<${LoadingState} />`;
     else if (reportsQ.isError) body = html`<${ErrorState} error=${reportsQ.error?.message ?? 'unknown'} />`;
-    else if (reports.length === 0) body = html`<${EmptyState} />`;
+    else if (visibleReports.length === 0) body = html`<${EmptyState} />`;
     else body = html`<${ReportsView}
-      reports=${reports}
+      reports=${visibleReports}
       selected=${selected}
       onSelect=${setSelected}
       onHandToSales=${(r) => handToSales.mutate(r)}

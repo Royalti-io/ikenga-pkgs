@@ -111,6 +111,9 @@
     ],
     "vault.keys": [
       "TWENTY_API_KEY"
+    ],
+    "engine": [
+      "invoke"
     ]
   },
   "requires": [

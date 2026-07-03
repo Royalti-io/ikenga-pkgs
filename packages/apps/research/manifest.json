@@ -4,8 +4,10 @@
   "version": "0.1.0",
   "ikenga_api": "1",
   "kind": "embedded",
-  "author": { "name": "Royalti", "key": "royalti" },
-
+  "author": {
+    "name": "Royalti",
+    "key": "royalti"
+  },
   "ui": {
     "nav": [
       {
@@ -24,30 +26,49 @@
       }
     ],
     "csp": {
-      "script-src": ["'self'", "'unsafe-inline'", "https://esm.sh"],
-      "style-src": ["'self'", "'unsafe-inline'", "https://esm.sh"],
-      "font-src": ["'self'", "https://esm.sh", "data:"],
-      "connect-src": ["'self'", "https://esm.sh"]
+      "script-src": [
+        "'self'",
+        "'unsafe-inline'",
+        "https://esm.sh"
+      ],
+      "style-src": [
+        "'self'",
+        "'unsafe-inline'",
+        "https://esm.sh"
+      ],
+      "font-src": [
+        "'self'",
+        "https://esm.sh",
+        "data:"
+      ],
+      "connect-src": [
+        "'self'",
+        "https://esm.sh"
+      ]
     }
   },
-
   "capabilities": {
-    "sqlite": { "db": "ikenga.local" }
+    "sqlite": {
+      "db": "ikenga.local"
+    }
   },
-
   "permissions": {
     "shell.execute": [],
     "fs.read": [],
     "fs.write": [],
-    "net": ["https://esm.sh"],
+    "net": [
+      "https://esm.sh"
+    ],
     "sqlite.tables": [
       "research_notes",
       "research_sources",
       "sales_deals"
     ],
-    "vault.keys": []
+    "vault.keys": [],
+    "engine": [
+      "invoke"
+    ]
   },
-
   "requires": [
     {
       "kind": "skill",

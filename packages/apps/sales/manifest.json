@@ -47,7 +47,8 @@
       "sales_lead_scores",
       "contacts"
     ],
-    "vault.keys": []
+    "vault.keys": [],
+    "engine": ["invoke"]
   },
 
   "requires": [

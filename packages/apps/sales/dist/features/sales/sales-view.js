@@ -31,6 +31,9 @@ import {
   useQuery, useMutation, useQueryClient,
 } from '../../lib/ui.js';
 import { hostDbQuery, hostDbExec, setMenu, isStandalone } from '../../lib/bridge.js';
+// create-wire recipe: dead "+ / New deal" buttons dispatch a creation brief to
+// the Chi (R-03: a deal is agent-shaped, never a client-side husk INSERT).
+import { buildCreateBrief, dispatchCreate } from '../../lib/create-dispatch.js';
 
 // ─── Stage enum ───────────────────────────────────────────────────────────────
 // Per the R-04 Pipeline-stages convention (06-skill-action-contract.md §Pipeline-stages).
@@ -446,7 +449,7 @@ function KbAvatar({ owner }) {
 }
 
 /** Pipeline kanban mode */
-function PipelineKanban({ deals, onStageChange }) {
+function PipelineKanban({ deals, onStageChange, onCreate }) {
   const [dragging, setDragging] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
 
@@ -512,7 +515,12 @@ function PipelineKanban({ deals, onStageChange }) {
                     </div>
                   </div>
                 `)}
-                <button class="kb-add btn-icon" type="button" aria-label=${'Add deal to ' + STAGE_LABEL[s]}>+</button>
+                <button
+                  class="kb-add btn-icon"
+                  type="button"
+                  aria-label=${'Add deal to ' + (STAGE_LABEL[s] ?? s)}
+                  onClick=${() => onCreate?.(s)}
+                >+</button>
               </div>
             </div>
           `;
@@ -680,11 +688,16 @@ function LoadingState() {
   `;
 }
 
-function EmptyState() {
+function EmptyState({ onCreate }) {
   return html`
     <div class="atelier-state is-empty" id="view-stage">
       <span>No deals yet</span>
-      <button class="btn btn-sm" type="button" style=${{ marginTop:'8px' }}>New deal</button>
+      <button
+        class="btn btn-sm"
+        type="button"
+        style=${{ marginTop:'8px' }}
+        onClick=${() => onCreate?.()}
+      >New deal</button>
     </div>
   `;
 }
@@ -778,6 +791,29 @@ export function SalesView({ activeFeature }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: QK.openDeals }),
   });
 
+  // ── Dispatch-mode creation (create-wire recipe) ─────────────────────────────
+  // R-03: a deal is agent-shaped — it needs company research plus owner,
+  // next_action, next_action_mode and win_probability, and links to `contacts`.
+  // Seeding an empty client-side INSERT would leave a husk the user must
+  // hand-fill, so creation dispatches a structured brief to the active Chi
+  // session instead (host.sendToActiveSession, via lib/create-dispatch.js).
+  // `stage` is the kanban column's pre-filled context; undefined for the
+  // empty-state "New deal" which seeds a full brief.
+  const createDeal = useCallback((stage) => {
+    const label = stage ? (STAGE_LABEL[stage] ?? stage) : null;
+    const brief = buildCreateBrief({
+      entity: 'sales deal',
+      table: 'sales_deals',
+      seed: label ? { stage: label } : {},
+      instruction:
+        'Research the company, then set the title, company, owner, value, '
+        + 'next action, and win probability'
+        + (label ? `, and file it at the ${label} stage` : '')
+        + '. Ask me for anything you still need, then add it to the sales_deals table.',
+    });
+    void dispatchCreate(brief, 'com.ikenga.sales');
+  }, []);
+
   // ── Head label ──────────────────────────────────────────────────────────────
   const headLabel = activeView === 0 ? `Sales · ${deals.length} open`
     : activeView === 1 ? 'Forecast'
@@ -793,11 +829,12 @@ export function SalesView({ activeFeature }) {
     } else if (openDealsQ.isError) {
       body = html`<${ErrorState} error=${openDealsQ.error?.message ?? 'unknown'} />`;
     } else if (deals.length === 0) {
-      body = html`<${EmptyState} />`;
+      body = html`<${EmptyState} onCreate=${createDeal} />`;
     } else if (pipeMode === 'kanban') {
       body = html`<${PipelineKanban}
         deals=${deals}
         onStageChange=${(deal, newStage) => stageChange.mutate({ deal, newStage })}
+        onCreate=${createDeal}
       />`;
     } else {
       body = html`<${PipelineList}

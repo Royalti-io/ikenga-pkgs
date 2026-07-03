@@ -83,7 +83,7 @@ export async function setMenu(items) {
  *   prompt: string   — the instruction shown as the user turn
  *   source?: string  — provenance tag (defaults to the pkg id)
  */
-export async function hostSendToActiveSession(prompt, source = 'com.ikenga.tasks') {
+export async function hostSendToActiveSession(prompt, source = 'com.ikenga.sales') {
   if (!app) throw new Error('bridge not connected');
   return app.callServerTool({
     name: 'host.sendToActiveSession',
