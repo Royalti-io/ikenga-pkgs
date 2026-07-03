@@ -1,0 +1,107 @@
+{
+  "name": "@ikenga/pkg-runtime",
+  "version": "0.1.0",
+  "npmPublished": false,
+  "vendoredAtBuild": true,
+  "description": "Source-of-truth no-build iframe runtime vendored into each app pkg's dist/lib (WP-19). Not published; pkgs copy it via vendor.mjs so dist stays self-contained.",
+  "modules": {
+    "bridge.js": {
+      "role": "bridge-core",
+      "byteIdenticalAcrossPkgs": true,
+      "perPkgIdentity": "pkg-id.js (PKG_ID, LOG_TAG) — imported, not inlined",
+      "exports": [
+        "connectBridge",
+        "hostNavigate",
+        "openLink",
+        "setMenu",
+        "hostSendToActiveSession",
+        "hostPaActionsRun",
+        "hostDbQuery",
+        "hostDbExec",
+        "getContext",
+        "isStandalone",
+        "publishIykeState"
+      ]
+    },
+    "pkg-id.js": {
+      "role": "generated-identity",
+      "generatedBy": "vendor.mjs renderPkgId()",
+      "exports": ["PKG_ID", "LOG_TAG"]
+    },
+    "bridge.ext.outbound.js": {
+      "role": "bridge-fragment",
+      "appendsTo": "bridge.js",
+      "standalone": false,
+      "exports": [
+        "hostFetch",
+        "hostPaActionsCommit",
+        "hostPaActionsReject",
+        "hostPaActionsRetry",
+        "hostPaActionsUpdate"
+      ]
+    },
+    "bridge.ext.agentops.js": {
+      "role": "bridge-fragment",
+      "appendsTo": "bridge.js",
+      "standalone": false,
+      "exports": [
+        "hostAgentOpsListJobs",
+        "hostAgentOpsRunNow",
+        "hostAgentOpsSetEnabled",
+        "hostAgentOpsUpsertJob",
+        "hostAgentOpsDeleteJob",
+        "hostAgentOpsTailRun"
+      ]
+    },
+    "ui.js": {
+      "role": "ui-runtime",
+      "byteIdenticalAcrossPkgs": true,
+      "note": "Carries the UNION of every pkg's icon glyphs (57).",
+      "exports": [
+        "useState",
+        "useEffect",
+        "useMemo",
+        "useCallback",
+        "useRef",
+        "useReducer",
+        "Fragment",
+        "createRoot",
+        "html",
+        "QueryClient",
+        "QueryClientProvider",
+        "useQuery",
+        "useMutation",
+        "useQueryClient",
+        "cn",
+        "Button",
+        "Icon"
+      ]
+    },
+    "dispatch.js": {
+      "role": "recipe-helper",
+      "importsFrom": "./bridge.js",
+      "exports": ["buildActionPrompt", "dispatchItemAction"]
+    },
+    "create-dispatch.js": {
+      "role": "recipe-helper",
+      "importsFrom": "./bridge.js",
+      "exports": ["buildCreateBrief", "dispatchCreate"]
+    },
+    "facet-filter.js": {
+      "role": "recipe-helper",
+      "importsFrom": null,
+      "exports": ["RESET_FACET", "applyFacet", "isFacetId"]
+    }
+  },
+  "consumers": {
+    "tasks": { "pkgId": "com.ikenga.tasks", "logTag": "tasks", "files": ["bridge", "ui"] },
+    "mail": { "pkgId": "com.ikenga.mail", "logTag": "mail", "files": ["bridge", "ui", "facet-filter"] },
+    "sales": { "pkgId": "com.ikenga.sales", "logTag": "sales", "files": ["bridge", "ui", "dispatch", "create-dispatch", "facet-filter"] },
+    "outbound": { "pkgId": "com.ikenga.outbound", "logTag": "outbound", "files": ["bridge", "ui"], "bridgeExt": "outbound" },
+    "content": { "pkgId": "com.ikenga.content", "logTag": "content", "files": ["bridge", "ui", "dispatch", "create-dispatch"] },
+    "research": { "pkgId": "com.ikenga.research", "logTag": "research", "files": ["bridge", "ui", "create-dispatch", "facet-filter"] },
+    "strategy": { "pkgId": "com.ikenga.strategy", "logTag": "strategy", "files": ["bridge", "ui", "dispatch", "create-dispatch", "facet-filter"] },
+    "finance": { "pkgId": "com.ikenga.finance", "logTag": "finance", "files": ["bridge", "ui"] },
+    "agent-ops": { "pkgId": "com.ikenga.agent-ops", "logTag": "agent-ops", "files": ["bridge", "ui"], "bridgeExt": "agentops" }
+  }
+}

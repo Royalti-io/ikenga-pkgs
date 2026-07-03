@@ -8,6 +8,8 @@
 // Guard drift in CI: `pnpm -r build && git diff --exit-code`.
 import { readFileSync, writeFileSync, copyFileSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { vendorRuntime } from '../../../lib/pkg-runtime/vendor.mjs';
 
 const require = createRequire(import.meta.url);
 mkdirSync('dist/lib', { recursive: true });
@@ -24,4 +26,17 @@ const header =
   '// about:srcdoc the shell mounts, so app.js injects this as an inline <style>.\n';
 writeFileSync('dist/lib/finance-css.js', header + 'export default ' + JSON.stringify(css) + '\n');
 
-console.log('[finance build] vendored tokens-css.js + app-kit-css.js + regenerated finance-css.js from dist/finance.css');
+// 3. Vendor the shared no-build runtime (bridge + ui) from @ikenga/pkg-runtime —
+//    single source of truth (WP-19). pkg-id.js carries this pkg's source-id +
+//    log tag, keeping bridge.js byte-identical across pkgs.
+const runtime = vendorRuntime({
+  destLibDir: fileURLToPath(new URL('../dist/lib', import.meta.url)),
+  pkgId: 'com.ikenga.finance',
+  logTag: 'finance',
+  files: ['bridge', 'ui'],
+});
+
+console.log(
+  '[finance build] vendored tokens-css.js + app-kit-css.js + regenerated finance-css.js from dist/finance.css; runtime: ' +
+    runtime.join(', '),
+);

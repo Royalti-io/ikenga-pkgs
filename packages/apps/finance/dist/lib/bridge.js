@@ -1,5 +1,14 @@
 // MCP Apps SDK bridge — the canonical iframe⇄host protocol Ikenga uses.
 //
+// SOURCE OF TRUTH (WP-19). This file is the single, byte-identical bridge core
+// vendored into every no-build app pkg's dist/lib/bridge.js. The two per-pkg
+// identifiers that used to be hand-edited into each copy — the source-id passed
+// to host.sendToActiveSession and the short log tag in error/console strings —
+// are now injected via the generated sibling `./pkg-id.js` (PKG_ID, LOG_TAG),
+// which kills the copy-paste-id bug class (a `tasks`/`sales` id or `[sales]`
+// tag left behind in the wrong pkg). Never hand-edit a vendored copy; edit here
+// and re-run the pkg's `scripts/build.mjs`.
+//
 // Pattern from @modelcontextprotocol/ext-apps Quickstart + the shell's
 // pkg-iframe-host.tsx implementation:
 //   1. new App(...) — register handlers before connect
@@ -21,6 +30,7 @@
 // clobbers our workspace `data-theme` (A/B/C) with 'light'|'dark', breaking the
 // bundled @ikenga/tokens palette — so the bridge stays out of theming entirely.
 import { App } from 'https://esm.sh/@modelcontextprotocol/ext-apps@1.7.1/app-with-deps';
+import { PKG_ID, LOG_TAG } from './pkg-id.js';
 
 let app = null;
 
@@ -31,7 +41,7 @@ export async function connectBridge({ name, version, onContextChange }) {
     tools: { listChanged: false },
   });
 
-  app.onerror = (err) => console.error('[finance] bridge error', err);
+  app.onerror = (err) => console.error(`[${LOG_TAG}] bridge error`, err);
   // Theme is NOT applied here — app.js mirrors it from the parent <html>.
   // We still forward context so live activeFeature (side-menu) updates reach
   // the app; data flows through host.dbQuery/dbExec, not the context payload.
@@ -83,7 +93,7 @@ export async function setMenu(items) {
  *   prompt: string   — the instruction shown as the user turn
  *   source?: string  — provenance tag (defaults to the pkg id)
  */
-export async function hostSendToActiveSession(prompt, source = 'com.ikenga.finance') {
+export async function hostSendToActiveSession(prompt, source = PKG_ID) {
   if (!app) throw new Error('bridge not connected');
   return app.callServerTool({
     name: 'host.sendToActiveSession',
@@ -118,7 +128,7 @@ export async function hostPaActionsRun(args) {
  *   params: SqlValue[]      — positional bind values
  */
 export async function hostDbQuery(sql, params = []) {
-  if (!app) throw new Error('[finance] bridge not connected — db_query unavailable');
+  if (!app) throw new Error(`[${LOG_TAG}] bridge not connected — db_query unavailable`);
   const res = await app.callServerTool({
     name: 'host.dbQuery',
     arguments: { sql, params },
@@ -141,7 +151,7 @@ export async function hostDbQuery(sql, params = []) {
  *   params: SqlValue[]      — positional bind values
  */
 export async function hostDbExec(sql, params = []) {
-  if (!app) throw new Error('[finance] bridge not connected — db_exec unavailable');
+  if (!app) throw new Error(`[${LOG_TAG}] bridge not connected — db_exec unavailable`);
   const res = await app.callServerTool({
     name: 'host.dbExec',
     arguments: { sql, params },

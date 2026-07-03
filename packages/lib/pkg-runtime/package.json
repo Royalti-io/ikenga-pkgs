@@ -1,0 +1,23 @@
+{
+  "name": "@ikenga/pkg-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Source-of-truth no-build iframe runtime (bridge/ui/recipe helpers) vendored into each app pkg's dist/lib at build time. NOT published to npm this pass (WP-19).",
+  "license": "Apache-2.0",
+  "type": "module",
+  "exports": {
+    "./vendor": "./vendor.mjs"
+  },
+  "files": [
+    "bridge.js",
+    "bridge.ext.outbound.js",
+    "bridge.ext.agentops.js",
+    "ui.js",
+    "dispatch.js",
+    "create-dispatch.js",
+    "facet-filter.js",
+    "vendor.mjs",
+    "runtime.manifest.json",
+    "README.md"
+  ]
+}

@@ -11,6 +11,8 @@
 //   pnpm -r build && git diff --exit-code
 import { readFileSync, writeFileSync, copyFileSync, mkdirSync } from 'node:fs';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
+import { vendorRuntime } from '../../../lib/pkg-runtime/vendor.mjs';
 
 const require = createRequire(import.meta.url);
 mkdirSync('dist/lib', { recursive: true });
@@ -33,4 +35,19 @@ const header =
   '// about:srcdoc the shell mounts, so app.js injects this as an inline <style>.\n';
 writeFileSync('dist/lib/outbound-css.js', header + 'export default ' + JSON.stringify(css) + '\n');
 
-console.log('[outbound build] vendored tokens-css.js + app-kit-css.js + regenerated outbound-css.js from dist/outbound.css');
+// 4. Vendor the shared no-build runtime (bridge + ui) from @ikenga/pkg-runtime —
+//    single source of truth (WP-19). outbound's host.fetch + approve-gate verbs
+//    ride the 'outbound' bridge fragment appended onto the core. pkg-id.js carries
+//    this pkg's source-id + log tag.
+const runtime = vendorRuntime({
+  destLibDir: fileURLToPath(new URL('../dist/lib', import.meta.url)),
+  pkgId: 'com.ikenga.outbound',
+  logTag: 'outbound',
+  files: ['bridge', 'ui'],
+  bridgeExt: 'outbound',
+});
+
+console.log(
+  '[outbound build] vendored tokens-css.js + app-kit-css.js + regenerated outbound-css.js from dist/outbound.css; runtime: ' +
+    runtime.join(', '),
+);
