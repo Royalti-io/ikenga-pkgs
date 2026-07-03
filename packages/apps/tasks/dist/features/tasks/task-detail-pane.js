@@ -120,9 +120,12 @@ function tlDisplay(it, task) {
 }
 
 /**
- * @param {{ taskId: string, density?: import('../../lib/shared.js').Density, onNavigateTask?: (id: string) => void }} props
+ * The shipped pane is always the full-density master/detail pane; the dead
+ * `density='side'` variant (no `/tasks/$taskId` route, zero call sites) was
+ * removed 2026-07-03 (Section B decision, WP-14). Full is the only mode.
+ * @param {{ taskId: string, onNavigateTask?: (id: string) => void }} props
  */
-export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
+export function TaskDetailPane({ taskId, onNavigateTask }) {
   const queryClient = useQueryClient();
 
   const { data: task, isLoading, error } = useQuery(taskDetailQuery(taskId));
@@ -181,7 +184,7 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
 
   if (isLoading) {
     return html`
-      <div class=${cn('tk-detail-pane', `is-${density}`)}>
+      <div class="tk-detail-pane is-full">
         <div class="tk-empty">
           <${Icon} name="loader" size=${16} className="tk-spin" />
         </div>
@@ -190,7 +193,7 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
   }
   if (error instanceof Error) {
     return html`
-      <div class=${cn('tk-detail-pane', `is-${density}`)}>
+      <div class="tk-detail-pane is-full">
         <div class="tk-empty" style=${{ color: 'var(--danger)', flexDirection: 'column', gap: 8 }}>
           <${Icon} name="alert-circle" size=${20} />
           <span>${error.message}</span>
@@ -200,7 +203,7 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
   }
   if (!task) {
     return html`
-      <div class=${cn('tk-detail-pane', `is-${density}`)}>
+      <div class="tk-detail-pane is-full">
         <div class="tk-empty">task not found</div>
       </div>
     `;
@@ -215,11 +218,11 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
     : null;
 
   return html`
-    <div class=${cn('tk-detail-pane', `is-${density}`)}>
+    <div class="tk-detail-pane is-full">
       <div class="ip-head">
         <div class="ip-topline">
           <span class="id">task · ${shortId(task.id)}</span>
-          ${density === 'full' && html`
+          ${html`
             <div class="ip-topline-actions">
               <${Button}
                 variant=${rescheduleOpen ? 'default' : 'outline'}
@@ -246,7 +249,7 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
           `}
         </div>
 
-        ${density === 'full' && reassignOpen && html`
+        ${reassignOpen && html`
           <div
             style=${{
               display: 'flex',
@@ -624,7 +627,7 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
           </div>
         `}
 
-        ${density !== 'side' && (() => {
+        ${(() => {
           const timeline = buildTimeline(taskEvents, task);
           return html`
             <div>
@@ -648,25 +651,6 @@ export function TaskDetailPane({ taskId, density = 'full', onNavigateTask }) {
           `;
         })()}
       </div>
-
-      ${density !== 'full' && html`
-        <div class="ip-action-bar">
-          <${Button}
-            variant=${rescheduleOpen ? 'default' : 'outline'}
-            size="sm"
-            type="button"
-            onClick=${() => { setDueDateInput(dueDate || ''); setRescheduleOpen((v) => !v); }}
-          >Reschedule</${Button}>
-          <span class="ip-action-bar-spacer"></span>
-          <${Button}
-            variant="affirmative"
-            size="sm"
-            type="button"
-            disabled=${updateStatus.isPending || task.status === 'completed'}
-            onClick=${() => updateStatus.mutate('completed')}
-          >Mark complete</${Button}>
-        </div>
-      `}
 
       ${updateStatus.isError && html`
         <p class="tk-mut-error">

@@ -160,6 +160,11 @@
   align-items: center;
   gap: 4px;
   flex: 1;
+  /* Full-height column so the bar's percentage height resolves against the
+     170px .sl-months container (mirrors the design's .fc-month { height:100% }).
+     Completes F-15 — without it the bar-wrap collapses to min-height and the
+     JS-percentage bars never scale. */
+  height: 100%;
 }
 
 .sl-month-bar-wrap {

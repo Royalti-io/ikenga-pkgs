@@ -284,10 +284,22 @@ export function mapEmailSent(row) {
 
 export function mapNewsletterQueue(row) {
   const b = baseRow(row);
+  // Operator inline edits round-trip through edited_json (WP-17): subject + body
+  // are read by baseRow; subject_b / preheader are read here so a saved edit
+  // reflects in the view after refetch (parity with the social body-persist path).
+  const subject_b = b.edited.subject_b ?? b.item.subject_b ?? null;
+  const preheader = b.edited.preheader ?? b.item.preheader ?? null;
+  // Investor-update discriminator (WP-17, item 4). No stamped column exists, so
+  // derive honestly: explicit item.newsletterType wins, else a meta.actionName /
+  // subject heuristic. Consumed by the NewsletterQueueView investor-variant branch.
+  const nlType = deriveNewsletterType(b.item, b.meta, b.subject);
   return {
     id: row.id,
     subject: b.subject,
-    subject_b: null, // A/B is Phase 2
+    subject_b, // A/B alt subject (edited_json override wins)
+    preheader, // edited_json override wins
+    from_line: b.item.fromLine ?? b.item.from_line ?? b.meta.fromLine ?? null,
+    newsletter_type: nlType, // 'newsletter' | 'investor_update' (derived, honest)
     draft_slug: b.item.section ?? null,
     edition: null,
     status: designStatus(row, b.ct),
@@ -295,12 +307,28 @@ export function mapNewsletterQueue(row) {
     cooling_until: null, // cooling is Phase 2
     quality_score: null, // scorecard is Phase 2
     recipient_count: b.item.recipients ?? b.item.sequence?.recipients ?? null,
-    delivery_system: b.channel,
+    delivery_system: nlType === 'investor_update' ? (b.channel ?? 'resend') : b.channel,
     drafted_by: b.drafted_by,
-    has_ab: 0,
+    has_ab: subject_b ? 1 : 0,
     body: b.body,
     quality: b.item.quality ?? null, // ItemQuality | null — from payload_json.item.quality (G-QUALITY)
   };
+}
+
+// Honest investor-update discriminator. No column stamps this today, so:
+//   1. explicit item.newsletterType / item.type wins (producer stamp);
+//   2. else meta.actionName mentioning "investor";
+//   3. else the subject reading like an investor update.
+// Anything else → 'newsletter'. Kept pure so it's unit-testable in derive.test.mjs.
+export function deriveNewsletterType(item, meta, subject) {
+  const it = item || {};
+  const m = meta || {};
+  const explicit = String(it.newsletterType ?? it.type ?? '').toLowerCase();
+  if (explicit === 'investor_update' || explicit === 'investor') return 'investor_update';
+  const action = String(m.actionName ?? '').toLowerCase();
+  if (action.includes('investor')) return 'investor_update';
+  if (/\binvestor(s)?\s+update\b/i.test(String(subject ?? ''))) return 'investor_update';
+  return 'newsletter';
 }
 
 export function mapNewsletterSent(row) {
@@ -311,6 +339,7 @@ export function mapNewsletterSent(row) {
     edition: null,
     subject: b.subject,
     delivery_system: b.channel,
+    newsletter_type: deriveNewsletterType(b.item, b.meta, b.subject), // 'newsletter' | 'investor_update'
     status: designStatus(row, b.ct),
     sent_at: b.sent_at,
     delivery_status: b.delivery_status,

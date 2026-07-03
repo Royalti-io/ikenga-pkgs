@@ -29,12 +29,14 @@ import {
   fetchDraftCount,
   fetchMessage,
   fetchThreadCount,
+  fetchThreadMessages,
   fetchReply,
   markRead,
   markUnread,
   snoozeThread,
   setThreadTags,
 } from '../../lib/queries.js';
+import { applyFacet, RESET_FACET } from '../../lib/facet-filter.js';
 
 // ─── Menu model ──────────────────────────────────────────────────────────────
 
@@ -45,26 +47,54 @@ const VIEW_ITEMS = [
   { id: 'v:drafts', label: 'Drafts',  icon: 'file-text' },
 ];
 
+// "Threads" group: two grouping modes (By person / By tag re-section the list)
+// and a Snoozed view. by-person/by-tag toggle `groupMode`; n:snoozed switches
+// the fetched list to the snoozed query.
 const THREAD_ITEMS = [
   { id: 'n:by-person', label: 'By person', icon: 'user',    section: 'Threads' },
   { id: 'n:by-tag',    label: 'By tag',    icon: 'tag',     section: 'Threads' },
   { id: 'n:snoozed',   label: 'Snoozed',   icon: 'clock',   section: 'Threads' },
 ];
 
+// Sidebar filter facets — slice the current thread list via applyFacet +
+// FACET_PREDICATES (below). Both predicates read only columns present on a
+// thread row (triage_category / tags / received_at), so no fake affordances.
 const FILTER_ITEMS = [
   { id: 'f:active-deals',    label: 'Active deals',    icon: 'star',  section: 'Filters' },
   { id: 'f:overdue-replies', label: 'Overdue replies', icon: 'zap',   section: 'Filters' },
 ];
 
+// An "overdue reply" = a thread that still needs a reply (triage_category is one
+// of the needs-action buckets) and was received more than 24h ago. Honest from
+// available columns; there is no SLA column, so this is a received-age proxy,
+// not a true SLA breach (the SLA chip stays scoped out).
+const OVERDUE_MS = 24 * 60 * 60 * 1000;
+function isOverdueReply(t) {
+  const cat = String(t?.triage_category || '').toLowerCase();
+  if (cat !== 'action_needed' && cat !== 'urgent' && cat !== 'awaiting') return false;
+  const ts = t?.received_at ? new Date(t.received_at).getTime() : NaN;
+  return !Number.isNaN(ts) && Date.now() - ts > OVERDUE_MS;
+}
+
+// Domain predicate map for applyFacet. Keep each predicate identical to its
+// badge-count expression so counts and slices never disagree.
+const FACET_PREDICATES = {
+  'f:active-deals': (t) => isDealMessage(t),
+  'f:overdue-replies': (t) => isOverdueReply(t),
+};
+
 /**
  * Build the flat menu item list for setMenu.
- * @param {string} view  current view id (inbox/triage/all/drafts)
+ * @param {string} view          current view id (inbox/triage/all/drafts/snoozed)
+ * @param {string} groupMode      'date' | 'person' | 'tag'
+ * @param {string} activeFacet    active f:* facet id, or RESET_FACET
  * @param {number} unreadCount
  * @param {number} triageCount
  * @param {number} snoozedCount
  * @param {number} draftCount
+ * @param {Record<string, number>} facetCounts  live counts per facet id
  */
-function buildMailMenu(view, unreadCount, triageCount, snoozedCount, draftCount) {
+function buildMailMenu(view, groupMode, activeFacet, unreadCount, triageCount, snoozedCount, draftCount, facetCounts = {}) {
   const viewRows = VIEW_ITEMS.map((it) => {
     let badge;
     if (it.id === 'v:inbox' && unreadCount > 0) badge = unreadCount;
@@ -79,19 +109,37 @@ function buildMailMenu(view, unreadCount, triageCount, snoozedCount, draftCount)
     };
   });
 
-  const threadRows = THREAD_ITEMS.map((it) => ({
-    ...it,
-    active: false,
-    badge: it.id === 'n:snoozed' && snoozedCount > 0 ? snoozedCount : undefined,
-  }));
+  const threadRows = THREAD_ITEMS.map((it) => {
+    let active = false;
+    if (it.id === 'n:by-person') active = groupMode === 'person';
+    else if (it.id === 'n:by-tag') active = groupMode === 'tag';
+    else if (it.id === 'n:snoozed') active = view === 'snoozed';
+    return {
+      ...it,
+      active,
+      badge: it.id === 'n:snoozed' && snoozedCount > 0 ? snoozedCount : undefined,
+    };
+  });
 
-  const filterRows = FILTER_ITEMS.map((it) => ({
-    ...it,
-    active: false,
-    disabled: false,
-  }));
+  const filterRows = FILTER_ITEMS.map((it) => {
+    const n = facetCounts[it.id];
+    return {
+      ...it,
+      active: activeFacet === it.id,
+      badge: n > 0 ? n : undefined,
+      disabled: false,
+    };
+  });
 
   return [...viewRows, ...threadRows, ...filterRows];
+}
+
+// Primary tag label for the "By tag" grouping — the triage category if present,
+// else the first thread-state tag, else "Untagged".
+function primaryTagLabel(t) {
+  if (t?.triage_category) return triageCategoryLabel(t.triage_category);
+  if (Array.isArray(t?.tags) && t.tags.length) return String(t.tags[0]);
+  return 'Untagged';
 }
 
 // ─── Snooze helper ────────────────────────────────────────────────────────────
@@ -341,6 +389,8 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
   const [replyText, setReplyText] = useState('');
   const [isEditing, setIsEditing] = useState(false);
   const [draftSent, setDraftSent] = useState(false);
+  // Thread-collapse rail: earlier messages start collapsed, expand on click.
+  const [threadExpanded, setThreadExpanded] = useState(false);
 
   // Fetch thread detail
   const { data: message, isLoading: msgLoading, error: msgError } = useQuery({
@@ -363,6 +413,18 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
     queryFn: () => fetchThreadCount(message?.subject),
     enabled: !!message?.subject,
   });
+
+  // Earlier messages in the same thread (thread-collapse rail). Only fetched
+  // once we know the thread has more than one message, and only expanded on
+  // demand. Excludes the message already open in the reader.
+  const { data: earlierMessages = [] } = useQuery({
+    queryKey: ['mail', 'threadMessages', message?.subject ?? messageId, messageId],
+    queryFn: () => fetchThreadMessages(message?.subject, messageId),
+    enabled: !!message?.subject && threadCount > 1,
+  });
+
+  // Collapse the rail again whenever the open message changes.
+  useEffect(() => { setThreadExpanded(false); }, [messageId]);
 
   // Pre-fill quick-reply if Chi has drafted one and not yet sent
   useEffect(() => {
@@ -559,7 +621,7 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
                 <button class="btn btn-sm btn-ghost" onClick=${handleRejectReply}>Reject</button>
                 <span class="reader-quick-reply-foot-spacer"></span>
                 <span><kbd>⌘</kbd><kbd>↵</kbd> Send · <kbd>⌘</kbd><kbd>R</kbd> Regen</span>
-                <span class="reader-quick-reply-tone">Tone: warm</span>
+                <span class="reader-quick-reply-tone">Tone: warm · ${replyText.split('\n').filter((l) => l.trim()).length}-line</span>
             </div>
           </div>
         ` : html`
@@ -584,6 +646,43 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
               </div>
           </div>
         `}
+
+        ${threadCount > 1 ? html`
+          <div class="thread-other">
+            <button
+              class="thread-collapse"
+              type="button"
+              onClick=${() => setThreadExpanded((v) => !v)}
+              aria-expanded=${threadExpanded}
+            >
+              <${Icon} name=${threadExpanded ? 'chevron-up' : 'chevron-down'} size=${12} />
+              <span>${threadCount - 1} earlier ${threadCount - 1 === 1 ? 'message' : 'messages'} in this thread</span>
+              <span class="thread-collapse-line"></span>
+              <span style=${{ color: 'var(--fg-muted)' }}>${threadExpanded ? 'collapse' : 'expand'}</span>
+            </button>
+            ${threadExpanded ? earlierMessages.map((m) => html`
+              <div
+                key=${m.id}
+                style=${{
+                  padding: '8px 0',
+                  borderTop: '1px solid var(--border-soft)',
+                }}
+              >
+                <div style=${{ display: 'flex', gap: 8, alignItems: 'baseline', marginBottom: 4 }}>
+                  <span style=${{ fontWeight: 600, fontSize: '0.82rem' }}>${m.from_name || m.from_address}</span>
+                  <span style=${{ color: 'var(--fg-faint)', fontSize: '0.72rem' }}>${formatReceivedAt(m.received_at)}</span>
+                </div>
+                <div style=${{ color: 'var(--fg-muted)', fontSize: '0.82rem', whiteSpace: 'pre-wrap' }}>
+                  ${(() => {
+                    const body = String(m.body_text || '').trim();
+                    if (!body) return '(No body text)';
+                    return body.length > 600 ? `${body.slice(0, 600)}…` : body;
+                  })()}
+                </div>
+              </div>
+            `) : null}
+          </div>
+        ` : null}
       </div>
     </div>
   `;
@@ -602,21 +701,61 @@ export function MailView({ activeFeature }) {
   );
   const [selectedId, setSelectedId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
+  // Grouping mode for the "Threads" nav group: 'date' (default), 'person', 'tag'.
+  const [groupMode, setGroupMode] = useState('date');
+  // Active sidebar filter facet; RESET_FACET ('f:all') = no filter.
+  const [activeFacet, setActiveFacet] = useState(RESET_FACET);
+  const searchRef = useRef(null);
 
+  // Changing the fetched view is a fresh list: reset grouping + facet so a
+  // filter/grouping the user set on the previous view can't silently carry over
+  // (this is also the only clear affordance on this wire — re-clicking the
+  // active facet/group can't re-fire per the facet-wire recipe).
   const handleViewChange = (newView) => {
     setView(newView);
     setSelectedId(null);
+    setGroupMode('date');
+    setActiveFacet(RESET_FACET);
     localStorage.setItem(VIEW_STORAGE_KEY, newView);
   };
 
-  // Sync active feature from shell side-menu
+  // Sync active feature from shell side-menu. Three namespaces:
+  //   v:*  — switch the fetched view (inbox/triage/all/drafts).
+  //   n:*  — Threads group: n:snoozed switches to the snoozed view; n:by-person
+  //          / n:by-tag toggle the grouping mode (re-section the same list).
+  //   f:*  — filter facet: slice the current list via applyFacet.
   useEffect(() => {
     if (!activeFeature) return;
     if (activeFeature.startsWith('v:')) {
-      const v = activeFeature.slice(2);
-      handleViewChange(v);
+      handleViewChange(activeFeature.slice(2));
+      return;
+    }
+    if (activeFeature === 'n:snoozed') {
+      handleViewChange('snoozed');
+      return;
+    }
+    if (activeFeature === 'n:by-person') { setGroupMode('person'); return; }
+    if (activeFeature === 'n:by-tag') { setGroupMode('tag'); return; }
+    if (activeFeature.startsWith('f:')) {
+      setActiveFacet(activeFeature); // f:all resets; else applyFacet slices
+      return;
     }
   }, [activeFeature]);
+
+  // Search: Cmd/Ctrl+F focuses the thread search input (F — search kbd hint).
+  // Pane-scoped (this iframe IS the mail pane); preventDefault so it never
+  // reaches the host's find-in-page.
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'f' || e.key === 'F')) {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select?.();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
 
   // Thread list query
   const {
@@ -643,12 +782,29 @@ export function MailView({ activeFeature }) {
     refetchOnWindowFocus: false,
   });
 
+  // The visible slice after applying the active filter facet. Feeds the list,
+  // the empty-state check, and prev/next nav so they all agree.
+  const visibleThreads = useMemo(
+    () => applyFacet(threads, activeFacet, FACET_PREDICATES),
+    [threads, activeFacet],
+  );
+
+  // Live facet counts over the FULL current list (not the filtered slice), so
+  // filtering to one facet doesn't collapse the others' badges to zero.
+  const facetCounts = useMemo(
+    () => ({
+      'f:active-deals': threads.filter(FACET_PREDICATES['f:active-deals']).length,
+      'f:overdue-replies': threads.filter(FACET_PREDICATES['f:overdue-replies']).length,
+    }),
+    [threads],
+  );
+
   // Publish side-menu
   useEffect(() => {
     if (isStandalone()) return;
-    setMenu(buildMailMenu(view, counts.unread, counts.triage, counts.snoozed, counts.drafts))
+    setMenu(buildMailMenu(view, groupMode, activeFacet, counts.unread, counts.triage, counts.snoozed, counts.drafts, facetCounts))
       .catch(() => {});
-  }, [view, counts.unread, counts.triage, counts.snoozed, counts.drafts]);
+  }, [view, groupMode, activeFacet, counts.unread, counts.triage, counts.snoozed, counts.drafts, facetCounts]);
 
   // Publish iyke state for external observers
   useEffect(() => {
@@ -670,43 +826,56 @@ export function MailView({ activeFeature }) {
     triage: 'Triage',
     all: 'All Mail',
     drafts: 'Drafts',
+    snoozed: 'Snoozed',
   }[view] ?? 'Mail';
 
   const isTriageView = view === 'triage';
 
-  // Group threads into labelled date sections (Today / Yesterday / N days ago …),
-  // preserving the received_at DESC order the query already returns (F-12).
+  // Group the VISIBLE (facet-filtered) threads into labelled sections. Grouping
+  // key by mode: 'person' → sender, 'tag' → primary tag, else date bucket
+  // (Today / Yesterday / N days ago …). Triage keeps its single "Flagged by
+  // Chi" bucket unless the user explicitly picked a grouping. Order preserved
+  // from the received_at DESC the query returns (F-12).
   const sections = useMemo(() => {
     const order = [];
     const byBucket = new Map();
-    for (const t of threads) {
-      const b = isTriageView ? 'Flagged by Chi' : dateBucket(t.received_at);
+    for (const t of visibleThreads) {
+      let b;
+      if (groupMode === 'person') b = t.from_name || t.from_address || 'Unknown sender';
+      else if (groupMode === 'tag') b = primaryTagLabel(t);
+      else if (isTriageView) b = 'Flagged by Chi';
+      else b = dateBucket(t.received_at);
       if (!byBucket.has(b)) { byBucket.set(b, []); order.push(b); }
       byBucket.get(b).push(t);
     }
     return order.map((label) => ({ label, rows: byBucket.get(label) }));
-  }, [threads, isTriageView]);
+  }, [visibleThreads, isTriageView, groupMode]);
 
-  // Prev/Next navigation across the flat (already-ordered) thread list (F-04/F-05).
+  // Prev/Next navigation across the flat (already-ordered) VISIBLE list (F-04/F-05).
   const selectedIndex = useMemo(
-    () => threads.findIndex((t) => t.id === selectedId),
-    [threads, selectedId]
+    () => visibleThreads.findIndex((t) => t.id === selectedId),
+    [visibleThreads, selectedId]
   );
   const canPrev = selectedIndex > 0;
-  const canNext = selectedIndex >= 0 && selectedIndex < threads.length - 1;
-  const position = selectedIndex >= 0 && threads.length > 0
-    ? `${selectedIndex + 1} of ${threads.length}`
+  const canNext = selectedIndex >= 0 && selectedIndex < visibleThreads.length - 1;
+  const position = selectedIndex >= 0 && visibleThreads.length > 0
+    ? `${selectedIndex + 1} of ${visibleThreads.length}`
     : '';
-  const goPrev = () => { if (canPrev) setSelectedId(threads[selectedIndex - 1].id); };
-  const goNext = () => { if (canNext) setSelectedId(threads[selectedIndex + 1].id); };
+  const goPrev = () => { if (canPrev) setSelectedId(visibleThreads[selectedIndex - 1].id); };
+  const goNext = () => { if (canNext) setSelectedId(visibleThreads[selectedIndex + 1].id); };
 
-  // Head-meta sub-line, per view (F-11).
-  const headMeta = {
-    inbox: `${counts.unread} unread · ${counts.snoozed} snoozed`,
-    triage: `${counts.triage} flagged · ${counts.snoozed} snoozed`,
-    all: `${threads.length} threads`,
-    drafts: `${counts.drafts} drafts`,
-  }[view] ?? `${threads.length} threads`;
+  // Head-meta sub-line, per view (F-11). When a facet is active, show the
+  // filtered count so the header agrees with the visible list.
+  const facetActive = activeFacet && activeFacet !== RESET_FACET;
+  const headMeta = facetActive
+    ? `${visibleThreads.length} ${FILTER_ITEMS.find((f) => f.id === activeFacet)?.label?.toLowerCase() ?? 'filtered'}`
+    : ({
+        inbox: `${counts.unread} unread · ${counts.snoozed} snoozed`,
+        triage: `${counts.triage} flagged · ${counts.snoozed} snoozed`,
+        all: `${threads.length} threads`,
+        drafts: `${counts.drafts} drafts`,
+        snoozed: `${counts.snoozed} snoozed`,
+      }[view] ?? `${threads.length} threads`);
 
   return html`
     <div class="frame" data-workspace="mail">
@@ -741,23 +910,25 @@ export function MailView({ activeFeature }) {
             <div class="mail-list-search-row">
               <${Icon} name="search" size=${14} />
               <input
+                ref=${searchRef}
                 type="search"
                 class="input"
                 placeholder=${"from:valentim · catalog"} value=${searchTerm} onInput=${(e) => setSearchTerm(e.target.value)}
                 aria-label="Search threads"
               />
+              <kbd>⌘F</kbd>
             </div>
           </div>
 
           <div class="mail-list-scroll">
             ${threadsLoading ? html`<${FeedbackState} state="loading" />` : null}
             ${threadsError ? html`<${FeedbackState} state="error" message=${threadsError.message} />` : null}
-            ${!threadsLoading && !threadsError && threads.length === 0
-              ? html`<${FeedbackState} state="empty" message="No threads in ${viewLabel}." />`
+            ${!threadsLoading && !threadsError && visibleThreads.length === 0
+              ? html`<${FeedbackState} state="empty" message=${facetActive ? `No ${FILTER_ITEMS.find((f) => f.id === activeFacet)?.label?.toLowerCase() ?? 'matching threads'} in ${viewLabel}.` : `No threads in ${viewLabel}.`} />`
               : null
             }
 
-            ${!threadsLoading && !threadsError && threads.length > 0
+            ${!threadsLoading && !threadsError && visibleThreads.length > 0
               ? sections.map((section) => html`
                 <div key=${section.label}>
                   <div class="mail-list-section">${section.label}</div>

@@ -34,11 +34,16 @@
 
 import {
   html, cn,
-  useState, useEffect, useMemo,
+  useState, useEffect, useMemo, useCallback,
   useQuery, useMutation, useQueryClient,
 } from '../../lib/ui.js';
 import { hostDbQuery, hostDbExec, hostSendToActiveSession, hostNavigate, setMenu, isStandalone } from '../../lib/bridge.js';
 import { applyFacet, RESET_FACET } from '../../lib/facet-filter.js';
+// create-wire recipe (atelier-parity RECIPE 3): the dead "New report" buttons —
+// and the R-04 hand-to-sales path when no deal is linked yet — dispatch a
+// structured creation brief to the active Chi session rather than writing a
+// client-side husk INSERT (research notes + deals are agent-shaped — R-03).
+import { buildCreateBrief, dispatchCreate } from '../../lib/create-dispatch.js';
 
 // ─── Type enum ──────────────────────────────────────────────────────────────
 // research_notes.entity_type maps to one of these display labels. The Reports
@@ -171,6 +176,7 @@ const FACET_PREDICATES = {
 const QK = {
   reports: ['research', 'reports'],
   sources: ['research', 'sources'],
+  personas: ['research', 'personas'],
 };
 
 // ─── Data fetchers ────────────────────────────────────────────────────────────
@@ -241,6 +247,72 @@ async function fetchSources() {
   }
 }
 
+/** Parse the research_notes.tags column — stored as a JSON array or a
+ *  comma/space-separated string — into a clean string[]. */
+function parseTags(raw) {
+  if (!raw) return [];
+  if (Array.isArray(raw)) return raw.map((t) => String(t).trim()).filter(Boolean);
+  const s = String(raw).trim();
+  if (!s) return [];
+  try {
+    const arr = JSON.parse(s);
+    if (Array.isArray(arr)) return arr.map((t) => String(t).trim()).filter(Boolean);
+  } catch {
+    // not JSON — fall through to delimiter split
+  }
+  return s.split(/[,;]+/).map((t) => t.trim()).filter(Boolean);
+}
+
+/** Normalize a fit_score (unknown scale — 0–1 fraction OR 0–100 percent) to a
+ *  0–100 integer percent for the Fit bar/badge. null/undefined → null. */
+function fitPercent(raw) {
+  if (raw == null) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  const pct = n <= 1 ? n * 100 : n;
+  return Math.max(0, Math.min(100, Math.round(pct)));
+}
+
+/** Map a persona-type research_notes row → the Personas grid card shape.
+ *  Only name / desc / fit / tag come off real columns (title, summary|body,
+ *  fit_score, tags|entity_name); pain / motion / acv have no schema column, so
+ *  they stay null and the card omits those rows (R-02: real rows, honest gaps). */
+function noteToPersona(r) {
+  const tags = parseTags(r.tags);
+  return {
+    id: r.id,
+    tag: tags[0] ?? r.entity_name ?? 'segment',
+    name: r.title ?? r.entity_name ?? '(untitled)',
+    desc: r.summary ?? (r.body ? String(r.body).slice(0, 160) : ''),
+    pain: null,
+    motion: null,
+    acv: null,
+    fit: fitPercent(r.fit_score),
+  };
+}
+
+/** Fetch persona-type research_notes rows for the Personas grid. Real rows win;
+ *  PERSONAS_FIXTURE is the EMPTY-STATE fallback only (labelled "sample data" in
+ *  the view header so the operator never mistakes seed cards for real ICP). */
+async function fetchPersonas() {
+  if (isStandalone()) return { personas: PERSONAS_FIXTURE, sample: true };
+  try {
+    await ensureMigration();
+    const rows = await hostDbQuery(
+      `SELECT id, title, entity_type, entity_name, summary, body, tags,
+              fit_score, fit_notes, updated_at
+       FROM research_notes
+       WHERE lower(entity_type) IN ('persona', 'icp')
+       ORDER BY fit_score DESC, updated_at DESC`
+    );
+    if (rows.length > 0) return { personas: rows.map(noteToPersona), sample: false };
+    console.warn('[research] no persona-type research_notes — Personas grid falling back to sample fixture.');
+    return { personas: PERSONAS_FIXTURE, sample: true };
+  } catch {
+    return { personas: PERSONAS_FIXTURE, sample: true };
+  }
+}
+
 // ─── Menu builder ─────────────────────────────────────────────────────────────
 
 /**
@@ -302,6 +374,7 @@ function buildResearchMenu(activeView, reports, activeFacet) {
 /** A single report row in the Reports list. */
 function ReportRow({ report, isSelected, onSelect }) {
   const agent = isAgentOwner(report.owner);
+  const fit = fitPercent(report.fit_score); // R-06: surface the SELECTed fit_score
   return html`
     <div
       class=${cn('split-row', isSelected && 'is-selected')}
@@ -330,6 +403,7 @@ function ReportRow({ report, isSelected, onSelect }) {
       <div class="split-row-right">
         <span class="split-row-amt">${reportAmount(report)}</span>
         <span class=${cn('split-row-when', report.urgent && 'is-urgent')}>${report.when ?? ''}</span>
+        ${fit != null ? html`<span class="badge" title="Fit score">fit ${fit}%</span>` : null}
       </div>
     </div>
   `;
@@ -349,6 +423,12 @@ function ReportDetail({ report, onHandToSales, handPending }) {
   const wc = deriveWordCount(report);
   const detailMeta = report.amount ?? (wc >= 1000 ? `${(wc / 1000).toFixed(1)}k words` : wc > 0 ? `${wc} words` : '—');
   const showButton = mode === 'confirm' || mode === 'approve';
+  // R-06: surface the columns the SELECT already fetched but the design never
+  // rendered — fit_score (badge), tags (chips), research_depth + agent_cycle_id
+  // (meta facts). The agent_cycle_id session link stays NON-navigable — plain
+  // mono text, no href (there is no in-pane route to a session from here).
+  const fit = fitPercent(report.fit_score);
+  const tags = parseTags(report.tags);
 
   return html`
     <div class="ip-split-pane split-detail" style=${{ overflowY:'auto' }}>
@@ -359,15 +439,34 @@ function ReportDetail({ report, onHandToSales, handPending }) {
             <span class=${cn('ux-dot', `ux-${mode}`)}></span>
             ux_mode · ${mode}
           </span>
+          ${fit != null ? html`<span class="badge" title="Fit score">fit ${fit}%</span>` : null}
+          ${report.status ? html`<span class="badge">${report.status}</span>` : null}
         </div>
         <div class="split-detail-title">${report.title}</div>
         <div class="split-detail-sub">${report.entity_name ?? '—'}${report.owner ? ` · ${agent ? '⚙ ' : ''}${report.owner}` : ''}</div>
+
+        ${tags.length > 0 ? html`
+          <div style=${{ display:'flex', flexWrap:'wrap', gap:'6px', marginTop:'8px' }}>
+            ${tags.map((t) => html`<span class="tag" key=${t}>${t}</span>`)}
+          </div>
+        ` : null}
 
         <div class="split-facts">
           <div><div class="split-fact-k">Type</div><div class="split-fact-v">${TYPE_LABEL[typeKey(report.entity_type)] ?? report.entity_type}</div></div>
           <div><div class="split-fact-k">Detail</div><div class="split-fact-v">${detailMeta}</div></div>
           <div><div class="split-fact-k">Updated</div><div class="split-fact-v">${report.when ?? (report.updated_at ? report.updated_at.substring(0, 10) : '—')}</div></div>
+          ${report.research_depth != null && report.research_depth !== '' ? html`
+            <div><div class="split-fact-k">Depth</div><div class="split-fact-v">${report.research_depth}</div></div>
+          ` : null}
+          ${report.agent_cycle_id ? html`
+            <div><div class="split-fact-k">Agent cycle</div><div class="split-fact-v" style=${{ fontFamily:'var(--font-mono)', fontSize:'0.72rem' }}>${report.agent_cycle_id}</div></div>
+          ` : null}
         </div>
+
+        ${report.fit_notes ? html`
+          <div class="split-fact-k" style=${{ marginTop:'12px' }}>Fit notes</div>
+          <div class="split-detail-sub">${report.fit_notes}</div>
+        ` : null}
 
         ${report.next_action ? html`
           <div class="split-next">
@@ -467,7 +566,11 @@ function SourcesView({ sources, onRefresh }) {
     const stale = sources.filter((s) => s.status === 'stale').length;
     const signals = sources.filter((s) => s.status === 'signal').length;
     const freshToday = sources.filter((s) => /h ago|m ago/.test(s.last_checked ?? '')).length;
-    return { tracked, stale, signals, freshToday };
+    // R-05: category count is the distinct source `type` set, not a literal 4.
+    const categories = new Set(
+      sources.map((s) => (s.type ?? '').toString().trim().toLowerCase()).filter(Boolean),
+    ).size;
+    return { tracked, stale, signals, freshToday, categories };
   }, [sources]);
 
   function statusClass(status) {
@@ -484,7 +587,7 @@ function SourcesView({ sources, onRefresh }) {
         <div class="rs-source-kpi">
           <span class="rs-kpi-k">Tracked sources</span>
           <span class="rs-kpi-v">${stats.tracked}</span>
-          <span class="rs-kpi-sub">4 categories</span>
+          <span class="rs-kpi-sub">${stats.categories} categor${stats.categories === 1 ? 'y' : 'ies'}</span>
         </div>
         <div class="rs-source-kpi">
           <span class="rs-kpi-k">Checked today</span>
@@ -536,27 +639,34 @@ function SourcesView({ sources, onRefresh }) {
   `;
 }
 
-/** Personas view — 2-up ICP card grid (local layout, no kit equivalent). */
-function PersonasView({ personas }) {
+/** Personas view — 2-up ICP card grid (local layout, no kit equivalent).
+ *  Renders off persona-type research_notes rows (R-02). When `sample` is true the
+ *  grid is showing PERSONAS_FIXTURE as an empty-state stand-in — labelled so the
+ *  operator never mistakes seed cards for real ICP. Per-attr rows (pain/motion/
+ *  acv) only render when the row actually carries that value; the Fit bar only
+ *  renders when fit is a real number. */
+function PersonasView({ personas, sample }) {
   return html`
     <div class="rs-persona-wrap">
       <div class="rs-persona-head">
         <span>Personas &amp; ICP</span>
-        <span class="sub">${personas.length} segments · updated Apr</span>
+        <span class="sub">${personas.length} segments${sample ? ' · sample data' : ''}</span>
       </div>
       <div class="rs-persona-grid">
         ${personas.map((p) => html`
           <div class="rs-persona-card" key=${p.id}>
             <span class="rs-persona-tag">${p.tag}</span>
             <div class="rs-persona-name">${p.name}</div>
-            <div class="rs-persona-desc">${p.desc}</div>
-            <div class="rs-persona-attr"><span>Top pain</span><b>${p.pain}</b></div>
-            <div class="rs-persona-attr"><span>Motion</span><b>${p.motion}</b></div>
-            <div class="rs-persona-attr"><span>ACV</span><b>${p.acv}</b></div>
-            <div class="rs-persona-attr"><span>Fit</span><b>${p.fit}%</b></div>
-            <div class="rs-prog" aria-label=${`Fit score ${p.fit}%`}>
-              <div class="rs-prog-fill" style=${{ width: `${p.fit}%` }}></div>
-            </div>
+            ${p.desc ? html`<div class="rs-persona-desc">${p.desc}</div>` : null}
+            ${p.pain ? html`<div class="rs-persona-attr"><span>Top pain</span><b>${p.pain}</b></div>` : null}
+            ${p.motion ? html`<div class="rs-persona-attr"><span>Motion</span><b>${p.motion}</b></div>` : null}
+            ${p.acv ? html`<div class="rs-persona-attr"><span>ACV</span><b>${p.acv}</b></div>` : null}
+            ${p.fit != null ? html`
+              <div class="rs-persona-attr"><span>Fit</span><b>${p.fit}%</b></div>
+              <div class="rs-prog" aria-label=${`Fit score ${p.fit}%`}>
+                <div class="rs-prog-fill" style=${{ width: `${p.fit}%` }}></div>
+              </div>
+            ` : null}
           </div>
         `)}
       </div>
@@ -575,12 +685,12 @@ function LoadingState() {
   `;
 }
 
-function EmptyState() {
+function EmptyState({ onCreate }) {
   return html`
     <div class="atelier-state is-empty" id="view-stage">
       <h3>No research yet</h3>
       <p>Run your first agent dispatch or draft a report to populate the knowledge surface.</p>
-      <button class="btn btn-sm rs-empty-cta" type="button">New report</button>
+      <button class="btn btn-sm rs-empty-cta" type="button" onClick=${() => onCreate?.()}>New report</button>
     </div>
   `;
 }
@@ -624,6 +734,7 @@ export function ResearchView({ activeFeature }) {
   // ── Data queries ────────────────────────────────────────────────────────────
   const reportsQ = useQuery({ queryKey: QK.reports, queryFn: fetchReports });
   const sourcesQ = useQuery({ queryKey: QK.sources, queryFn: fetchSources, enabled: activeView === 1 });
+  const personasQ = useQuery({ queryKey: QK.personas, queryFn: fetchPersonas, enabled: activeView === 2 });
 
   const reports = reportsQ.data ?? [];
 
@@ -689,25 +800,29 @@ export function ResearchView({ activeFeature }) {
     setMenu(buildResearchMenu(activeView, reports, activeFacet)).catch(() => {/* ignore */});
   }, [activeView, reports, activeFacet]);
 
-  // ── Hand-to-sales mutation (R-05 / R-06 cross-domain link) ──────────────────
-  // approve-mode action: surface the dossier in the dock chat (approve-gate),
-  // then link the research note to a sales deal. Provisional until 0053 lands:
-  // append the link into sales_deals.notes (the research_item_id column may not
-  // exist yet); once it lands, prefer UPDATE ... SET research_item_id = ?.
+  // ── Hand-to-sales mutation (R-04 / R-05 / R-06 cross-domain link) ────────────
+  // approve-mode action with TWO honest branches keyed on whether a sales deal
+  // is already linked (report.entity_id):
+  //   • LINKED  → surface the dossier in the Chi dock (approve-gate) and
+  //               soft-link the note to the existing deal (research_item_id, or
+  //               a notes append until 0053's column lands).
+  //   • UNLINKED → R-04: do NOT silently skip. A husk UPDATE against a missing
+  //               deal is a no-op that creates nothing, so instead dispatch a
+  //               create-deal BRIEF (recipe 3 shape) carrying the research
+  //               context; the agent creates the deal in sales_deals.
   const handToSales = useMutation({
     mutationFn: async (report) => {
       if (isStandalone()) return;
-      // 1. Surface the dossier summary in the Chi dock (approve-gate happens there).
-      await hostSendToActiveSession(
-        `Hand the prospect dossier "${report.title}" to the sales pipeline. Review the dossier and create / update the matching sales deal.`,
-        'com.ikenga.research',
-      ).catch(() => {});
-
-      // 2. Soft-link the dossier into the matching sales deal.
       const dealId = report.entity_id ?? null;
-      const linkText = `\n[research:${report.id}] ${report.title}`;
+
       if (dealId) {
-        // Prefer the formal column once 0053 lands; fall back to notes append.
+        // 1a. Surface the dossier summary in the Chi dock (approve-gate happens there).
+        await hostSendToActiveSession(
+          `Hand the prospect dossier "${report.title}" to the sales pipeline. Review the dossier and update the linked sales deal.`,
+          'com.ikenga.research',
+        ).catch(() => {});
+        // 1b. Soft-link the dossier into the existing sales deal.
+        const linkText = `\n[research:${report.id}] ${report.title}`;
         try {
           await hostDbExec(
             `UPDATE sales_deals SET research_item_id = ? WHERE id = ?`,
@@ -719,13 +834,48 @@ export function ResearchView({ activeFeature }) {
             [linkText, dealId],
           ).catch(() => {});
         }
+        return;
       }
+
+      // 2. No linked deal — dispatch a create-deal brief (R-04, no silent no-op).
+      const brief = buildCreateBrief({
+        entity: 'sales deal',
+        table: 'sales_deals',
+        seed: {
+          'from research': report.title,
+          type: TYPE_LABEL[typeKey(report.entity_type)] ?? report.entity_type,
+          summary: report.summary ?? undefined,
+          'research note id': report.id,
+        },
+        instruction:
+          `Create the sales deal from the prospect dossier "${report.title}". `
+          + 'Research the company, set the title, company, owner, value, next action, and win probability, '
+          + `then add it to the sales_deals table and set its research_item_id to ${report.id} so it links back to this dossier.`,
+      });
+      await dispatchCreate(brief, 'com.ikenga.research');
     },
     onSuccess: () => {
-      // Open the Sales pane so the operator lands on the deal.
+      // Open the Sales pane so the operator lands on the pipeline (linked deal,
+      // or where the newly-created deal will appear once the agent files it).
       hostNavigate('/pkg/com.ikenga.sales/').catch(() => {});
     },
   });
+
+  // ── Create report (R-03 dispatch-seeded creation) ───────────────────────────
+  // A research note is agent-shaped — it needs the actual research work (sources,
+  // summary, fit scoring) the operator hasn't done — so "New report" dispatches a
+  // structured brief to the active Chi session rather than writing a husk INSERT.
+  const createReport = useCallback(() => {
+    const brief = buildCreateBrief({
+      entity: 'research report',
+      table: 'research_notes',
+      instruction:
+        'Ask me for the subject and type (persona / competitor / prospect / market), '
+        + 'then research it — gather sources, write the summary and body, score the fit, '
+        + 'and set the next action. Add it to the research_notes table.',
+    });
+    void dispatchCreate(brief, 'com.ikenga.research');
+  }, []);
 
   // ── Head label ──────────────────────────────────────────────────────────────
   const headLabel = activeView === 0
@@ -740,7 +890,7 @@ export function ResearchView({ activeFeature }) {
   if (activeView === 0) {
     if (reportsQ.isLoading) body = html`<${LoadingState} />`;
     else if (reportsQ.isError) body = html`<${ErrorState} error=${reportsQ.error?.message ?? 'unknown'} />`;
-    else if (visibleReports.length === 0) body = html`<${EmptyState} />`;
+    else if (visibleReports.length === 0) body = html`<${EmptyState} onCreate=${createReport} />`;
     else body = html`<${ReportsView}
       reports=${visibleReports}
       selected=${selected}
@@ -759,7 +909,11 @@ export function ResearchView({ activeFeature }) {
       }}
     />`;
   } else {
-    body = html`<${PersonasView} personas=${PERSONAS_FIXTURE} />`;
+    if (personasQ.isLoading) body = html`<${LoadingState} />`;
+    else {
+      const pd = personasQ.data ?? { personas: PERSONAS_FIXTURE, sample: true };
+      body = html`<${PersonasView} personas=${pd.personas} sample=${pd.sample} />`;
+    }
   }
 
   return html`
@@ -772,7 +926,7 @@ export function ResearchView({ activeFeature }) {
           <line x1="4" y1="18" x2="9" y2="18"></line>
         </svg>
         <span class="frame-title">${headLabel}</span>
-        <button class="btn btn-primary btn-sm" type="button" style=${{ marginLeft:'auto' }}>New report</button>
+        <button class="btn btn-primary btn-sm" type="button" style=${{ marginLeft:'auto' }} onClick=${() => createReport()}>New report</button>
       </div>
       <div class="frame-body-flush" id="view-stage" style=${{ flex:1, overflow:'hidden' }}>
         ${body}

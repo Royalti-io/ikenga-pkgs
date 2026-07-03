@@ -837,6 +837,67 @@
   color: var(--fg);
 }
 
+/* ── Paystack revenue-splits panel (Inter-Company) ──────────────────────────── */
+/* Royalti's NGN revenue → 7.5% Royalti.io fee / 92.5% Dixtrit.media portion.
+ * Sourced from paystack_splits (0029_finance_domain.sql). Mirrors the design's
+ * Section-C panel (atelier-finance.html .fin-paystack). */
+.fin-paystack {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-base);
+  padding: var(--space-4) var(--space-5);
+  margin-top: var(--space-6);
+}
+.fin-paystack-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+.fin-paystack-head .title {
+  font-family: var(--font-body);
+  font-weight: 600;
+  font-size: var(--text-body);
+  color: var(--fg);
+}
+.fin-paystack-head .desc {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--fg-faint);
+  letter-spacing: .04em;
+  margin-left: var(--space-3);
+}
+.fin-paystack-stats {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.fin-paystack-stat {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunken);
+  padding: var(--space-3) var(--space-4);
+}
+.fin-paystack-stat .lbl {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+}
+.fin-paystack-stat .val {
+  font-family: var(--font-display);
+  font-weight: 500;
+  font-size: 22px;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+.fin-paystack-stat.fee  .val { color: var(--achievement); }
+.fin-paystack-stat.port .val { color: var(--systemic); }
+.fin-paystack-stat.pend .val { color: var(--primary); }
+.fin-paystack-stat.pend.is-zero .val { color: var(--fg-muted); }
+
 /* ── Reduced-motion gates ───────────────────────────────────────────────────── */
 
 @media (prefers-reduced-motion: reduce) {

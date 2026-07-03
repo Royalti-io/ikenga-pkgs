@@ -11,7 +11,7 @@
 //   - .kb-board / .kb-col / .kb-card / .kb-mini-avatar / .kb-add (part 28 kanban)
 //   - .nav-group[data-kind] / .nav-item / .nav-item.is-on / .nav-item.is-hot (part 22)
 //   - .seg.nav-view-seg / .seg button.is-on (part 14 segmented-tabs, list-kanban-switch)
-//   - .atelier-state.is-{loading,empty,error,streaming} / .atelier-spin (part 26 feedback-state)
+//   - .atelier-state.is-{loading,empty,error} / .atelier-spin (part 26 feedback-state)
 //   - .stage-chip / .next-chip / .ux-dot / .badge / .tag / .chip (part 11 badge-tag-chip)
 //   - .btn / .btn-icon / .btn-sm / .btn.affirmative (part 10 buttons)
 //
@@ -34,6 +34,11 @@ import { hostDbQuery, hostDbExec, setMenu, isStandalone } from '../../lib/bridge
 // create-wire recipe: dead "+ / New deal" buttons dispatch a creation brief to
 // the Chi (R-03: a deal is agent-shaped, never a client-side husk INSERT).
 import { buildCreateBrief, dispatchCreate } from '../../lib/create-dispatch.js';
+// dispatch-wire recipe: deal-detail "Approve & run"/"Confirm & run" seed a
+// structured next-action turn into the active Chi (host.sendToActiveSession).
+import { dispatchItemAction } from '../../lib/dispatch.js';
+// facet-wire recipe: sidebar filter facets (f:*) narrow the pipeline list/kanban.
+import { applyFacet } from '../../lib/facet-filter.js';
 
 // ─── Stage enum ───────────────────────────────────────────────────────────────
 // Per the R-04 Pipeline-stages convention (06-skill-action-contract.md §Pipeline-stages).
@@ -189,6 +194,47 @@ function fmtPct(v) {
   return `${Math.round(v * 100)}%`;
 }
 
+// ─── dispatch-wire (RECIPE 1) ─────────────────────────────────────────────────
+// Map a deal row into the recipe-shared descriptor, then seed a next-action turn
+// into the active Chi. A deal is agent-shaped, so "Approve & run"/"Confirm & run"
+// dispatch a structured turn (host.sendToActiveSession) rather than committing
+// headlessly — there is no domain-run verb today (see lib/dispatch.js APPROVE-RUN GAP).
+
+function dealToDispatchItem(deal) {
+  return {
+    kind: 'deal',
+    title: deal.title ?? deal.company,
+    stage: STAGE_LABEL[deal.stage] ?? deal.stage,
+    nextAction: deal.next_action,
+    facts: [
+      ['Company', deal.company],
+      ['Owner', deal.owner ?? deal.assigned_to],
+      ['Value', deal.value != null ? fmtCurrency(deal.value) : null],
+    ],
+  };
+}
+
+function handleAction(deal) {
+  const mode = deal.next_action_mode === 'approve' ? 'approve' : 'confirm';
+  dispatchItemAction(dealToDispatchItem(deal), mode, 'com.ikenga.sales').catch(() => {});
+}
+
+// ─── facet-wire (RECIPE 2) ────────────────────────────────────────────────────
+// Sales' "all" affordance is 'f:open-pipeline' (not the generic 'f:all'), so the
+// reset id is passed explicitly to applyFacet. Each predicate expression MIRRORS
+// its badge-count expression in buildSalesMenu so a facet's slice always matches
+// the count shown on its row (facet-wire pitfall 2).
+
+const SALES_RESET_FACET = 'f:open-pipeline';
+
+const FACET_PREDICATES = {
+  'f:my-deals':     (d) => d.owner === 'nedjamez' || d.assigned_to === 'nedjamez',
+  'f:closing-soon': (d) => d.next_action_mode === 'approve',
+  'f:agent-run':    (d) => d.owner === 'sales-agent' || d.assigned_to === 'sales-agent',
+  ...Object.fromEntries(STAGES.map((s) => [`f:stage:${s}`, (d) => d.stage === s])),
+  // 'f:open-pipeline' intentionally ABSENT → SALES_RESET_FACET returns every deal.
+};
+
 // ─── Menu builder ─────────────────────────────────────────────────────────────
 
 /**
@@ -197,11 +243,13 @@ function fmtPct(v) {
  *   pipeMode: 'list' | 'kanban' (only relevant when activeView === 0)
  *   deals: the open deals array (for counts)
  */
-function buildSalesMenu(activeView, pipeMode, deals) {
+function buildSalesMenu(activeView, pipeMode, deals, activeFacet) {
   const openCount = deals.length;
   const myDeals = deals.filter((d) => d.owner === 'nedjamez' || d.assigned_to === 'nedjamez');
   const closingSoon = deals.filter((d) => d.next_action_mode === 'approve');
   const agentRun = deals.filter((d) => (d.owner === 'sales-agent' || d.assigned_to === 'sales-agent'));
+  // A facet only highlights on the Pipeline view (facets dim/inert off it).
+  const facetActive = (id) => activeView === 0 && activeFacet === id;
 
   const viewItems = [
     {
@@ -251,7 +299,7 @@ function buildSalesMenu(activeView, pipeMode, deals) {
       label: 'Open pipeline',
       icon: 'layers',
       section: 'Filters',
-      active: true,
+      active: facetActive('f:open-pipeline'),
       badge: openCount,
       disabled: activeView !== 0,
     },
@@ -260,7 +308,7 @@ function buildSalesMenu(activeView, pipeMode, deals) {
       label: 'My deals',
       icon: 'user',
       section: 'Filters',
-      active: false,
+      active: facetActive('f:my-deals'),
       badge: myDeals.length || undefined,
       disabled: activeView !== 0,
     },
@@ -269,7 +317,7 @@ function buildSalesMenu(activeView, pipeMode, deals) {
       label: 'Closing soon',
       icon: 'zap',
       section: 'Filters',
-      active: false,
+      active: facetActive('f:closing-soon'),
       hot: closingSoon.length > 0,
       badge: closingSoon.length > 0 ? closingSoon.length : undefined,
       disabled: activeView !== 0,
@@ -279,7 +327,7 @@ function buildSalesMenu(activeView, pipeMode, deals) {
       label: 'Agent-run',
       icon: 'cpu',
       section: 'Filters',
-      active: false,
+      active: facetActive('f:agent-run'),
       badge: agentRun.length || undefined,
       disabled: activeView !== 0,
     },
@@ -289,7 +337,7 @@ function buildSalesMenu(activeView, pipeMode, deals) {
     id: `f:stage:${s}`,
     label: STAGE_LABEL[s],
     section: 'By stage',
-    active: false,
+    active: facetActive(`f:stage:${s}`),
     badge: deals.filter((d) => d.stage === s).length || undefined,
     disabled: activeView !== 0,
   }));
@@ -338,6 +386,12 @@ function DealRow({ deal, isSelected, onClick }) {
 
 /** Deal detail pane */
 function DealDetail({ deal, activities }) {
+  // dispatch-wire — local feedback: flips true on click so the operator sees the
+  // hand-off landed and the same click can't double-seed the session. Resets when
+  // the selected deal changes.
+  const [sent, setSent] = useState(false);
+  useEffect(() => { setSent(false); }, [deal?.id]);
+
   if (!deal) {
     return html`<div class="ip-split-pane split-detail" style=${{ display:'flex', alignItems:'center', justifyContent:'center', color:'var(--fg-muted)', fontSize:'0.85rem' }}>
       Select a deal
@@ -347,12 +401,19 @@ function DealDetail({ deal, activities }) {
   const hasApprove = deal.next_action_mode === 'approve';
   const hasConfirm = deal.next_action_mode === 'confirm';
   const showButton = hasApprove || hasConfirm;
+  const onAct = () => { handleAction(deal); setSent(true); };
 
   return html`
     <div class="ip-split-pane split-detail" style=${{ overflowY:'auto' }}>
       <div class="split-detail-wrap">
         <div class="split-detail-eyebrow">
           <span class="stage-chip">${STAGE_LABEL[deal.stage] ?? deal.stage}</span>
+          ${deal.next_action_mode ? html`
+            <span class="next-chip">
+              <span class=${cn('ux-dot', `ux-${deal.next_action_mode}`)}></span>
+              ux_mode · ${deal.next_action_mode}
+            </span>
+          ` : null}
         </div>
         <div class="split-detail-title">${deal.title ?? deal.company}</div>
         <div class="split-detail-sub">${deal.company}${deal.owner ? ` · ${deal.owner}` : ''}</div>
@@ -374,8 +435,13 @@ function DealDetail({ deal, activities }) {
               ${deal.next_action}
               ${showButton ? html`
                 <div style=${{ marginTop: '10px' }}>
-                  <button class=${cn('btn', hasApprove ? 'affirmative' : '')} type="button">
-                    ${hasApprove ? 'Approve & run' : 'Confirm & run'}
+                  <button
+                    class=${cn('btn', hasApprove ? 'affirmative' : '')}
+                    type="button"
+                    disabled=${sent}
+                    onClick=${onAct}
+                  >
+                    ${sent ? 'Sent to your Chi' : hasApprove ? 'Approve & run' : 'Confirm & run'}
                   </button>
                 </div>
               ` : null}
@@ -384,7 +450,7 @@ function DealDetail({ deal, activities }) {
         ` : null}
 
         ${activities && activities.length > 0 ? html`
-          <div class="split-detail-eyebrow" style=${{ marginTop:'12px' }}>Activity</div>
+          <div class="split-next-head" style=${{ marginTop:'12px' }}>Activity</div>
           <div class="split-timeline" role="list">
             ${activities.map((a) => html`
               <div class="split-tl-row" role="listitem" key=${a.id}>
@@ -606,7 +672,7 @@ function ForecastView({ deals }) {
             <div class="sl-month" key=${m.label}>
               <span class="sl-month-val">${fmtCurrency(m.val)}</span>
               <div class="sl-month-bar-wrap">
-                <div class="sl-month-bar" style=${{ height: `${Math.round((m.val / maxMonthVal) * 64)}px` }}></div>
+                <div class="sl-month-bar" style=${{ height: `${Math.round((m.val / maxMonthVal) * 100)}%` }}></div>
               </div>
               <span class="sl-month-lab">${m.label}</span>
             </div>
@@ -702,19 +768,19 @@ function EmptyState({ onCreate }) {
   `;
 }
 
-function ErrorState({ error }) {
+// Error state — design STATES.error (atelier-sales-list.html:1877-1879): alert
+// icon + heading + explanation + a Retry button that refetches.
+function ErrorState({ error, onRetry }) {
   return html`
     <div class="atelier-state is-error" id="view-stage">
-      <span>Failed to load deals</span>
-      <span style=${{ fontSize:'0.72rem', color:'var(--fg-muted)', marginTop:'4px' }}>${error}</span>
-    </div>
-  `;
-}
-
-function StreamingState() {
-  return html`
-    <div class="atelier-state is-streaming" id="view-stage">
-      <span class="atelier-prog" role="status" aria-live="polite">Sales agent running…</span>
+      <svg class="ix" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M12 9v4"/><path d="M12 17h.01"/>
+        <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/>
+      </svg>
+      <h3>Couldn’t load sales</h3>
+      <p>The source didn’t respond. Retry, or ask your Chi to check the connection.</p>
+      ${onRetry ? html`<button class="btn btn-sm" type="button" onClick=${onRetry}>Retry</button>` : null}
+      ${error ? html`<span style=${{ fontSize:'0.72rem', color:'var(--fg-muted)', marginTop:'4px' }}>${error}</span>` : null}
     </div>
   `;
 }
@@ -730,6 +796,9 @@ export function SalesView({ activeFeature }) {
   });
   const [pipeMode, setPipeMode] = useState('list'); // 'list' | 'kanban'
   const [selectedDeal, setSelectedDeal] = useState(null);
+  // facet-wire — last-applied sidebar filter facet. 'f:open-pipeline' is the
+  // reset/"all" affordance (no predicate → applyFacet returns every deal).
+  const [activeFacet, setActiveFacet] = useState(SALES_RESET_FACET);
   const qc = useQueryClient();
 
   // ── Data queries ────────────────────────────────────────────────────────────
@@ -744,6 +813,14 @@ export function SalesView({ activeFeature }) {
   });
 
   const deals = openDealsQ.data ?? [];
+  // facet-wire — the visible slice: full list narrowed by the active facet.
+  // Feeds the list, kanban AND the empty-state check (so a facet that matches
+  // nothing shows the empty pane, not a stale full list). Badges stay live
+  // because buildSalesMenu counts the FULL `deals`, not this slice.
+  const visibleDeals = useMemo(
+    () => applyFacet(deals, activeFacet, FACET_PREDICATES, SALES_RESET_FACET),
+    [deals, activeFacet],
+  );
 
   // ── db-updated refresh ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -762,6 +839,13 @@ export function SalesView({ activeFeature }) {
     else if (activeFeature === 'v:won') setActiveView(2);
     else if (activeFeature === 'seg:list') setPipeMode('list');
     else if (activeFeature === 'seg:kanban') setPipeMode('kanban');
+    // Filter facets (f:*) — LIST-ONLY: force the Pipeline view so a facet the
+    // user can't see can't be silently applied, then record it. 'f:open-pipeline'
+    // resets; every other id narrows via applyFacet. (facet-wire Move 2.)
+    else if (activeFeature.startsWith('f:')) {
+      setActiveView(0);
+      setActiveFacet(activeFeature);
+    }
   }, [activeFeature]);
 
   // ── Pre-select hero deal (D-05 — Catalog onboarding · Chocolate City) ──────
@@ -775,9 +859,9 @@ export function SalesView({ activeFeature }) {
   // ── setMenu publish ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (isStandalone()) return;
-    const items = buildSalesMenu(activeView, pipeMode, deals);
+    const items = buildSalesMenu(activeView, pipeMode, deals, activeFacet);
     setMenu(items).catch(() => {/* ignore */});
-  }, [activeView, pipeMode, deals]);
+  }, [activeView, pipeMode, deals, activeFacet]);
 
   // ── Stage change mutation (kanban drag) ─────────────────────────────────────
   const stageChange = useMutation({
@@ -827,18 +911,18 @@ export function SalesView({ activeFeature }) {
     if (openDealsQ.isLoading) {
       body = html`<${LoadingState} />`;
     } else if (openDealsQ.isError) {
-      body = html`<${ErrorState} error=${openDealsQ.error?.message ?? 'unknown'} />`;
-    } else if (deals.length === 0) {
+      body = html`<${ErrorState} error=${openDealsQ.error?.message ?? 'unknown'} onRetry=${() => openDealsQ.refetch()} />`;
+    } else if (visibleDeals.length === 0) {
       body = html`<${EmptyState} onCreate=${createDeal} />`;
     } else if (pipeMode === 'kanban') {
       body = html`<${PipelineKanban}
-        deals=${deals}
+        deals=${visibleDeals}
         onStageChange=${(deal, newStage) => stageChange.mutate({ deal, newStage })}
         onCreate=${createDeal}
       />`;
     } else {
       body = html`<${PipelineList}
-        deals=${deals}
+        deals=${visibleDeals}
         selectedDeal=${selectedDeal}
         onSelectDeal=${setSelectedDeal}
         activities=${activitiesQ.data ?? []}
@@ -851,7 +935,7 @@ export function SalesView({ activeFeature }) {
     if (wonDealsQ.isLoading) {
       body = html`<${LoadingState} />`;
     } else if (wonDealsQ.isError) {
-      body = html`<${ErrorState} error=${wonDealsQ.error?.message ?? 'unknown'} />`;
+      body = html`<${ErrorState} error=${wonDealsQ.error?.message ?? 'unknown'} onRetry=${() => wonDealsQ.refetch()} />`;
     } else {
       body = html`<${WonView} wonDeals=${wonDealsQ.data ?? WON_DEALS_FIXTURE} />`;
     }

@@ -396,6 +396,21 @@ export function TasksView({ activeFeature } = {}) {
   // the form INSERTs directly via host.dbExec (createTask write helper).
   const [showCreate, setShowCreate] = useState(false);
 
+  // F-28: ⌘⇧T (Ctrl+Shift+T) toggles the New-task form, mirroring the chip on
+  // the button. Pane-scoped — this iframe IS the tasks pane, so a document-level
+  // listener never leaks to sibling panes; preventDefault stops it reaching the
+  // host's own shortcut map.
+  useEffect(() => {
+    const onKey = (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 'T' || e.key === 't')) {
+        e.preventDefault();
+        setShowCreate((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   const [dispatching, setDispatching] = useState(false);
 
   // Secondary path: "send to your Chi" — seed a user turn into the shell's
@@ -458,6 +473,7 @@ export function TasksView({ activeFeature } = {}) {
             >
               <${Icon} name=${showCreate ? 'check-square' : 'plus'} size=${12} />
               New task
+              <span style=${{ fontFamily: 'var(--font-mono)', fontSize: 9.5, opacity: 0.7, marginLeft: 6 }}>⌘⇧T</span>
             </${Button}>
           </div>
         </div>
@@ -511,7 +527,7 @@ export function TasksView({ activeFeature } = {}) {
               Show auto-closed
             </button>
             <div class="spacer"></div>
-            <span class="label">${openCount} open · ${autoClosedCount} auto-closed</span>
+            <span class="label">${openCount} open · ${autoClosedCount} closed</span>
           </div>
 
           <div class="tk-split">
@@ -590,7 +606,7 @@ export function TasksView({ activeFeature } = {}) {
 
             <div class="tk-detail">
               ${selectedId
-                ? html`<${TaskDetailPane} taskId=${selectedId} density="full" onNavigateTask=${setSelectedId} />`
+                ? html`<${TaskDetailPane} taskId=${selectedId} onNavigateTask=${setSelectedId} />`
                 : html`<div class="tk-empty">Select a task</div>`}
             </div>
           </div>

@@ -22,6 +22,11 @@ export async function fetchThreadList(view = "inbox", searchTerm = "") {
     case 'triage':
       whereClause = `WHERE em.triage_category IS NOT NULL AND em.triage_category != ''`;
       break;
+    case 'snoozed':
+      // Snoozed threads = those with a live snooze in the future. Mirrors
+      // fetchSnoozedCount so the "Snoozed" nav badge and this list agree.
+      whereClause = `WHERE mts.snoozed_until IS NOT NULL AND mts.snoozed_until > datetime('now')`;
+      break;
     case 'all':
       whereClause = '';
       break;
@@ -233,6 +238,41 @@ export async function fetchThreadCount(subject) {
   let n = 0;
   for (const r of rows) if (normalizeSubject(r.subject) === core) n += 1;
   return Math.max(1, n);
+}
+
+/**
+ * Fetch the OTHER messages in the same thread as `subject` (thread-collapse
+ * rail, B.7 expand). Same normalized-subject thread key as fetchThreadCount; a
+ * bounded LIKE narrows the candidate set and the exact normalized comparison
+ * runs in JS. Excludes `excludeId` (the message already open in the reader).
+ * Ordered newest-first. Scoped to declared tables (email_messages, contacts).
+ *
+ * @param {string|null|undefined} subject
+ * @param {string|number|null|undefined} excludeId
+ * @returns {Promise<Array<{id, subject, from_address, from_name, received_at, body_text}>>}
+ */
+export async function fetchThreadMessages(subject, excludeId) {
+  const core = normalizeSubject(subject);
+  if (!core) return [];
+  const like = `%${core.replace(/[\\%_]/g, '\\$&')}%`;
+  const rows = await hostDbQuery(
+    `SELECT
+       em.id,
+       em.subject,
+       em.from_address,
+       COALESCE(c.name, em.from_address) AS from_name,
+       em.received_at,
+       em.body_text
+     FROM email_messages em
+     LEFT JOIN contacts c ON c.email = em.from_address
+     WHERE LOWER(em.subject) LIKE ? ESCAPE '\\'
+     ORDER BY em.received_at DESC
+     LIMIT 50`,
+    [like],
+  ).catch(() => []);
+  return rows.filter(
+    (r) => normalizeSubject(r.subject) === core && String(r.id) !== String(excludeId),
+  );
 }
 
 /** Fetch Chi-drafted reply for a message. */

@@ -534,6 +534,17 @@ async function mapTwentyPersonToReplyIntel(p, email) {
     /* receivables lookup is best-effort */
   }
 
+  // WP-17 item 7: Catalog + Owner were permanently '—'. Twenty at depth=1 embeds
+  // the company but not a catalog link (no such field) and only surfaces an owner
+  // if the account-owner relation happens to be embedded. Attempt the owner
+  // best-effort; otherwise show an HONEST labeled "Not synced" state instead of a
+  // bare em-dash that reads like missing data.
+  const ownerRel = p?.company?.accountOwner ?? p?.accountOwner ?? p?.pointOfContact ?? null;
+  const ownerName = ownerRel
+    ? ([ownerRel?.name?.firstName, ownerRel?.name?.lastName].filter(Boolean).join(' ').trim()
+       || ownerRel?.userEmail || ownerRel?.name || null)
+    : null;
+
   return {
     tenant_name: org || fullName || email,
     tenant_sub: 'crm', // Twenty source classification (mirrors contact_type='crm')
@@ -541,12 +552,12 @@ async function mapTwentyPersonToReplyIntel(p, email) {
     last_touch_sub: null, // Twenty has no interaction_count on the person record
     health,
     health_sub: ageDays == null ? null : `${Math.round(ageDays)}d since contact`,
-    catalog: '—',
-    catalog_sub: 'no catalog link',
+    catalog: 'Not synced',
+    catalog_sub: 'no catalog field in CRM',
     open_balance: bal == null ? '—' : `$${Math.round(bal).toLocaleString()}`,
     balance_sub: overdue > 0 ? `${overdue} overdue` : bal != null ? 'current' : null,
-    owner: '—',
-    owner_sub: null,
+    owner: ownerName || 'Not synced',
+    owner_sub: ownerName ? 'CRM account owner' : 'not in CRM sync (depth=1)',
     risk_flag: overdue > 0 ? 'Overdue invoice' : 'None',
     risk_color: overdue > 0 ? 'var(--danger)' : 'var(--live)',
   };
@@ -615,6 +626,30 @@ async function retryDraft(id) {
 
 async function updateDraft(id, patch) {
   await hostPaActionsUpdate(id, patch);
+}
+
+// ── LATENT-VERB GAP (WP-17): host.paActions.* is unwired in the shell ──────────
+// approve/reject/retry/edit all route through the four host.paActions.* verbs
+// above. The shell's dispatchHostCall (pkg-iframe-host.tsx) has NO case for any
+// of them — every call hits the `unknown host tool: <name>` fallthrough
+// (pkg-iframe-host.tsx:829). So from INSIDE the iframe these writes cannot land
+// today. The real fix is shell work (add the four verbs to dispatchHostCall,
+// wrapping the already-tested pa_actions_* Rust commands the native
+// /outbox/approvals route uses via @/lib/tauri-cmd) — out of a pkg agent's scope.
+//
+// Honest degradation until then: detect the unknown-verb refusal and, instead of
+// dumping a raw "unknown host tool" string, steer the operator to the shell's
+// NATIVE approve-gate surface at /outbox/approvals, which calls the Rust commands
+// directly (paActionsCommit/Reject/Retry/Update) and WORKS. `host.navigate` is a
+// real, handled verb (pkg-iframe-host.tsx:426).
+function isPaActionsUnavailable(err) {
+  const m = String(err?.message ?? err ?? '');
+  return /unknown host tool|host\.paActions/i.test(m);
+}
+
+// Navigate the focused pane to the shell's native approve-gate. Fire-and-forget.
+function openShellApprovals() {
+  hostNavigate('/outbox/approvals').catch(() => {});
 }
 
 // ── 10-second undo before commit (WP-04) ──────────────────────────────────────
@@ -699,8 +734,22 @@ function StatusChip({ rawStatus }) {
 
 // C-5: inline error chip surfaced near the action footer when a commit is refused
 // (e.g. "Already committed — nothing sent.").
+//
+// WP-17: when the refusal is the unwired-verb gap (isPaActionsUnavailable), the
+// raw "unknown host tool: host.paActions.commit" string is useless to an
+// operator. Render an actionable notice steering them to the shell's native
+// approve-gate (/outbox/approvals) — which drives the same pa_actions_* Rust
+// commands directly and works — instead of the bare error.
 function CommitError({ message }) {
   if (!message) return null;
+  if (isPaActionsUnavailable(message)) {
+    return html`
+      <div class="atelier-state is-error ob-commit-error" role="alert" style=${{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-start' }}>
+        <span>In-pane approve / reject / retry isn't wired yet in this shell build. Your draft is safe — approve it from the Approvals surface.</span>
+        <button class="ob-btn-sm is-primary" type="button" onClick=${openShellApprovals}>↗ Open Outbox · Approvals</button>
+      </div>
+    `;
+  }
   return html`
     <div class="atelier-state is-error ob-commit-error" role="alert">${message}</div>
   `;
@@ -1154,6 +1203,43 @@ function countClaims(text) {
   return (text.match(/\d+(\.\d+)?\s?%|\$\s?\d|\b\d+x\b|\b\d{2,}\b/gi) || []).length;
 }
 
+// ── Anti-pattern FINDINGS (WP-17, item 2) ────────────────────────────────────
+// countAntiPatterns() returns a scalar; the design's itemized list (newsletter
+// §B, design lines 2278-2296) needs per-finding rows with a location + excerpt so
+// each gets a "fix in chat" affordance. This scans the SAME real body content
+// (no external pipeline) for two honest categories:
+//   • hype phrases — any ANTI_PATTERN_TERMS match (same terms countAntiPatterns uses)
+//   • vague metrics — "significantly/substantially/… faster/better/…" with no number nearby
+// Returns [{ kind, term, line, excerpt }] — line is 1-indexed body line number.
+const VAGUE_METRIC_RE =
+  /\b(significantly|substantially|dramatically|considerably|markedly|noticeably|much|far|way|vastly)\s+(faster|slower|better|worse|more|less|cheaper|higher|lower|bigger|smaller|stronger|quicker|greater|improved|reduced)\b/gi;
+
+function findAntiPatterns(text) {
+  if (!text) return [];
+  const lines = String(text).split(/\r?\n/);
+  const findings = [];
+  lines.forEach((raw, i) => {
+    const lineNo = i + 1;
+    const lower = raw.toLowerCase();
+    // Hype phrases (dedupe per line/term).
+    for (const term of ANTI_PATTERN_TERMS) {
+      const esc = term.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+      if (new RegExp(`\\b${esc}\\b`, 'i').test(lower)) {
+        findings.push({ kind: 'hype', term, line: lineNo, excerpt: raw.trim().slice(0, 120) });
+      }
+    }
+    // Vague metrics — a qualifier + comparative with no digit on the line.
+    if (!/\d/.test(raw)) {
+      let m;
+      VAGUE_METRIC_RE.lastIndex = 0;
+      while ((m = VAGUE_METRIC_RE.exec(raw)) !== null) {
+        findings.push({ kind: 'vague-metric', term: m[0], line: lineNo, excerpt: raw.trim().slice(0, 120) });
+      }
+    }
+  });
+  return findings;
+}
+
 // Per-platform hard character caps (design social §B).
 const PLATFORM_CAPS = { linkedin: 3000, twitter: 280, x: 280, bluesky: 300, instagram: 2200 };
 
@@ -1274,7 +1360,22 @@ function newsletterQualityCells(row, historySignals) {
     // History-dependent — resolved via newsletterHistorySignals + sent-history join (WP-11).
     // Falls back to honest '—' when historySignals is null (query still loading).
     historySignals?.freshness ?? { label: 'Freshness', value: '—', sub: 'loading…', pct: 0, tone: 'warn' },
-    historySignals?.previouslyFeatured ?? { label: 'Previously featured', value: '—', sub: 'loading…', pct: 0, tone: 'warn' },
+    // WP-17 item 4 (investor variant, design §H): investor updates drop
+    // "Previously featured" (every update is cumulative) and add "Metric clarity"
+    // (they live or die on numeric specificity). Computed honestly from the body —
+    // numeric-claim count; we do NOT assert sourcing (no verifier for that here).
+    row.newsletter_type === 'investor_update'
+      ? (() => {
+          const metrics = countClaims(body);
+          return {
+            label: 'Metric clarity',
+            value: hasBody ? `${metrics}` : '—',
+            sub: hasBody ? (metrics === 0 ? 'no numbers — add specifics' : 'numeric claims') : 'no body',
+            pct: hasBody ? Math.min(100, metrics * 20) : 0,
+            tone: !hasBody ? 'warn' : metrics >= 4 ? 'ok' : metrics >= 1 ? 'warn' : 'fail',
+          };
+        })()
+      : (historySignals?.previouslyFeatured ?? { label: 'Previously featured', value: '—', sub: 'loading…', pct: 0, tone: 'warn' }),
     {
       label: 'CTAs · exclamations',
       value: hasBody ? `${ctas} · ${bangs}!` : '—',
@@ -1556,14 +1657,17 @@ function EmailQueueView({ standalone }) {
   const rejectMut = useMutation({
     mutationFn: ({ id, reason }) => rejectDraft(id, reason),
     onSuccess: () => { setRejectOpen(false); invalidate(); },
+    onError: (e) => setCommitError(String(e?.message ?? e)),
   });
   const retryMut = useMutation({
     mutationFn: ({ id }) => retryDraft(id),
     onSuccess: invalidate,
+    onError: (e) => setCommitError(String(e?.message ?? e)),
   });
   const editMut = useMutation({
     mutationFn: ({ id, patch }) => updateDraft(id, patch),
     onSuccess: () => { setEditOpen(false); invalidate(); },
+    onError: (e) => setCommitError(String(e?.message ?? e)),
   });
 
   // Resolved selection (must be computed pre-return so the crm hook can key on it,
@@ -1819,6 +1923,140 @@ function EmailScheduleView({ standalone }) {
   `;
 }
 
+// ── Deliverability + Sent-charts shared helpers (WP-17 items 3 + 6) ───────────
+// Everything below computes from the REAL sent rows (status / delivery_status /
+// error_text / sent_at exist on pa_action_drafts per migration 0051). Engagement
+// (opens/clicks) is NOT on the table (mapper leaves open_rate/click_rate null),
+// so those series render as an honest em-dash — never a fabricated line.
+
+// Deliverability roll-up from a set of sent rows.
+function deliverabilityStats(rows) {
+  const total = rows.length;
+  let delivered = 0, bounced = 0, complaints = 0, soft = 0;
+  for (const r of rows) {
+    const d = r.delivery_status;
+    if (d === 'bounced') bounced++;
+    else if (d === 'complained') complaints++;
+    else if (d === 'delivered') delivered++;
+    // soft bounce that was retried then delivered: error_text present but delivered
+    if (r.error_text && d !== 'bounced' && d !== 'complained') soft++;
+  }
+  // Rows with status 'sent' but no explicit delivery_status count as delivered
+  // (the send succeeded; the provider just didn't report a granular status).
+  const deliveredEff = delivered + rows.filter(r => !r.delivery_status && r.delivery_status !== 'bounced').length;
+  const deliveredCount = Math.max(delivered, Math.min(total, deliveredEff));
+  const deliveredPct = total ? Math.round((deliveredCount / total) * 1000) / 10 : null;
+  return { total, delivered: deliveredCount, bounced, complaints, soft, deliveredPct };
+}
+
+// Deliverability strip — 3 stat tiles (design email §F, lines 1561-1610).
+function DeliverabilityStrip({ rows, windowLabel = 'last 30 days' }) {
+  const s = deliverabilityStats(rows);
+  const tile = (label, value, color, sub) => html`
+    <div style=${{ background: 'var(--bg-base, var(--bg-alt))', border: '1px solid var(--border-soft, var(--border-faint))', borderRadius: 'var(--radius-md, 8px)', padding: '0.75rem' }}>
+      <div class="ri-cell-label">${label}</div>
+      <div style=${{ fontSize: '22px', fontWeight: 500, color: color ?? 'var(--fg)', marginTop: '4px' }}>${value}</div>
+      ${sub ? html`<div class="ri-cell-sub">${sub}</div>` : null}
+    </div>
+  `;
+  return html`
+    <div style=${{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem', padding: '0.75rem 1rem' }}>
+      ${tile('Delivered', s.deliveredPct != null ? `${s.deliveredPct}%` : '—', 'var(--live, var(--fg))', `${s.delivered} / ${s.total}${s.bounced ? ` · ${s.bounced} bounce${s.bounced === 1 ? '' : 's'}` : ''}`)}
+      ${tile('Bounced', `${s.bounced}`, s.bounced ? 'var(--danger)' : 'var(--live, var(--fg))', s.soft ? `${s.soft} soft · retried` : windowLabel)}
+      ${tile('Spam complaints', `${s.complaints}`, s.complaints ? 'var(--danger)' : 'var(--live, var(--fg))', windowLabel)}
+    </div>
+  `;
+}
+
+// Status chip for a sent row from delivery_status + error_text (design email §F).
+function SentStatusChip({ row }) {
+  const d = row.delivery_status;
+  let cls = 'seq', label, style = null;
+  if (d === 'bounced') { cls = 'overdue'; label = 'hard bounce'; }
+  else if (d === 'complained') { cls = 'overdue'; label = 'spam complaint'; }
+  else if (row.error_text) { cls = 'tint'; label = 'soft bounce · retried'; }
+  else if (d === 'delivered') { cls = 'seq'; label = 'delivered'; style = { color: 'var(--live)' }; }
+  else { cls = 'seq'; label = row.status ?? 'sent'; }
+  return html`<span class="ob-chip ${cls}" style=${style}>${label}</span>`;
+}
+
+// Engagement bar — honest: if open_rate is a number, draw it; else em-dash.
+function EngagementBar({ value }) {
+  if (value == null) return html`<span style=${{ color: 'var(--fg-faint)' }}>—</span>`;
+  const pct = Math.max(0, Math.min(100, Math.round(value * 100)));
+  return html`
+    <div style=${{ height: '6px', background: 'var(--border-faint)', borderRadius: '3px', overflow: 'hidden', minWidth: '48px' }}>
+      <div style=${{ height: '100%', width: `${pct}%`, background: 'var(--tint-fg-active, var(--primary))' }}></div>
+    </div>
+  `;
+}
+
+// Group sent rows into ISO-date buckets → [{ date, count }] ascending by date.
+function sentSeriesByDay(rows, dateField = 'sent_at') {
+  const buckets = new Map();
+  for (const r of rows) {
+    const raw = r[dateField];
+    const t = raw ? Date.parse(String(raw).includes('T') ? raw : String(raw).replace(' ', 'T') + 'Z') : NaN;
+    if (!Number.isFinite(t)) continue;
+    const key = new Date(t).toISOString().slice(0, 10);
+    buckets.set(key, (buckets.get(key) ?? 0) + 1);
+  }
+  return [...buckets.entries()].map(([date, count]) => ({ date, count })).sort((a, b) => a.date.localeCompare(b.date));
+}
+
+// Honest SVG line chart of send volume over time. Renders from real rows; if a
+// requested engagement series (opens/clicks) has no data, its legend entry shows
+// an em-dash instead of a fabricated line. Pure SVG, no deps.
+function SentLineChart({ rows, title = 'Send volume', extraLegends = [], dateField = 'sent_at' }) {
+  const series = sentSeriesByDay(rows, dateField);
+  const W = 520, H = 180, padL = 34, padR = 12, padT = 14, padB = 26;
+  const iw = W - padL - padR, ih = H - padT - padB;
+  const maxY = Math.max(1, ...series.map((d) => d.count));
+  const n = series.length;
+  const x = (i) => padL + (n <= 1 ? iw / 2 : (i / (n - 1)) * iw);
+  const y = (v) => padT + ih - (v / maxY) * ih;
+  const linePath = series.map((d, i) => `${i === 0 ? 'M' : 'L'}${x(i).toFixed(1)},${y(d.count).toFixed(1)}`).join(' ');
+  const areaPath = n ? `${linePath} L${x(n - 1).toFixed(1)},${(padT + ih).toFixed(1)} L${x(0).toFixed(1)},${(padT + ih).toFixed(1)} Z` : '';
+  const yticks = [0, Math.ceil(maxY / 2), maxY];
+
+  return html`
+    <div class="chart-card" style=${{ background: 'var(--bg-sunken, var(--bg-alt))', border: '1px solid var(--border-soft, var(--border-faint))', borderRadius: 'var(--radius-md, 8px)', overflow: 'hidden' }}>
+      <div style=${{ display: 'flex', alignItems: 'baseline', gap: '0.5rem', flexWrap: 'wrap', padding: '0.6rem 0.75rem', borderBottom: '1px solid var(--border-soft, var(--border-faint))' }}>
+        <h4 style=${{ margin: 0, fontFamily: 'var(--font-display)', fontWeight: 500, fontSize: '0.9rem', color: 'var(--fg)' }}>${title}</h4>
+        <span style=${{ fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--fg-faint)' }}>per day · ${n} point${n === 1 ? '' : 's'}</span>
+        <span style=${{ marginLeft: 'auto', display: 'flex', gap: '0.6rem', flexWrap: 'wrap' }}>
+          <span style=${{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--fg-muted)' }}>
+            <span style=${{ width: '8px', height: '8px', borderRadius: '2px', background: 'var(--tint-fg-active, var(--primary))' }}></span>Sent
+          </span>
+          ${extraLegends.map((l, i) => html`
+            <span key=${i} style=${{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontFamily: 'var(--font-mono)', fontSize: '10px', color: 'var(--fg-faint)' }}>
+              <span style=${{ width: '8px', height: '8px', borderRadius: '2px', background: 'var(--border-soft, var(--border-faint))' }}></span>${l} —
+            </span>
+          `)}
+        </span>
+      </div>
+      <div style=${{ padding: '0.5rem 0.75rem' }}>
+        ${n === 0 ? html`
+          <div class="ri-cell-sub" style=${{ padding: '1.5rem 0', textAlign: 'center' }}>No dated sends to chart yet.</div>
+        ` : html`
+          <svg viewBox=${`0 0 ${W} ${H}`} style=${{ display: 'block', width: '100%', height: 'auto' }} role="img" aria-label=${`${title} line chart`}>
+            ${yticks.map((v, i) => html`
+              <g key=${i}>
+                <line x1=${padL} y1=${y(v)} x2=${W - padR} y2=${y(v)} stroke="var(--border-soft, var(--border-faint))" stroke-width="1" stroke-dasharray="2 3" opacity="0.6" />
+                <text x=${padL - 6} y=${y(v) + 3} text-anchor="end" style=${{ fontFamily: 'var(--font-mono)', fontSize: '9px', fill: 'var(--fg-faint)' }}>${v}</text>
+              </g>
+            `)}
+            ${areaPath ? html`<path d=${areaPath} fill="var(--tint-fg-active, var(--primary))" opacity="0.12" />` : null}
+            <path d=${linePath} fill="none" stroke="var(--tint-fg-active, var(--primary))" stroke-width="1.6" />
+            ${series.map((d, i) => html`<circle key=${i} cx=${x(i)} cy=${y(d.count)} r="2.4" fill="var(--tint-fg-active, var(--primary))" stroke="var(--bg-sunken, var(--bg-alt))" stroke-width="1.2" />`)}
+            ${n <= 8 ? series.map((d, i) => html`<text key=${'x' + i} x=${x(i)} y=${H - 8} text-anchor="middle" style=${{ fontFamily: 'var(--font-mono)', fontSize: '8.5px', fill: 'var(--fg-faint)' }}>${d.date.slice(5)}</text>`) : null}
+          </svg>
+        `}
+      </div>
+    </div>
+  `;
+}
+
 function EmailSentView({ standalone }) {
   const [sentView, setSentView] = useState('table');
   const [typeFilter, setTypeFilter] = useState('all');
@@ -1836,6 +2074,9 @@ function EmailSentView({ standalone }) {
 
   const rows = (data ?? []).filter(r => {
     if (channelFilter !== 'all' && r.delivery_system !== channelFilter) return false;
+    // WP-17 item 5: "Transactional" = per-message send (smtp/resend/API), NOT a
+    // bulk listmonk campaign. Honest heuristic — no transactional column exists.
+    if (typeFilter === 'transactional' && r.delivery_system === 'listmonk') return false;
     return true;
   });
 
@@ -1853,27 +2094,34 @@ function EmailSentView({ standalone }) {
           <button class=${cn({ 'is-on': sentView === 'charts' })} onClick=${() => setSentView('charts')}>Charts</button>
         </div>
       </div>
-      <div class="nl-sent-body">
+      <div class="nl-sent-body" style=${{ overflow: 'auto' }}>
         ${sentView === 'table' ? html`
+          <${DeliverabilityStrip} rows=${rows} />
           <table class="nl-sent-table">
             <thead><tr>
-              <th>Subject</th><th>Channel</th><th>Sent</th>
-              <th>Open</th><th>Click</th>
+              <th>Sent</th><th>Subject</th><th>To</th><th>Source</th><th>Status</th><th>Engagement</th>
             </tr></thead>
             <tbody>
               ${rows.map(r => html`
                 <tr key=${r.id}>
-                  <td>${r.subject}</td>
-                  <td><${ChannelChip} channel=${r.delivery_system} /></td>
                   <td class="meta">${formatDate(r.sent_at)}</td>
-                  <td class="pct">${formatPct(r.open_rate)}</td>
-                  <td class="pct">${formatPct(r.click_rate)}</td>
+                  <td>${r.subject}</td>
+                  <td class="meta">${r.recipient_email ?? '—'}</td>
+                  <td class="meta">${r.delivery_system ?? '—'}</td>
+                  <td><${SentStatusChip} row=${r} /></td>
+                  <td><${EngagementBar} value=${r.open_rate} /></td>
                 </tr>
               `)}
             </tbody>
           </table>
         ` : html`
-          <${StateDisplay} state="empty" message="Charts view coming soon" />
+          <div style=${{ padding: '0.75rem 1rem' }}>
+            <${DeliverabilityStrip} rows=${rows} />
+            <${SentLineChart} rows=${rows} title="Emails sent" extraLegends=${['Opens', 'Clicks']} />
+            <p class="ri-cell-sub" style=${{ marginTop: '0.5rem' }}>
+              Opens / clicks aren't captured on the send log yet (Phase 2) — the chart plots real send volume; engagement series show em-dash.
+            </p>
+          </div>
         `}
       </div>
     </div>
@@ -1882,11 +2130,102 @@ function EmailSentView({ standalone }) {
 
 // ─── Newsletter views ───────────────────────────────────────────────────────────
 
+// Strip HTML tags + decode a few common entities → plain text (client-side only).
+function toPlainText(s) {
+  return String(s ?? '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// WP-17 item 2: newsletter body preview toolbar (Rendered / HTML source / Plain
+// text) + the anti-patterns "fix in chat" list. Design newsletter §B lines
+// 2278-2330. All three views render the SAME existing body — no external
+// pipeline. Anti-pattern findings are computed honestly from the body text and
+// each hands its section to chat via recipe-1 dispatch (hostSendToActiveSession).
+function NewsletterBodyPane({ body, subject, onFixInChat }) {
+  const [mode, setMode] = useState('rendered');
+  const text = body ?? '';
+  const findings = useMemo(() => findAntiPatterns(text), [text]);
+  const looksHtml = /<\/?[a-z][\s\S]*>/i.test(text);
+
+  const segBtn = (id, label) => html`
+    <button type="button" class=${cn({ 'is-on': mode === id })} onClick=${() => setMode(id)}>${label}</button>
+  `;
+
+  let bodyView;
+  if (!text) {
+    bodyView = html`<div class="nl-body-textarea" style=${{ color: 'var(--fg-faint)' }}>(body not yet generated)</div>`;
+  } else if (mode === 'html') {
+    bodyView = html`<pre class="nl-body-textarea" style=${{ whiteSpace: 'pre-wrap', fontFamily: 'var(--font-mono)', fontSize: '11px', margin: 0 }}>${text}</pre>`;
+  } else if (mode === 'plain') {
+    bodyView = html`<pre class="nl-body-textarea" style=${{ whiteSpace: 'pre-wrap', fontFamily: 'var(--font-mono)', fontSize: '11px', margin: 0 }}>${toPlainText(text)}</pre>`;
+  } else if (looksHtml) {
+    // Rendered: the draft is the newsletter's own HTML, reviewed in a same-origin
+    // srcdoc iframe. Render it so the operator sees what subscribers see.
+    bodyView = html`<div class="nl-body-textarea" style=${{ overflow: 'auto' }} dangerouslySetInnerHTML=${{ __html: text }}></div>`;
+  } else {
+    bodyView = html`<div class="nl-body-textarea" style=${{ whiteSpace: 'pre-wrap', overflow: 'auto', lineHeight: 1.6 }}>${text}</div>`;
+  }
+
+  return html`
+    <div class="nl-body-pane">
+      ${findings.length ? html`
+        <div class="ob-ap-list" style=${{ display: 'flex', flexDirection: 'column', gap: '0.375rem', marginBottom: '0.5rem' }}>
+          <span class="lbl">Anti-patterns flagged · ${findings.length} · click "fix" to hand the section to chat</span>
+          ${findings.map((f, i) => html`
+            <div key=${i} style=${{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', padding: '0.375rem 0.5rem', border: '1px solid var(--border-faint)', borderRadius: 'var(--radius-sm, 6px)', background: 'var(--bg-alt, transparent)' }}>
+              <span style=${{ color: 'var(--achievement, var(--danger))', fontWeight: 700, lineHeight: 1.3 }}>!</span>
+              <div style=${{ flex: 1, minWidth: 0 }}>
+                <div style=${{ fontSize: '0.8125rem', color: 'var(--fg)' }}>
+                  ${f.kind === 'hype'
+                    ? html`Hype phrase · "<em>${f.term}</em>" detected`
+                    : html`Vague metric · "<em>${f.term}</em>" without a number`}
+                </div>
+                <div style=${{ fontSize: '0.7rem', color: 'var(--fg-muted)', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  body line ${f.line} · "${f.excerpt}"
+                </div>
+              </div>
+              <button class="ob-btn-sm" type="button" onClick=${() => onFixInChat?.(f)}>↗ fix in chat</button>
+            </div>
+          `)}
+        </div>
+      ` : null}
+      <div style=${{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.375rem' }}>
+        <span class="lbl" style=${{ margin: 0 }}>Body</span>
+        <div class="nl-view-toggle">
+          ${segBtn('rendered', 'Rendered')}
+          ${segBtn('html', 'HTML source')}
+          ${segBtn('plain', 'Plain text')}
+        </div>
+      </div>
+      ${bodyView}
+    </div>
+  `;
+}
+
 function NewsletterQueueView({ standalone }) {
   const [selected, setSelected] = useState(null);
   const [abChoice, setAbChoice] = useState(null);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [commitError, setCommitError] = useState(null);
+  // WP-17 item 1: operator-editable subject / A·B alt / preheader. Local state,
+  // reset when the selected draft changes; persisted via updateDraft on blur
+  // (cumulative patch → edited_json) and flushed before Approve arms — mirrors
+  // the SocialEditor body-persist pattern so a committed row carries the last
+  // edited values, never the stale original.
+  const [editSubject, setEditSubject] = useState('');
+  const [editSubjectB, setEditSubjectB] = useState('');
+  const [editPreheader, setEditPreheader] = useState('');
+  const [fieldSaveError, setFieldSaveError] = useState(null);
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['newsletter', 'queue'],
@@ -1918,7 +2257,23 @@ function NewsletterQueueView({ standalone }) {
   const rejectMut = useMutation({
     mutationFn: ({ id, reason }) => rejectDraft(id, reason),
     onSuccess: () => { setRejectOpen(false); invalidate(); },
+    onError: (e) => setCommitError(String(e?.message ?? e)),
   });
+
+  // Resolve the active selection PRE-return (rules-of-hooks): the field-reset
+  // effect must run unconditionally. Mirrors the `sel` resolution below.
+  const nlRows = data ?? [];
+  const selEarly = selected
+    ?? nlRows.find(r => r.status === 'pending')
+    ?? nlRows.find(r => r.status === 'cooling')
+    ?? nlRows.find(r => r.status === 'approved')
+    ?? nlRows[0] ?? null;
+  useEffect(() => {
+    setEditSubject(selEarly?.subject ?? '');
+    setEditSubjectB(selEarly?.subject_b ?? '');
+    setEditPreheader(selEarly?.preheader ?? '');
+    setFieldSaveError(null);
+  }, [selEarly?.id]);
 
   if (isLoading) return html`<${StateDisplay} state="loading" message="Loading newsletter queue…" />`;
   if (isError) return html`<${StateDisplay} state="error" message="Couldn't load newsletter queue" onRetry=${refetch} />`;
@@ -1928,7 +2283,48 @@ function NewsletterQueueView({ standalone }) {
   const cooling = rows.filter(r => r.status === 'cooling');
   const pending = rows.filter(r => r.status === 'pending');
   const approved = rows.filter(r => r.status === 'approved');
-  const sel = selected ?? pending[0] ?? cooling[0] ?? approved[0] ?? null;
+  const sel = selEarly;
+  const isInvestor = sel?.newsletter_type === 'investor_update';
+
+  // Persist edited subject / A·B alt / preheader as a CUMULATIVE patch (pa_actions_update
+  // replaces edited_json wholesale, so send the full set to avoid clobbering).
+  // subject rounds-trips via the mapper; subject_b/preheader persist for the worker.
+  const fieldsDirty = () =>
+    !!sel && (
+      editSubject !== (sel.subject ?? '') ||
+      editSubjectB !== (sel.subject_b ?? '') ||
+      editPreheader !== (sel.preheader ?? '')
+    );
+  async function persistFields() {
+    if (standalone || !sel?.id || !fieldsDirty()) return;
+    setFieldSaveError(null);
+    try {
+      await updateDraft(sel.id, {
+        subject: editSubject,
+        subject_b: editSubjectB || null,
+        preheader: editPreheader || null,
+        body: sel.body ?? '',
+      });
+      invalidate();
+    } catch (e) {
+      const m = String(e?.message ?? e);
+      console.error('[outbound] newsletter field update failed:', m);
+      setFieldSaveError(m);
+      throw e;
+    }
+  }
+  // Hand one flagged anti-pattern section to the Chi (recipe-1 dispatch).
+  const fixInChat = (finding) => {
+    if (!sel) return;
+    hostSendToActiveSession(
+      `Fix this copy issue in the newsletter draft "${editSubject || sel.subject}" before I approve it.\n\n`
+      + `Issue: ${finding.kind === 'hype' ? 'hype phrase' : 'vague metric'} — "${finding.term}"\n`
+      + `Location: body line ${finding.line}\n`
+      + `Excerpt: "${finding.excerpt}"\n\n`
+      + `Rewrite that line to remove the ${finding.kind === 'hype' ? 'hype language' : 'vague claim (add a concrete number or cut it)'}, keeping the meaning.`,
+      'com.ikenga.outbound',
+    ).catch(() => {});
+  };
 
   const isCooling = sel?.status === 'cooling';
   const canApprove = isApprovable(sel) && !isCooling;
@@ -1948,8 +2344,8 @@ function NewsletterQueueView({ standalone }) {
     ).catch(() => {});
   };
 
-  const subjLen = (sel?.subject ?? '').length;
-  const altLen = (sel?.subject_b ?? '').length;
+  const subjLen = editSubject.length;
+  const altLen = editSubjectB.length;
 
   return html`
     <${FloatingUndoBar} armed=${undo.armed} secondsLeft=${undo.secondsLeft} onCancel=${undo.cancel} subject=${armedRow?.subject ?? sel?.subject} label="Scheduling" />
@@ -1992,34 +2388,59 @@ function NewsletterQueueView({ standalone }) {
             <div class="ip-head" style=${{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border-faint)' }}>
               <div class="ip-meta-row" style=${{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', alignItems: 'center' }}>
                 <${QualityChip} score=${sel.quality_score} />
-                ${sel.has_ab ? html`<span class="ob-chip ab">A·B</span>` : null}
+                ${!isInvestor && editSubjectB ? html`<span class="ob-chip ab">A·B</span>` : null}
+                ${isInvestor ? html`<span class="ob-chip seq">Investor update</span>` : null}
                 ${isCooling ? html`<${CoolingChip} until=${sel.cooling_until} />` : null}
                 ${sel.recipient_count ? html`<span class="ob-chip seq">${sel.recipient_count.toLocaleString()} recipients</span>` : null}
               </div>
             </div>
 
-            <!-- Subject / A·B alt / Preheader card (design §B) -->
+            <!-- Subject / A·B alt / Preheader card (design §B) — WP-17 item 1: editable.
+                 Investor-update variant (design §H): no A/B alt, Resend framing,
+                 Twenty CRM list picker instead of the listmonk segment chip. -->
             <div class="nl-subj-card">
               <div class="nl-subj-row">
                 <span class="lbl">Subject</span>
-                <input value=${sel.subject ?? ''} readOnly />
+                <input
+                  value=${editSubject}
+                  onInput=${(e) => setEditSubject(e.target.value)}
+                  onBlur=${() => { persistFields().catch(() => {}); }}
+                />
               </div>
-              <div class="nl-subj-row alt">
-                <span class="lbl">A/B alt</span>
-                <input value=${sel.subject_b ?? ''} placeholder="— no alternate subject —" readOnly />
-              </div>
+              ${isInvestor ? null : html`
+                <div class="nl-subj-row alt">
+                  <span class="lbl">A/B alt</span>
+                  <input
+                    value=${editSubjectB}
+                    placeholder="— no alternate subject —"
+                    onInput=${(e) => setEditSubjectB(e.target.value)}
+                    onBlur=${() => { persistFields().catch(() => {}); }}
+                  />
+                </div>
+              `}
               <div class="nl-subj-row">
                 <span class="lbl">Preheader</span>
-                <input value=${sel.preheader ?? ''} placeholder="— preheader —" readOnly />
+                <input
+                  value=${editPreheader}
+                  placeholder="— preheader —"
+                  onInput=${(e) => setEditPreheader(e.target.value)}
+                  onBlur=${() => { persistFields().catch(() => {}); }}
+                />
               </div>
               <div class="pre-row">
-                <span class="ob-chip seq">${sel.delivery_system ?? 'listmonk'}${sel.has_ab ? ' · A/B 50/50' : ''}</span>
-                <span class="ob-chip seq">From <strong style=${{ color: 'var(--fg)', marginLeft: '4px' }}>${sel.from_line ?? 'Ruby <ruby@royalti.io>'}</strong></span>
-                <span class="count">subject · ${subjLen} chars${sel.subject_b ? ` · alt · ${altLen} chars` : ''}</span>
+                ${isInvestor ? html`
+                  <span class="ob-chip seq">Resend${sel.from_line ? ` · ${sel.from_line}` : ' · ned@royalti.io'}</span>
+                  <span class="ob-chip ab">Investor list${sel.recipient_count ? ` · ${sel.recipient_count.toLocaleString()}` : ''}</span>
+                  <span class="ob-chip seq">via Twenty CRM segment</span>
+                ` : html`
+                  <span class="ob-chip seq">${sel.delivery_system ?? 'listmonk'}${editSubjectB ? ' · A/B 50/50' : ''}</span>
+                  <span class="ob-chip seq">From <strong style=${{ color: 'var(--fg)', marginLeft: '4px' }}>${sel.from_line ?? 'Ruby <ruby@royalti.io>'}</strong></span>
+                `}
+                <span class="count">subject · ${subjLen} chars${editSubjectB ? ` · alt · ${altLen} chars` : ''}${isInvestor ? ' · no A/B · single subject' : ''}</span>
               </div>
             </div>
 
-            ${sel.has_ab ? html`
+            ${!isInvestor && editSubjectB ? html`
               <div style=${{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border-faint)' }}>
                 <p style=${{ fontSize: '0.7rem', fontWeight: 600, color: 'var(--fg-muted)', textTransform: 'uppercase', letterSpacing: '0.04em', margin: '0 0 0.5rem' }}>
                   Select variant to advance
@@ -2027,12 +2448,12 @@ function NewsletterQueueView({ standalone }) {
                 <div class="ob-ab-selector">
                   <button class=${cn('ob-ab-btn', { 'is-on': (abChoice ?? 'A') === 'A' })} onClick=${() => setAbChoice('A')}>
                     <span class="ob-ab-label">A</span>
-                    <span class="ob-ab-subject">${sel.subject}</span>
+                    <span class="ob-ab-subject">${editSubject}</span>
                   </button>
-                  ${sel.subject_b ? html`
+                  ${editSubjectB ? html`
                     <button class=${cn('ob-ab-btn', { 'is-on': abChoice === 'B' })} onClick=${() => setAbChoice('B')}>
                       <span class="ob-ab-label">B</span>
-                      <span class="ob-ab-subject">${sel.subject_b}</span>
+                      <span class="ob-ab-subject">${editSubjectB}</span>
                     </button>
                   ` : null}
                 </div>
@@ -2050,11 +2471,11 @@ function NewsletterQueueView({ standalone }) {
               `)}
             </div>
 
-            <!-- Body preview textarea (read-only mock; design §B) -->
-            <div class="nl-body-pane">
-              <span class="lbl">Body · rendered source</span>
-              <textarea class="nl-body-textarea" readOnly value=${sel.body ?? '(body not yet generated)'}></textarea>
-            </div>
+            <!-- Body pane — WP-17 item 2: Rendered / HTML source / Plain text toggle
+                 + anti-patterns "fix in chat" list (design §B lines 2278-2330). -->
+            <${NewsletterBodyPane} body=${sel.body} subject=${editSubject} onFixInChat=${fixInChat} />
+
+            ${fieldSaveError ? html`<${CommitError} message=${fieldSaveError} />` : null}
 
             ${rejectOpen ? html`
               <${RejectPanel}
@@ -2088,7 +2509,13 @@ function NewsletterQueueView({ standalone }) {
                     class="btn"
                     disabled=${isCooling || commitMut.isPending || undo.isArmed(sel.id)}
                     style=${isCooling ? { opacity: 0.5, cursor: 'not-allowed' } : { background: 'var(--tint-outbox-bg, var(--bg-alt))', color: 'var(--tint-outbox-fg, var(--fg))' }}
-                    onClick=${() => !isCooling && undo.arm(sel.id)}
+                    onClick=${async () => {
+                      if (isCooling) return;
+                      // Flush pending subject/preheader edits BEFORE arming — an
+                      // unsaved edit must never silently lose to the original on commit.
+                      try { await persistFields(); } catch { return; }
+                      undo.arm(sel.id);
+                    }}
                     title=${isCooling ? `Cooling — send blocked for ${sel.cooling_until}` : 'Approve & Schedule'}
                   >
                     ${commitMut.isPending || undo.isArmed(sel.id) ? 'Scheduling…' : isCooling ? `Cooling ${sel.cooling_until}` : 'Approve & Schedule'}
@@ -2106,7 +2533,14 @@ function NewsletterQueueView({ standalone }) {
             <div class="ob-actions-secondary">
               <button class="ob-btn-sm" onClick=${() => setSelected(null)}>↩ Back to list</button>
               <button class="ob-btn-sm" onClick=${sendToChat}>⌘ Send to chat</button>
-              <button class="ob-btn-sm" title="Skip this month's send">⏭ Skip month</button>
+              <!-- WP-17 item 5: "Skip month" was dead. Skip = reject this cycle's
+                   send with a canned reason (reuses the reject write path). -->
+              <button
+                class="ob-btn-sm"
+                title="Skip this month's send"
+                disabled=${!isApprovable(sel) || rejectMut.isPending}
+                onClick=${() => rejectMut.mutate({ id: sel.id, reason: 'Skipped this cycle' })}
+              >⏭ ${rejectMut.isPending ? 'Skipping…' : 'Skip month'}</button>
               <span class="ob-act-spacer"></span>
               <span class="ob-act-meta">${isCooling ? `cooling · ${sel.cooling_until}` : `${sel.edition ?? 'draft'} · ${sel.delivery_system ?? 'listmonk'}`}</span>
             </div>
@@ -2179,7 +2613,15 @@ function NewsletterSentView({ standalone }) {
     placeholderData: FIXTURE_NL_SENT,
   });
 
-  const rows = data ?? FIXTURE_NL_SENT;
+  const allRows = data ?? FIXTURE_NL_SENT;
+  // WP-17 item 5: type + channel filter chips were decorative. Wire them.
+  // Type maps the UI 'investor' chip → newsletter_type 'investor_update'.
+  const rows = allRows.filter((r) => {
+    if (channelFilter !== 'all' && r.delivery_system !== channelFilter) return false;
+    if (typeFilter === 'newsletter' && r.newsletter_type === 'investor_update') return false;
+    if (typeFilter === 'investor' && r.newsletter_type !== 'investor_update') return false;
+    return true;
+  });
 
   return html`
     <div style=${{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -2196,17 +2638,18 @@ function NewsletterSentView({ standalone }) {
           <button class=${cn({ 'is-on': sentView === 'charts' })} onClick=${() => setSentView('charts')}>Charts</button>
         </div>
       </div>
-      <div class="nl-sent-body">
+      <div class="nl-sent-body" style=${{ overflow: 'auto' }}>
         ${sentView === 'table' ? html`
           <table class="nl-sent-table">
             <thead><tr>
-              <th>Subject</th><th>System</th><th>Sent</th>
+              <th>Subject</th><th>Type</th><th>System</th><th>Sent</th>
               <th>Recipients</th><th>Open</th><th>Click</th>
             </tr></thead>
             <tbody>
               ${rows.map(r => html`
                 <tr key=${r.id}>
                   <td>${r.subject}</td>
+                  <td class="meta">${r.newsletter_type === 'investor_update' ? 'Investor' : 'Newsletter'}</td>
                   <td><span class="ob-chip channel-listmonk">${r.delivery_system}</span></td>
                   <td class="meta">${formatDate(r.sent_at)}</td>
                   <td class="num">${r.recipient_count ? Number(r.recipient_count).toLocaleString() : '—'}</td>
@@ -2216,7 +2659,14 @@ function NewsletterSentView({ standalone }) {
               `)}
             </tbody>
           </table>
-        ` : html`<${StateDisplay} state="empty" message="Charts view coming soon" />`}
+        ` : html`
+          <div style=${{ padding: '0.75rem 1rem' }}>
+            <${SentLineChart} rows=${rows} title="Newsletters sent" extraLegends=${['Open rate', 'Click rate']} />
+            <p class="ri-cell-sub" style=${{ marginTop: '0.5rem' }}>
+              Open / click rates aren't captured on the send log yet (Phase 2) — the chart plots real send volume; engagement series show em-dash.
+            </p>
+          </div>
+        `}
       </div>
     </div>
   `;
@@ -2241,6 +2691,7 @@ function SequenceStepRail({ sequence, standalone }) {
   const rejectMut = useMutation({
     mutationFn: ({ id, reason }) => rejectDraft(id, reason),
     onSuccess: () => { setRejectOpen(false); invalidate(); },
+    onError: (e) => setCommitError(String(e?.message ?? e)),
   });
   const canApprove = isApprovable(sequence);
   const { data: steps, isLoading } = useQuery({
@@ -2927,6 +3378,7 @@ function SocialQueueView({ standalone }) {
   const rejectMut = useMutation({
     mutationFn: ({ id, reason }) => rejectDraft(id, reason),
     onSuccess: invalidate,
+    onError: (e) => setCommitError(String(e?.message ?? e)),
   });
 
   if (isLoading) return html`<${StateDisplay} state="loading" message="Loading social queue…" />`;
@@ -3067,6 +3519,8 @@ function SocialScheduleView({ standalone }) {
 }
 
 function SocialSentView({ standalone }) {
+  // WP-17 item 3: the Charts button was inert (no state). Wire it.
+  const [sentView, setSentView] = useState('table');
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['social', 'sent'],
     queryFn: fetchSocialSent,
@@ -3081,26 +3535,35 @@ function SocialSentView({ standalone }) {
       <div class="nl-sent-toolbar">
         <span style=${{ fontSize: '0.75rem', color: 'var(--fg-muted)' }}>${rows.length} sent posts</span>
         <div class="nl-view-toggle" style=${{ marginLeft: 'auto' }}>
-          <button class="is-on">Table</button>
-          <button>Charts</button>
+          <button class=${cn({ 'is-on': sentView === 'table' })} onClick=${() => setSentView('table')}>Table</button>
+          <button class=${cn({ 'is-on': sentView === 'charts' })} onClick=${() => setSentView('charts')}>Charts</button>
         </div>
       </div>
-      <div class="nl-sent-body">
-        <table class="nl-sent-table">
-          <thead><tr>
-            <th>Platform</th><th>Content</th><th>Posted</th><th>Source</th>
-          </tr></thead>
-          <tbody>
-            ${rows.map(r => html`
-              <tr key=${r.id}>
-                <td><${PlatformBadge} platform=${r.platform} /></td>
-                <td style=${{ maxWidth: '280px' }}>${r.content?.substring(0, 60)}${r.content?.length > 60 ? '…' : ''}</td>
-                <td class="meta">${formatDate(r.posted_at)}</td>
-                <td class="meta">${r.source ?? '—'}</td>
-              </tr>
-            `)}
-          </tbody>
-        </table>
+      <div class="nl-sent-body" style=${{ overflow: 'auto' }}>
+        ${sentView === 'table' ? html`
+          <table class="nl-sent-table">
+            <thead><tr>
+              <th>Platform</th><th>Content</th><th>Posted</th><th>Source</th>
+            </tr></thead>
+            <tbody>
+              ${rows.map(r => html`
+                <tr key=${r.id}>
+                  <td><${PlatformBadge} platform=${r.platform} /></td>
+                  <td style=${{ maxWidth: '280px' }}>${r.content?.substring(0, 60)}${r.content?.length > 60 ? '…' : ''}</td>
+                  <td class="meta">${formatDate(r.posted_at)}</td>
+                  <td class="meta">${r.source ?? '—'}</td>
+                </tr>
+              `)}
+            </tbody>
+          </table>
+        ` : html`
+          <div style=${{ padding: '0.75rem 1rem' }}>
+            <${SentLineChart} rows=${rows} title="Posts published" dateField="posted_at" extraLegends=${['Impressions', 'Engagements']} />
+            <p class="ri-cell-sub" style=${{ marginTop: '0.5rem' }}>
+              Per-post reach / engagement isn't captured on the send log yet (Phase 2) — the chart plots real post volume; those series show em-dash.
+            </p>
+          </div>
+        `}
       </div>
     </div>
   `;
@@ -3257,6 +3720,11 @@ function CrossChannelApprovalsView({ standalone }) {
   const [editOpen, setEditOpen] = useState(false);
   const [commitError, setCommitError] = useState(null);
   const [ctFilter, setCtFilter] = useState('all'); // all | email | newsletter | social | sequences
+  const [checked, setChecked] = useState(() => new Set()); // WP-17 item 8: bulk-select ids
+  // Keyboard J/K prev-next nav (design atelier-approve-gate.html). A ref holds the
+  // live nav closure so the listener (attached once) never goes stale, and the
+  // effect sits with the other hooks (rules-of-hooks) before the early returns.
+  const navRef = useRef(null);
 
   const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ['approvals', 'all'],
@@ -3282,12 +3750,34 @@ function CrossChannelApprovalsView({ standalone }) {
   const rejectMut = useMutation({
     mutationFn: ({ id, reason }) => rejectDraft(id, reason),
     onSuccess: () => { setRejectOpen(false); invalidate(); },
+    onError: (e) => setCommitError(String(e?.message ?? e)),
   });
-  const retryMut = useMutation({ mutationFn: ({ id }) => retryDraft(id), onSuccess: invalidate });
+  const retryMut = useMutation({ mutationFn: ({ id }) => retryDraft(id), onSuccess: invalidate, onError: (e) => setCommitError(String(e?.message ?? e)) });
   const editMut = useMutation({
     mutationFn: ({ id, patch }) => updateDraft(id, patch),
     onSuccess: () => { setEditOpen(false); invalidate(); },
+    onError: (e) => setCommitError(String(e?.message ?? e)),
   });
+
+  // J/K (and ↑/↓) move the detail selection through the current filtered list.
+  useEffect(() => {
+    const onKey = (e) => {
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      const st = navRef.current;
+      if (!st || !st.rows.length) return;
+      const idx = Math.max(0, st.rows.findIndex((r) => r.id === st.selId));
+      if (e.key === 'j' || e.key === 'ArrowDown') {
+        e.preventDefault();
+        st.pick(st.rows[Math.min(st.rows.length - 1, idx + 1)]);
+      } else if (e.key === 'k' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        st.pick(st.rows[Math.max(0, idx - 1)]);
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
 
   if (isLoading) return html`<${StateDisplay} state="loading" message="Loading approvals…" />`;
   if (isError) return html`<${StateDisplay} state="error" message="Couldn't load approvals" onRetry=${refetch} />`;
@@ -3301,6 +3791,47 @@ function CrossChannelApprovalsView({ standalone }) {
   const canApprove = isApprovable(sel);
   const armedRow = undo.armed ? all.find((r) => r.id === undo.armed) : null;
   const pick = (row) => { setSelected(row); setRejectOpen(false); setEditOpen(false); };
+  // Keep the keyboard-nav closure fresh every render.
+  navRef.current = { rows, selId: sel?.id, pick };
+
+  // Detail nav position ("N of M").
+  const navIdx = sel ? rows.findIndex((r) => r.id === sel.id) : -1;
+
+  // ── Bulk-select (WP-17 item 8) ─────────────────────────────────────────────
+  const toggleCheck = (id) => setChecked((prev) => {
+    const next = new Set(prev);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+  const clearChecked = () => setChecked(new Set());
+  const checkedApprovable = rows.filter((r) => checked.has(r.id) && isApprovable(r));
+  const checkedRows = rows.filter((r) => checked.has(r.id));
+  const bulkApprove = () => {
+    // Same per-id commit path as a single approve (no undo window for a batch).
+    for (const r of checkedApprovable) commitMut.mutate({ id: r.id });
+    clearChecked();
+  };
+  const bulkReject = () => {
+    for (const r of checkedRows) rejectMut.mutate({ id: r.id, reason: 'Bulk rejected' });
+    clearChecked();
+  };
+
+  // ── Date sectioning (design atelier-approve-gate.html) ─────────────────────
+  const nowD = new Date();
+  const wkStart = startOfWeekMon(nowD);
+  const wkEnd = new Date(wkStart); wkEnd.setDate(wkStart.getDate() + 7);
+  const approvalSection = (row) => {
+    const d = parseScheduled(row.scheduled_for);
+    if (!d) return 'unscheduled';
+    if (d < nowD && (row.raw_status === 'awaiting' || row.raw_status === 'edited')) return 'overdue';
+    if (sameDay(d, nowD)) return 'today';
+    if (d >= wkStart && d < wkEnd) return 'week';
+    return 'later';
+  };
+  const SECTION_ORDER = [
+    ['overdue', 'Overdue'], ['today', 'Today'], ['week', 'This week'],
+    ['later', 'Later'], ['unscheduled', 'No schedule'],
+  ];
 
   // Per-content-type counts for the filter strip.
   const ctCounts = all.reduce((acc, r) => { acc[r.ct] = (acc[r.ct] ?? 0) + 1; return acc; }, {});
@@ -3325,32 +3856,71 @@ function CrossChannelApprovalsView({ standalone }) {
           >${CT_LABEL[ct]}${ctCounts[ct] ? ` · ${ctCounts[ct]}` : ''}</button>
         `)}
       </div>
+      ${checked.size > 0 ? html`
+        <div style=${{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 1rem', borderBottom: '1px solid var(--border-faint)', background: 'var(--bg-alt, transparent)' }}>
+          <strong style=${{ fontSize: '0.8125rem' }}>${checked.size} selected</strong>
+          <span style=${{ flex: 1 }}></span>
+          <button class="ob-btn-sm is-primary" type="button" disabled=${!checkedApprovable.length || commitMut.isPending} onClick=${bulkApprove}>
+            Approve ${checkedApprovable.length || ''}
+          </button>
+          <button class="ob-btn-sm is-danger" type="button" disabled=${rejectMut.isPending} onClick=${bulkReject}>Reject</button>
+          <button class="ob-btn-sm" type="button" onClick=${clearChecked}>Clear</button>
+        </div>
+      ` : null}
       <div class="nl-split" style=${{ flex: 1, minHeight: 0 }}>
         <div class="nl-master">
-          ${rows.length ? rows.map(row => html`
-            <div
-              key=${row.id}
-              class=${cn('nl-row', { 'is-on': sel?.id === row.id })}
-              onClick=${() => pick(row)}
-            >
-              <div class="nl-row-head">
-                <span class="ob-chip seq">${row.ct_label}</span>
-                ${row.channel ? html`<${ChannelChip} channel=${row.channel} />` : null}
-                ${row.status === 'failed' ? html`<span class="ob-chip overdue">failed</span>` : null}
+          ${rows.length ? SECTION_ORDER.map(([key, label]) => {
+            const secRows = rows.filter((r) => approvalSection(r) === key);
+            if (!secRows.length) return null;
+            return html`
+              <div key=${key}>
+                <div class="nl-master-group-head">${label} · ${secRows.length}</div>
+                ${secRows.map(row => html`
+                  <div
+                    key=${row.id}
+                    class=${cn('nl-row', { 'is-on': sel?.id === row.id })}
+                    onClick=${() => pick(row)}
+                    style=${{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked=${checked.has(row.id)}
+                      onClick=${(e) => e.stopPropagation()}
+                      onChange=${() => toggleCheck(row.id)}
+                      style=${{ marginTop: '3px', cursor: 'pointer' }}
+                      aria-label=${'Select ' + row.subject}
+                    />
+                    <div style=${{ flex: 1, minWidth: 0 }}>
+                      <div class="nl-row-head">
+                        <span class="ob-chip seq">${row.ct_label}</span>
+                        ${row.channel ? html`<${ChannelChip} channel=${row.channel} />` : null}
+                        ${row.status === 'failed' ? html`<span class="ob-chip overdue">failed</span>` : null}
+                      </div>
+                      <div class="nl-row-subj">${row.subject}</div>
+                      <div class="nl-row-pre">${row.recipient || '—'} · ${row.drafted_by}</div>
+                    </div>
+                  </div>
+                `)}
               </div>
-              <div class="nl-row-subj">${row.subject}</div>
-              <div class="nl-row-pre">${row.recipient || '—'} · ${row.drafted_by}</div>
-            </div>
-          `) : html`<${StateDisplay} state="empty" message="No items for this filter" />`}
+            `;
+          }) : html`<${StateDisplay} state="empty" message="No items for this filter" />`}
         </div>
         <div class="nl-detail">
           ${sel ? html`
             <div class="ob-detail-wrap">
               <div class="ip-head">
-                <div class="ip-meta-row">
+                <div class="ip-meta-row" style=${{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
                   <span class="ob-chip seq">${sel.ct_label}</span>
                   ${sel.channel ? html`<${ChannelChip} channel=${sel.channel} />` : null}
                   <span style=${{ fontSize: '0.75rem', color: 'var(--fg-muted)' }}>${sel.recipient || '—'}</span>
+                  <!-- WP-17 item 8: prev/next detail nav (N of M · J/K keys) -->
+                  <span style=${{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                    <button class="ob-btn-sm" type="button" title="Previous (K)" disabled=${navIdx <= 0}
+                      onClick=${() => navIdx > 0 && pick(rows[navIdx - 1])}>↑</button>
+                    <span class="ob-act-meta" style=${{ fontFamily: 'var(--font-mono)', fontSize: '11px' }}>${navIdx + 1} of ${rows.length}</span>
+                    <button class="ob-btn-sm" type="button" title="Next (J)" disabled=${navIdx >= rows.length - 1}
+                      onClick=${() => navIdx < rows.length - 1 && pick(rows[navIdx + 1])}>↓</button>
+                  </span>
                 </div>
                 <h2 style=${{ fontSize: '0.9rem', fontWeight: 600, margin: '0.5rem 0 0', color: 'var(--fg)' }}>${sel.subject}</h2>
               </div>

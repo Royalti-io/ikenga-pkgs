@@ -129,6 +129,18 @@ const FIXTURE_INTERCO = [
   { id: 'ic2', source_entity: 'Personal', destination_entity: 'Royalti', amount_usd: 84, amount: 129360, currency: 'NGN', transfer_type: 'reimbursement', reconciliation_status: 'suggested', running_balance_usd: 84, entry_date: '2026-04-27' },
 ];
 
+// Paystack revenue-splits fixture (mirrors atelier-finance.html Section-C rows).
+// Columns match paystack_splits (0029_finance_domain.sql:112-125); TEXT amounts
+// in the real table, numbers here for the standalone preview.
+const FIXTURE_PAYSTACK = [
+  { id: 'ps1', split_date: '2026-05-02', total_ngn: 8420000,  total_usd: 5470, royalti_fee_usd: 410.25, dixtrit_portion_usd: 5059.75, settlement_status: 'settled' },
+  { id: 'ps2', split_date: '2026-04-28', total_ngn: 6150000,  total_usd: 3995, royalti_fee_usd: 299.62, dixtrit_portion_usd: 3695.38, settlement_status: 'settled' },
+  { id: 'ps3', split_date: '2026-04-22', total_ngn: 12200000, total_usd: 7920, royalti_fee_usd: 594.00, dixtrit_portion_usd: 7326.00, settlement_status: 'pending' },
+  { id: 'ps4', split_date: '2026-04-18', total_ngn: 9840000,  total_usd: 6390, royalti_fee_usd: 479.25, dixtrit_portion_usd: 5910.75, settlement_status: 'pending' },
+  { id: 'ps5', split_date: '2026-04-12', total_ngn: 1150000,  total_usd: 748,  royalti_fee_usd: 56.10,  dixtrit_portion_usd: 691.90,  settlement_status: 'settled' },
+  { id: 'ps6', split_date: '2026-04-08', total_ngn: 2840000,  total_usd: 1845, royalti_fee_usd: 138.37, dixtrit_portion_usd: 1706.63, settlement_status: 'failed' },
+];
+
 // 6-month net cash-flow series (decorative fixture; runtime aggregates monthly).
 const FIXTURE_WF = [
   { label: 'Nov', amount: 6200 },
@@ -150,6 +162,8 @@ const QK = {
   transactions: (entity) => ['finance', 'transactions', entity],
   receivables:  ['finance', 'receivables'],
   interco:      ['finance', 'interco'],
+  paystack:     ['finance', 'paystack'],
+  pnl:          ['finance', 'pnl'],
 };
 
 // ─── Data fetchers ────────────────────────────────────────────────────────────
@@ -364,6 +378,63 @@ async function fetchInterco() {
     }));
   } catch {
     return FIXTURE_INTERCO;
+  }
+}
+
+/** Paystack revenue-splits register (Inter-Company panel).
+ *  Reads the real paystack_splits table (0029_finance_domain.sql:112-125);
+ *  amounts are TEXT in the DB so consumers parseFloat them. Falls back to the
+ *  canonical fixture when the table is empty or absent. */
+async function fetchPaystackSplits() {
+  if (isStandalone()) return FIXTURE_PAYSTACK;
+  try {
+    const rows = await hostDbQuery(
+      `SELECT id, original_txn_id, split_date, total_ngn, total_usd,
+              royalti_fee_ngn, royalti_fee_usd, dixtrit_portion_ngn,
+              dixtrit_portion_usd, settlement_status
+       FROM paystack_splits
+       ORDER BY split_date DESC
+       LIMIT 30`
+    );
+    if (rows.length) return rows;
+    return FIXTURE_PAYSTACK;
+  } catch {
+    // Table may not exist yet (0029 not applied) — fixture register.
+    return FIXTURE_PAYSTACK;
+  }
+}
+
+/** Compute a P&L summary from ledger-shaped rows (amount_usd carries sign).
+ *  Revenue = Σ positive, OpEx = |Σ negative|, Net = Σ all. COGS has NO honest
+ *  source in transaction_ledger (no cost-of-goods classification column), so it
+ *  stays null → the view renders an em-dash + label rather than a fake literal. */
+function computePnl(rows) {
+  let revenue = 0;
+  let expense = 0;
+  for (const r of rows) {
+    const n = parseFloat(r.amount_usd);
+    if (!Number.isFinite(n)) continue;
+    if (n >= 0) revenue += n;
+    else expense += n;
+  }
+  return { revenue, opex: Math.abs(expense), net: revenue + expense, cogs: null, count: rows.length };
+}
+
+/** P&L 4-up figures, computed live from transaction_ledger (never literals).
+ *  Falls back to computing over FIXTURE_TRANSACTIONS so the same math runs in
+ *  standalone / empty-table previews. */
+async function fetchPnl() {
+  if (isStandalone()) return computePnl(FIXTURE_TRANSACTIONS);
+  try {
+    const rows = await hostDbQuery(
+      `SELECT amount_usd
+       FROM transaction_ledger
+       WHERE amount_usd IS NOT NULL AND amount_usd != '' AND txn_date <= date('now')`
+    );
+    if (!rows.length) return computePnl(FIXTURE_TRANSACTIONS);
+    return computePnl(rows);
+  } catch {
+    return computePnl(FIXTURE_TRANSACTIONS);
   }
 }
 
@@ -1244,7 +1315,90 @@ function ReconBar({ entries }) {
   `;
 }
 
-function InterCompanyTab({ entries, isLoading, onConfirm, onDispute }) {
+/** Paystack revenue-splits panel — Royalti's NGN revenue → 7.5% Royalti.io fee
+ *  / 92.5% Dixtrit.media portion, over the real paystack_splits table.
+ *  Stats (fee / portion / pending) are computed live from the rows, never
+ *  literals. Mirrors atelier-finance.html Section-C. */
+function PaystackPanel({ splits }) {
+  const stats = useMemo(() => {
+    let fee = 0;
+    let portion = 0;
+    let pending = 0;
+    for (const s of splits) {
+      fee += parseFloat(s.royalti_fee_usd) || 0;
+      portion += parseFloat(s.dixtrit_portion_usd) || 0;
+      if ((s.settlement_status || '').toLowerCase() === 'pending') pending += 1;
+    }
+    return { fee, portion, pending };
+  }, [splits]);
+
+  const fmtNgn = (v) => {
+    const n = parseFloat(v);
+    return Number.isFinite(n) ? `₦${Math.round(n).toLocaleString('en-US')}` : '—';
+  };
+  const statusBadge = (status) => {
+    const s = (status || '').toLowerCase();
+    if (s === 'settled') return html`<span class="badge badge-achievement">Settled</span>`;
+    if (s === 'failed') return html`<span class="badge badge-danger" title="Paystack returned settlement_failed — bank rejected the transfer.">Failed</span>`;
+    return html`<span class="badge" style=${{ background: 'color-mix(in srgb, var(--primary) 18%, var(--bg-base))', borderColor: 'var(--primary)', color: 'var(--primary)' }}>Pending</span>`;
+  };
+
+  return html`
+    <div class="fin-paystack">
+      <div class="fin-paystack-head">
+        <div>
+          <span class="title">Paystack revenue splits</span>
+          <span class="desc">7.5% Royalti.io fee · 92.5% Dixtrit.media portion · recent window</span>
+        </div>
+      </div>
+
+      <div class="fin-paystack-stats">
+        <div class="fin-paystack-stat fee">
+          <div class="lbl">Royalti fee · 7.5%</div>
+          <div class="val">${fmtUSD(stats.fee)}</div>
+        </div>
+        <div class="fin-paystack-stat port">
+          <div class="lbl">Dixtrit portion · 92.5%</div>
+          <div class="val">${fmtUSD(stats.portion)}</div>
+        </div>
+        <div class=${`fin-paystack-stat pend${stats.pending === 0 ? ' is-zero' : ''}`}>
+          <div class="lbl">Pending settlement</div>
+          <div class="val">${stats.pending}</div>
+        </div>
+      </div>
+
+      <div class="fin-table-wrap">
+        <table class="fin-table" role="grid" aria-label="Paystack revenue splits">
+          <thead>
+            <tr>
+              <th style=${{ width: '96px' }}>Date</th>
+              <th class="num" style=${{ width: '160px' }}>Total NGN</th>
+              <th class="num" style=${{ width: '120px' }}>Royalti fee</th>
+              <th class="num" style=${{ width: '140px' }}>Dixtrit portion</th>
+              <th style=${{ width: '120px' }}>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${splits.map((s) => html`
+              <tr key=${s.id}>
+                <td class="meta">${s.split_date ?? '—'}</td>
+                <td class="fin-money-cell">
+                  <span class="primary">${fmtNgn(s.total_ngn)}</span>
+                  <span class="native">${fmtUSD(s.total_usd)} USD</span>
+                </td>
+                <td class="num pos">${fmtUSDSigned(s.royalti_fee_usd)}</td>
+                <td class="num" style=${{ color: 'var(--systemic)' }}>${fmtUSDFull(s.dixtrit_portion_usd).replace(/^\+/, '')}</td>
+                <td>${statusBadge(s.settlement_status)}</td>
+              </tr>
+            `)}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function InterCompanyTab({ entries, isLoading, onConfirm, onDispute, paystackSplits }) {
   const [queueTab, setQueueTab] = useState('all');
 
   const statusOf = useCallback((e) => normMatch(e.reconciliation_status), []);
@@ -1351,6 +1505,10 @@ function InterCompanyTab({ entries, isLoading, onConfirm, onDispute }) {
             ${queue.length === 0
               ? html`<div class="atelier-state is-empty"><p>No entries in this bucket.</p></div>`
               : html`<div class="fin-queue-list">${queue.map((e) => html`<${QueueRow} key=${e.id} entry=${e} />`)}</div>`}
+
+            ${paystackSplits && paystackSplits.length
+              ? html`<${PaystackPanel} splits=${paystackSplits} />`
+              : null}
           </div>
         `}
     </div>
@@ -1365,6 +1523,18 @@ function ReportsTab() {
     { id: 'cash',   label: 'Cash Flow', deferred: true },
     { id: 'burn',   label: 'Burn Analytics', deferred: true },
     { id: 'custom', label: 'Custom', deferred: true },
+  ];
+
+  // P&L 4-up — computed live from transaction_ledger (was hardcoded literals).
+  const pnlQ = useQuery({ queryKey: QK.pnl, queryFn: fetchPnl, staleTime: 30_000, enabled: reportTab === 'pnl' });
+  const p = pnlQ.data;
+  // Cost figures render negative; a null figure (COGS has no ledger source)
+  // renders '—' + an honest basis label instead of a fabricated number.
+  const pnlStats = [
+    { label: 'Revenue', value: p ? fmtUSDSigned(p.revenue) : '—',   sub: p ? `${p.count} ledger txns` : 'no ledger source', dir: 'up' },
+    { label: 'COGS',    value: p && p.cogs != null ? fmtUSDSigned(-p.cogs) : '—', sub: 'no COGS tag in ledger', dir: 'up' },
+    { label: 'OpEx',    value: p ? fmtUSDSigned(-p.opex) : '—',      sub: p ? 'operating outflows' : 'no ledger source', dir: 'down' },
+    { label: 'Net',     value: p ? fmtUSDSigned(p.net) : '—',        sub: p ? 'revenue − opex' : 'no ledger source', dir: p && p.net >= 0 ? 'up' : 'down' },
   ];
 
   return html`
@@ -1386,14 +1556,9 @@ function ReportsTab() {
         `)}
       </div>
 
-      <!-- P&L stats — 4-up grid with delta sub-lines -->
+      <!-- P&L stats — 4-up grid, computed live from the ledger -->
       <div class="fin-report-stats">
-        ${[
-          { label: 'Revenue', value: '+$24,820', sub: '+18% vs Q4 2025', dir: 'up' },
-          { label: 'COGS',    value: '−$3,180',  sub: '−6% vs Q4 2025',  dir: 'up' },
-          { label: 'OpEx',    value: '−$15,968', sub: '+9% vs Q4 2025',  dir: 'down' },
-          { label: 'Net',     value: '+$5,672',  sub: '+22% vs Q4 2025', dir: 'up' },
-        ].map(({ label, value, sub, dir }) => html`
+        ${pnlStats.map(({ label, value, sub, dir }) => html`
           <div key=${label} class="fin-kpi">
             <div class="fin-kpi-label">${label}</div>
             <div class="fin-kpi-value">${value}</div>
@@ -1468,6 +1633,13 @@ export function FinanceView({ activeFeature }) {
     queryFn: fetchInterco,
     staleTime: 30_000,
     enabled: view === 'inter-company' || view === 'overview',
+  });
+
+  const paystackQ = useQuery({
+    queryKey: QK.paystack,
+    queryFn: fetchPaystackSplits,
+    staleTime: 30_000,
+    enabled: view === 'inter-company',
   });
 
   // Mutations
@@ -1566,6 +1738,7 @@ export function FinanceView({ activeFeature }) {
           isLoading=${intercoQ.isLoading}
           onConfirm=${(id) => confirmMut.mutate(id)}
           onDispute=${(id) => disputeMut.mutate(id)}
+          paystackSplits=${paystackQ.data ?? FIXTURE_PAYSTACK}
         />`}
       </div>
 

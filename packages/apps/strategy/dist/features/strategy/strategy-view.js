@@ -33,10 +33,18 @@
 
 import {
   html, cn,
-  useState, useEffect, useMemo, useRef,
+  useState, useEffect, useMemo, useCallback,
   useQuery, useMutation, useQueryClient,
 } from '../../lib/ui.js';
 import { hostDbQuery, hostDbExec, setMenu, isStandalone } from '../../lib/bridge.js';
+// dispatch-wire recipe: detail "Approve & run"/"Confirm & run" seed a next-action
+// turn into the active Chi (host.sendToActiveSession) — replaces the no-op stub.
+import { dispatchItemAction } from '../../lib/dispatch.js';
+// facet-wire recipe: sidebar filter facets (f:*) narrow the OKR board/list.
+import { applyFacet, RESET_FACET } from '../../lib/facet-filter.js';
+// create-wire recipe: dead "+ / New objective" buttons dispatch a creation brief
+// to the Chi (R-03: an objective is agent-shaped, never a client-side husk INSERT).
+import { buildCreateBrief, dispatchCreate } from '../../lib/create-dispatch.js';
 
 // ─── Area enum (OKR board columns) ──────────────────────────────────────────────
 // Strategy areas — Company → Growth → Product → Finance. Per the screen doc §1,
@@ -71,6 +79,17 @@ function barMod(pct) {
   if (pct >= 66) return '';
   if (pct >= 33) return 'is-mid';
   return 'is-low';
+}
+
+/** S-08: bar band for a single KR. When the row carries authored is_low/is_mid
+ *  flags (real strategy_key_results), honour them — the strategist's at-risk call
+ *  can diverge from a naive pct threshold. Only when both flags are absent (null)
+ *  do we derive the band from pct via barMod. */
+function krBarMod(kr) {
+  if (kr.is_low === 1 || kr.is_low === true) return 'is-low';
+  if (kr.is_mid === 1 || kr.is_mid === true) return 'is-mid';
+  if (kr.is_low != null || kr.is_mid != null) return ''; // flags present, both 0 → on-track
+  return barMod(kr.pct);
 }
 
 // ─── Fixture data (canonical — mirrors strategy.md §1 O-01..O-08) ───────────────
@@ -181,12 +200,15 @@ function initiativeToObjective(r, i) {
   const rawGoal = (r.ties_to_goal ?? r.area ?? '').toString().trim();
   const goalText = /^(?:0|1|true|false)$/i.test(rawGoal) ? '' : rawGoal;
   const area = AREAS.find((a) => goalText.toLowerCase().includes(a.toLowerCase())) || goalText || 'Company';
-  // status → a coarse overall % proxy (no strategy_key_results live progress yet).
+  // S-07: prefer the REAL progress_pct column (0030 strategic_initiatives). Only
+  // fall back to a coarse status-string proxy when it is null — 0030 defaults it
+  // to 0, so a genuine 0 is honoured as 0%, not overwritten by the proxy.
   const status = (r.status ?? '').toString().toLowerCase();
-  const pct = status.includes('done') || status.includes('complete') ? 100
+  const proxyPct = status.includes('done') || status.includes('complete') ? 100
     : status.includes('progress') || status.includes('active') ? 50
     : status.includes('block') || status.includes('risk') ? 25
     : 40;
+  const pct = r.progress_pct != null ? r.progress_pct : proxyPct;
   const ownerAgent = (r.owner_agent ?? r.owner ?? 'nedjamez').toString();
   const ux_mode = ownerAgent === 'nedjamez' ? 'confirm' : 'silent';
   return {
@@ -201,6 +223,10 @@ function initiativeToObjective(r, i) {
     when: r.quarter ?? '',
     at_risk: pct < 50,
     krs: [{ label: r.name ?? r.title ?? 'Progress', pct }],
+    // S-01 provenance: this row is DERIVED from strategic_initiatives (the
+    // fallback), so the board must render it read-only — the areaChange mutation
+    // writes strategy_objectives, which has no matching row, and would no-op.
+    _provenance: 'fallback',
   };
 }
 
@@ -279,8 +305,14 @@ async function ensureMigration() {
   }
 }
 
+/** Fixtures are neither the real objectives table nor the initiatives fallback —
+ *  tag them so the board treats them as read-only (no host to persist a drag to). */
+function fixtureObjectives() {
+  return OBJECTIVES_FIXTURE.map((o) => ({ ...o, _provenance: 'fixture' }));
+}
+
 async function fetchObjectives() {
-  if (isStandalone()) return OBJECTIVES_FIXTURE;
+  if (isStandalone()) return fixtureObjectives();
   try {
     await ensureMigration();
     // 1. Prefer real strategy_objectives + their key results (post-0054, once seeded).
@@ -296,7 +328,11 @@ async function fetchObjectives() {
           `SELECT id, objective_id, label, pct, is_low, is_mid FROM strategy_key_results`
         );
         for (const k of krRows) {
-          (krByObj[k.objective_id] ??= []).push({ label: k.label, pct: k.pct ?? 0 });
+          // S-08: carry the authored is_low/is_mid bar flags through so the card
+          // can honour them instead of recomputing the band purely from pct.
+          (krByObj[k.objective_id] ??= []).push({
+            label: k.label, pct: k.pct ?? 0, is_low: k.is_low, is_mid: k.is_mid,
+          });
         }
       } catch { /* no KRs yet */ }
       return objRows.map((r) => ({
@@ -311,6 +347,9 @@ async function fetchObjectives() {
         when: r.cycle_id ?? '',
         at_risk: (r.overall_pct ?? 0) < 50,
         krs: krByObj[r.id] ?? [{ label: r.title ?? 'Progress', pct: r.overall_pct ?? 0 }],
+        // S-01 provenance: a real strategy_objectives row — drag persists via the
+        // areaChange mutation, so the board keeps it draggable.
+        _provenance: 'objectives',
       }));
     }
 
@@ -319,7 +358,7 @@ async function fetchObjectives() {
     try {
       const siRows = await hostDbQuery(
         `SELECT id, quarter, name, description, status, owner_agent, supporting_agents,
-                ties_to_goal, success_criteria, key_deliverables
+                ties_to_goal, success_criteria, key_deliverables, progress_pct
          FROM strategic_initiatives
          ORDER BY status, name
          LIMIT 24`
@@ -329,9 +368,9 @@ async function fetchObjectives() {
       // strategic_initiatives also missing — fall through to fixture
     }
 
-    return OBJECTIVES_FIXTURE;
+    return fixtureObjectives();
   } catch {
-    return OBJECTIVES_FIXTURE;
+    return fixtureObjectives();
   }
 }
 
@@ -388,6 +427,19 @@ async function fetchReviews() {
   }
 }
 
+// ─── facet-wire (RECIPE 2) ────────────────────────────────────────────────────
+// Domain predicate map — each expression MIRRORS its badge-count expression in
+// buildStrategyMenu so a facet's slice always matches the count on its row.
+// 'f:all' is the reset (RESET_FACET default in facet-filter.js) → intentionally
+// absent here so applyFacet returns every objective.
+
+const FACET_PREDICATES = {
+  'f:mine':          (o) => o.owner === 'nedjamez',
+  'f:at-risk':       (o) => o.at_risk || (o.overall_pct ?? 100) < 50,
+  'f:agent-tracked': (o) => o.owner && o.owner !== 'nedjamez',
+  ...Object.fromEntries(AREAS.map((a) => [`f:area:${a}`, (o) => o.area === a])),
+};
+
 // ─── Menu builder ─────────────────────────────────────────────────────────────
 
 /**
@@ -404,13 +456,15 @@ async function fetchReviews() {
  *   - The seg is injected ONLY when activeView === 0 (guarded below).
  *   - Filter groups get disabled:true (→ .nav-group.is-dim) when activeView !== 0.
  */
-function buildStrategyMenu(activeView, pipeMode, objectives) {
+function buildStrategyMenu(activeView, pipeMode, objectives, activeFacet) {
   const totalCount = objectives.length;
   const mine = objectives.filter((o) => o.owner === 'nedjamez');
   // At risk: <50% overall (the screen-doc count-2 idiom: O-03 + O-07).
   const atRisk = objectives.filter((o) => o.at_risk || (o.overall_pct ?? 100) < 50);
   // Agent-tracked: owned by an agent (anything other than nedjamez).
   const agentTracked = objectives.filter((o) => o.owner && o.owner !== 'nedjamez');
+  // A facet only highlights on the OKRs view (facets dim/inert off it).
+  const facetActive = (id) => activeView === 0 && activeFacet === id;
 
   const viewItems = [
     {
@@ -459,7 +513,7 @@ function buildStrategyMenu(activeView, pipeMode, objectives) {
       label: 'All objectives',
       icon: 'inbox',
       section: undefined,
-      active: true,
+      active: facetActive('f:all'),
       badge: totalCount,
       disabled: activeView !== 0,
     },
@@ -468,7 +522,7 @@ function buildStrategyMenu(activeView, pipeMode, objectives) {
       label: 'Mine',
       icon: 'user',
       section: undefined,
-      active: false,
+      active: facetActive('f:mine'),
       badge: mine.length || undefined,
       disabled: activeView !== 0,
     },
@@ -477,7 +531,7 @@ function buildStrategyMenu(activeView, pipeMode, objectives) {
       label: 'At risk',
       icon: 'alert-circle',
       section: undefined,
-      active: false,
+      active: facetActive('f:at-risk'),
       hot: atRisk.length > 0,
       badge: atRisk.length > 0 ? atRisk.length : undefined,
       disabled: activeView !== 0,
@@ -487,7 +541,7 @@ function buildStrategyMenu(activeView, pipeMode, objectives) {
       label: 'Agent-tracked',
       icon: 'cpu',
       section: undefined,
-      active: false,
+      active: facetActive('f:agent-tracked'),
       badge: agentTracked.length || undefined,
       disabled: activeView !== 0,
     },
@@ -498,7 +552,7 @@ function buildStrategyMenu(activeView, pipeMode, objectives) {
     id: `f:area:${a}`,
     label: a,
     section: 'By area',
-    active: false,
+    active: facetActive(`f:area:${a}`),
     badge: objectives.filter((o) => o.area === a).length || undefined,
     disabled: activeView !== 0,
   }));
@@ -532,7 +586,7 @@ function OkrCardProg({ objective }) {
             <span>${kr.label}</span>
             <span class="pct">${kr.pct}%</span>
           </div>
-          <div class=${cn('okr-bar', barMod(kr.pct))}>
+          <div class=${cn('okr-bar', krBarMod(kr))}>
             <span style=${{ width: `${Math.max(0, Math.min(100, kr.pct))}%` }}></span>
           </div>
         </div>
@@ -541,11 +595,19 @@ function OkrCardProg({ objective }) {
   `;
 }
 
+/** Column count + average-progress aggregate, computed from the DATA MODEL.
+ *  S-05: replaces the old E-07 observer that regex-scraped rendered .okr-overall
+ *  text — the numbers now come straight from the objectives, never the DOM. */
+function colAgg(cards) {
+  if (!cards.length) return html`<b>0</b>`;
+  const avg = Math.round(cards.reduce((s, o) => s + (o.overall_pct ?? 0), 0) / cards.length);
+  return html`<b>${cards.length}</b> · ${avg}% avg`;
+}
+
 /** OKR board mode — area columns with .kb-col-agg aggregate heads + okr cards. */
-function OkrBoard({ objectives, onAreaChange }) {
+function OkrBoard({ objectives, onAreaChange, onCreate }) {
   const [dragging, setDragging] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
-  const boardRef = useRef(null);
 
   const grouped = useMemo(() => {
     const map = {};
@@ -557,29 +619,15 @@ function OkrBoard({ objectives, onAreaChange }) {
     return map;
   }, [objectives]);
 
-  // E-07 aggregate observer: after every render, compute each column's count +
-  // average .okr-overall % and stamp the .kb-col-agg text. Re-runs whenever the
-  // grouped board changes — the aggregate must never be stale.
-  useEffect(() => {
-    const board = boardRef.current;
-    if (!board) return;
-    board.querySelectorAll('.kb-col').forEach((col) => {
-      const agg = col.querySelector('.kb-col-agg');
-      if (!agg) return;
-      const rings = col.querySelectorAll('.okr-overall');
-      let sum = 0, n = 0;
-      rings.forEach((r) => {
-        const m = (r.textContent || '').match(/(\d+)%/);
-        if (m) { sum += parseInt(m[1], 10); n++; }
-      });
-      agg.innerHTML = n
-        ? `<b>${n}</b> · ${Math.round(sum / n)}% avg`
-        : '<b>0</b>';
-    });
-  }, [grouped]);
+  // S-01: only real strategy_objectives rows are draggable — the areaChange
+  // mutation writes strategy_objectives, so dragging a strategic_initiatives-
+  // derived (or fixture) card would silently no-op and snap back. When NO card is
+  // draggable the board is read-only; surface that instead of a dead affordance.
+  const isDraggable = (o) => o._provenance === 'objectives';
+  const readOnly = objectives.length > 0 && !objectives.some(isDraggable);
 
-  function onDragStart(o) { setDragging(o); }
-  function onDragOver(e, a) { e.preventDefault(); setDropTarget(a); }
+  function onDragStart(o) { if (isDraggable(o)) setDragging(o); }
+  function onDragOver(e, a) { if (!dragging) return; e.preventDefault(); setDropTarget(a); }
   function onDrop(e, a) {
     e.preventDefault();
     if (dragging && dragging.area !== a) onAreaChange(dragging, a);
@@ -589,7 +637,13 @@ function OkrBoard({ objectives, onAreaChange }) {
   function onDragEnd() { setDragging(null); setDropTarget(null); }
 
   return html`
-    <div class="kb-board" role="region" aria-label="OKR board" ref=${boardRef}>
+    <div class="kb-board" role="region" aria-label=${readOnly ? 'OKR board (read-only)' : 'OKR board'} style=${readOnly ? { position: 'relative' } : undefined}>
+      ${readOnly ? html`
+        <div style=${{ position:'absolute', top:'6px', right:'12px', fontSize:'0.68rem', color:'var(--fg-muted)', fontStyle:'italic', pointerEvents:'none' }}
+             title="Seeded from initiatives — read-only. Seed strategy_objectives to enable drag.">
+          seeded from initiatives · read-only
+        </div>
+      ` : null}
       ${stagesWithExtras(grouped).map((a) => {
         const cards = grouped[a] ?? [];
         return html`
@@ -607,18 +661,22 @@ function OkrBoard({ objectives, onAreaChange }) {
                 <span class="kb-col-dot" style=${{ background: AREA_DOT[a] ?? 'var(--fg-faint)' }} aria-hidden="true"></span>
                 ${a}
               </span>
-              <!-- .kb-col-agg (NOT .kb-col-meta) — count + avg %; filled by the E-07 observer -->
-              <span class="kb-col-agg"><b>${cards.length}</b></span>
+              <!-- .kb-col-agg (NOT .kb-col-meta) — count + avg %, from the data model (S-05) -->
+              <span class="kb-col-agg">${colAgg(cards)}</span>
             </div>
             <div class="kb-col-body">
-              ${cards.map((o) => html`
+              ${cards.map((o) => {
+                const drag = isDraggable(o);
+                return html`
                 <div
                   key=${o.id}
                   class=${cn('kb-card', dragging?.id === o.id && 'is-dragging')}
-                  draggable="true"
+                  draggable=${drag}
                   onDragStart=${() => onDragStart(o)}
                   onDragEnd=${onDragEnd}
                   tabIndex=${0}
+                  title=${drag ? undefined : 'Seeded from initiatives — read-only'}
+                  style=${drag ? undefined : { cursor: 'default' }}
                 >
                   <div class="kb-card-title">${o.title}</div>
                   <div class="kb-card-sub">${o.area}${o.cycle ? ` · ${o.cycle}` : ''}</div>
@@ -634,11 +692,13 @@ function OkrBoard({ objectives, onAreaChange }) {
                     </span>
                   </div>
                 </div>
-              `)}
+              `;
+              })}
               <button
                 class="kb-add btn-icon"
                 type="button"
                 aria-label=${'Add objective to ' + a}
+                onClick=${() => onCreate?.(a)}
               >+ add</button>
             </div>
           </div>
@@ -648,14 +708,28 @@ function OkrBoard({ objectives, onAreaChange }) {
   `;
 }
 
-/** No-op stub for approve/confirm action — real impl wires host.dispatchAgentAction. */
+// dispatch-wire (RECIPE 1) — map an objective into the recipe-shared descriptor,
+// then seed a next-action turn into the active Chi. Replaces the old no-op stub
+// (which flipped ux_mode='silent' to hide the button without dispatching anything —
+// no-op theater that lied about the row's state). There is no headless domain-run
+// verb today, so both modes seed a framed turn (see lib/dispatch.js APPROVE-RUN GAP).
+function objectiveToDispatchItem(objective) {
+  return {
+    kind: 'objective',
+    title: objective.title,
+    stage: objective.area,
+    nextAction: objective.next_action,
+    facts: [
+      ['Cycle', objective.cycle],
+      ['Owner', objective.owner],
+      ['Progress', objective.overall_pct != null ? `${objective.overall_pct}%` : null],
+    ],
+  };
+}
+
 function handleAction(objective) {
-  if (!isStandalone()) {
-    hostDbExec(
-      `UPDATE strategy_objectives SET ux_mode = 'silent' WHERE id = ?`,
-      [objective.id]
-    ).catch(() => {});
-  }
+  const mode = objective.ux_mode === 'approve' ? 'approve' : 'confirm';
+  dispatchItemAction(objectiveToDispatchItem(objective), mode, 'com.ikenga.strategy').catch(() => {});
 }
 
 /** Single objective row in list mode (.pl-row). */
@@ -696,6 +770,12 @@ function ObjRow({ objective, isSelected, onClick }) {
 
 /** Objective detail pane (list mode, .pl-detail). */
 function ObjDetail({ objective }) {
+  // dispatch-wire — local feedback: flips true on click so the operator sees the
+  // hand-off landed and the same click can't double-seed the session. Resets when
+  // the selected objective changes.
+  const [sent, setSent] = useState(false);
+  useEffect(() => { setSent(false); }, [objective?.id]);
+
   if (!objective) {
     return html`<div class="pl-detail" style=${{ display:'flex', alignItems:'center', justifyContent:'center', color:'var(--fg-muted)', fontSize:'0.85rem' }}>
       Select an objective
@@ -705,6 +785,7 @@ function ObjDetail({ objective }) {
   const hasApprove = objective.ux_mode === 'approve';
   const hasConfirm = objective.ux_mode === 'confirm';
   const showButton = hasApprove || hasConfirm;
+  const onAct = () => { handleAction(objective); setSent(true); };
 
   return html`
     <div class="pl-detail">
@@ -736,9 +817,10 @@ function ObjDetail({ objective }) {
               <button
                 class=${cn('btn', hasApprove ? 'affirmative' : '')}
                 type="button"
-                onClick=${() => handleAction(objective)}
+                disabled=${sent}
+                onClick=${onAct}
               >
-                ${hasApprove ? 'Approve & run' : 'Confirm & run'}
+                ${sent ? 'Sent to your Chi' : hasApprove ? 'Approve & run' : 'Confirm & run'}
               </button>
             ` : null}
           </div>
@@ -916,11 +998,11 @@ function LoadingState() {
   `;
 }
 
-function EmptyState() {
+function EmptyState({ onCreate }) {
   return html`
     <div class="atelier-state is-empty" id="view-stage">
       <span>Nothing here yet — when strategy work arrives, or your Chi drafts something, it lands in this pane</span>
-      <button class="btn btn-sm" type="button" style=${{ marginTop:'8px' }}>New objective</button>
+      <button class="btn btn-sm" type="button" style=${{ marginTop:'8px' }} onClick=${() => onCreate?.()}>New objective</button>
     </div>
   `;
 }
@@ -955,6 +1037,9 @@ export function StrategyView({ activeFeature }) {
   // OKRs defaults to board (per the screen doc §2 — board is the default).
   const [pipeMode, setPipeMode] = useState('board'); // 'board' | 'list'
   const [selectedObjective, setSelectedObjective] = useState(null);
+  // facet-wire — last-applied sidebar filter facet. 'f:all' (RESET_FACET) is the
+  // reset/"all" affordance (no predicate → applyFacet returns every objective).
+  const [activeFacet, setActiveFacet] = useState(RESET_FACET);
   const qc = useQueryClient();
 
   // ── Data queries ────────────────────────────────────────────────────────────
@@ -963,6 +1048,13 @@ export function StrategyView({ activeFeature }) {
   const reviewsQ = useQuery({ queryKey: QK.reviews, queryFn: fetchReviews, enabled: activeView === 2 });
 
   const objectives = objectivesQ.data ?? [];
+  // facet-wire — the visible slice: full list narrowed by the active facet. Feeds
+  // the board, list AND the empty-state check. Badges stay live because
+  // buildStrategyMenu counts the FULL `objectives`, not this slice.
+  const visibleObjectives = useMemo(
+    () => applyFacet(objectives, activeFacet, FACET_PREDICATES),
+    [objectives, activeFacet],
+  );
 
   // ── db-updated refresh (recipe step 6 — refresh on event, not full remount) ──
   useEffect(() => {
@@ -986,7 +1078,13 @@ export function StrategyView({ activeFeature }) {
     else if (activeFeature === 'v:reviews') setActiveView(2);
     else if (activeFeature === 'seg:board') setPipeMode('board');
     else if (activeFeature === 'seg:list') setPipeMode('list');
-    // Filter items (f:*) are noted but don't change view state in v1.
+    // Filter facets (f:*) — LIST-ONLY: force the OKRs view so a facet the user
+    // can't see can't be silently applied, then record it. 'f:all' resets; every
+    // other id narrows via applyFacet. (facet-wire Move 2.)
+    else if (activeFeature.startsWith('f:')) {
+      setActiveView(0);
+      setActiveFacet(activeFeature);
+    }
   }, [activeFeature]);
 
   // ── Pre-select hero objective O-01 in list mode ──────────────────────────────
@@ -1000,9 +1098,9 @@ export function StrategyView({ activeFeature }) {
   // ── setMenu publish (recipe step 7 — keyed on view/mode/objectives) ──────────
   useEffect(() => {
     if (isStandalone()) return;
-    const items = buildStrategyMenu(activeView, pipeMode, objectives);
+    const items = buildStrategyMenu(activeView, pipeMode, objectives, activeFacet);
     setMenu(items).catch(() => {/* ignore */});
-  }, [activeView, pipeMode, objectives]);
+  }, [activeView, pipeMode, objectives, activeFacet]);
 
   // ── Area change mutation (board drag — schema TBD soft link) ─────────────────
   const areaChange = useMutation({
@@ -1018,6 +1116,26 @@ export function StrategyView({ activeFeature }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: QK.objectives }),
   });
 
+  // ── Dispatch-mode creation (create-wire recipe) ─────────────────────────────
+  // R-03: an objective is agent-shaped — it needs KRs, an owner, a ux_mode and a
+  // cycle plus enrichment the user hasn't typed, so creation dispatches a
+  // structured brief to the active Chi rather than a client-side husk INSERT.
+  // `area` is the board column's pre-filled context; undefined for the
+  // empty-state "New objective" which seeds a full brief.
+  const createObjective = useCallback((area) => {
+    const brief = buildCreateBrief({
+      entity: 'strategy objective',
+      table: 'strategy_objectives',
+      seed: area ? { area } : {},
+      instruction:
+        'Set the title, cycle, owner, ux_mode, key results and overall progress'
+        + (area ? `, and file it under the ${area} area` : '')
+        + '. Ask me for anything you still need, then add it (and its key results) '
+        + 'to the strategy_objectives / strategy_key_results tables.',
+    });
+    void dispatchCreate(brief, 'com.ikenga.strategy');
+  }, []);
+
   // ── Head label ────────────────────────────────────────────────────────────────
   const headLabel = activeView === 0
     ? `Strategy · ${objectives.length} open`
@@ -1032,16 +1150,17 @@ export function StrategyView({ activeFeature }) {
       body = html`<${LoadingState} />`;
     } else if (objectivesQ.isError) {
       body = html`<${ErrorState} error=${objectivesQ.error?.message ?? 'unknown'} onRetry=${() => objectivesQ.refetch()} />`;
-    } else if (objectives.length === 0) {
-      body = html`<${EmptyState} />`;
+    } else if (visibleObjectives.length === 0) {
+      body = html`<${EmptyState} onCreate=${createObjective} />`;
     } else if (pipeMode === 'board') {
       body = html`<${OkrBoard}
-        objectives=${objectives}
+        objectives=${visibleObjectives}
         onAreaChange=${(objective, newArea) => areaChange.mutate({ objective, newArea })}
+        onCreate=${createObjective}
       />`;
     } else {
       body = html`<${OkrList}
-        objectives=${objectives}
+        objectives=${visibleObjectives}
         selectedObjective=${selectedObjective}
         onSelectObjective=${setSelectedObjective}
       />`;

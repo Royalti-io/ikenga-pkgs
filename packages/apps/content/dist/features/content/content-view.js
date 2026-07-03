@@ -35,6 +35,11 @@ import {
 } from '../../lib/ui.js';
 import { hostDbQuery, hostDbExec, setMenu, isStandalone } from '../../lib/bridge.js';
 import { dispatchItemAction } from '../../lib/dispatch.js';
+// create-wire recipe (atelier-parity RECIPE 3): dead "+ add" / "New piece"
+// buttons dispatch a structured creation brief to the active Chi session rather
+// than writing a client-side husk INSERT (a content piece is agent-shaped —
+// R-03). See ../../lib/create-dispatch.js.
+import { buildCreateBrief, dispatchCreate } from '../../lib/create-dispatch.js';
 
 // ─── Stage enum ───────────────────────────────────────────────────────────────
 // Content editorial pipeline stages — idea → outline → draft → review → scheduled.
@@ -741,7 +746,7 @@ function PipelineList({ pieces, selectedPiece, onSelectPiece, transitions }) {
 }
 
 /** Pipeline kanban mode — five columns */
-function PipelineKanban({ pieces, onStageChange }) {
+function PipelineKanban({ pieces, onStageChange, onCreate }) {
   const [dragging, setDragging] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
 
@@ -807,10 +812,11 @@ function PipelineKanban({ pieces, onStageChange }) {
                   </div>
                 `)}
                 <button
-                  class="kb-add btn-icon"
+                  class="kb-add"
                   type="button"
                   aria-label=${'Add piece to ' + (STAGE_LABEL[s] ?? s)}
-                >+</button>
+                  onClick=${() => onCreate?.(s)}
+                >+ add</button>
               </div>
             </div>
           `;
@@ -821,7 +827,7 @@ function PipelineKanban({ pieces, onStageChange }) {
 }
 
 /** Calendar view — two-week Mon–Sun grid, ISO-keyed + data-derived */
-function CalendarView({ calEvents }) {
+function CalendarView({ calEvents, onSelect }) {
   // Build a map of ISO date → entries for quick lookup. Both the grid cells and
   // the events are keyed on ISO YYYY-MM-DD so live pills land in their cell (F-01).
   const byDate = useMemo(() => {
@@ -869,7 +875,15 @@ function CalendarView({ calEvents }) {
                 <div class=${cn('ct-cal-day', cell.dim && 'dim', cell.isToday && 'is-today')} key=${cell.iso} aria-current=${cell.isToday ? 'date' : undefined}>
                   <div class="ct-cal-date">${isoToDayNum(cell.iso)}${cell.isToday ? html`<span class="ct-cal-today">today</span>` : null}</div>
                   ${entries.map((e) => html`
-                    <span class="ct-cal-pill" data-channel=${e.channel ?? ''} key=${e.id}>
+                    <span
+                      class="ct-cal-pill"
+                      data-channel=${e.channel ?? ''}
+                      key=${e.id}
+                      role=${onSelect ? 'button' : undefined}
+                      tabIndex=${onSelect ? 0 : undefined}
+                      onClick=${onSelect ? () => onSelect(e) : undefined}
+                      onKeyDown=${onSelect ? (ev) => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); onSelect(e); } } : undefined}
+                    >
                       ${e.title}
                     </span>
                   `)}
@@ -884,7 +898,7 @@ function CalendarView({ calEvents }) {
 }
 
 /** Published view — KPI cells + table */
-function PublishedView({ publishedItems }) {
+function PublishedView({ publishedItems, onSelect }) {
   const kpis = useMemo(() => {
     const totalViews = publishedItems.reduce((s, p) => s + (p.views ?? 0), 0);
     const avgEng = publishedItems.length
@@ -954,7 +968,14 @@ function PublishedView({ publishedItems }) {
           </thead>
           <tbody>
             ${publishedItems.map((p) => html`
-              <tr key=${p.id}>
+              <tr
+                key=${p.id}
+                role=${onSelect ? 'button' : undefined}
+                tabIndex=${onSelect ? 0 : undefined}
+                style=${onSelect ? { cursor: 'pointer' } : undefined}
+                onClick=${onSelect ? () => onSelect(p) : undefined}
+                onKeyDown=${onSelect ? (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); onSelect(p); } } : undefined}
+              >
                 <td>${p.title}</td>
                 <td>
                   <span class="ct-mv-badge" data-channel=${p.channel ?? ''}>
@@ -990,11 +1011,12 @@ function LoadingState() {
   `;
 }
 
-function EmptyState() {
+function EmptyState({ onCreate }) {
   return html`
     <div class="atelier-state is-empty" id="view-stage">
       <span>No content yet</span>
-      <button class="btn btn-sm" type="button" style=${{ marginTop:'8px' }}>New piece</button>
+      <button class="btn btn-sm" type="button" style=${{ marginTop:'8px' }}
+              onClick=${() => onCreate?.()}>New piece</button>
     </div>
   `;
 }
@@ -1111,6 +1133,45 @@ export function ContentView({ activeFeature }) {
     onSuccess: () => qc.invalidateQueries({ queryKey: QK.pieces }),
   });
 
+  // ── Create piece (R-03 dispatch-seeded creation) ────────────────────────────
+  // A content piece is agent-shaped — it needs enrichment (outline, owner,
+  // next_action + ux_mode, format) the operator hasn't typed, so creation
+  // dispatches a structured brief to the active Chi session rather than writing
+  // a husk INSERT. `stage` is the kanban column's pre-fill context; undefined
+  // for the empty-state "New piece" which seeds a full brief.
+  const createPiece = useCallback((stage) => {
+    const label = stage ? (STAGE_LABEL[stage] ?? stage) : null;
+    const brief = buildCreateBrief({
+      entity: 'content piece',
+      table: 'content_pieces',
+      seed: label ? { stage: label } : {},
+      instruction:
+        'Set the title, channel, content type, format, owner, and next action'
+        + (label ? `, and file it at the ${label} stage` : '')
+        + '. Ask me for anything you still need, then add it to the content_pieces table.',
+    });
+    void dispatchCreate(brief, 'com.ikenga.content');
+  }, []);
+
+  // ── Drill-down (Calendar pill / Published row → piece detail) ────────────────
+  // Reuses the exact Pipeline-list selection path: resolve the clicked row to a
+  // real content_pieces row when one matches (by id / calendar_id / piece_id /
+  // title), else synthesize a piece-shaped object from the row so PieceDetail
+  // can render it. Then switch to the Pipeline list view where the split detail
+  // pane lives — the only surface that renders a piece detail.
+  const drillToPiece = useCallback((row) => {
+    if (!row) return;
+    const match = pieces.find((p) =>
+      p.id === row.id ||
+      (row.piece_id != null && p.id === row.piece_id) ||
+      (p.calendar_id != null && p.calendar_id === row.id) ||
+      (row.title != null && p.title === row.title)
+    );
+    setSelectedPiece(match ?? row);
+    setActiveView(0);
+    setPipeMode('list');
+  }, [pieces]);
+
   // ── Head label ──────────────────────────────────────────────────────────────
   const headLabel = activeView === 0
     ? `Content · ${pieces.length} open`
@@ -1127,11 +1188,12 @@ export function ContentView({ activeFeature }) {
     } else if (piecesQ.isError) {
       body = html`<${ErrorState} error=${piecesQ.error?.message ?? 'unknown'} />`;
     } else if (pieces.length === 0) {
-      body = html`<${EmptyState} />`;
+      body = html`<${EmptyState} onCreate=${createPiece} />`;
     } else if (pipeMode === 'kanban') {
       body = html`<${PipelineKanban}
         pieces=${pieces}
         onStageChange=${(piece, newStage) => stageChange.mutate({ piece, newStage })}
+        onCreate=${createPiece}
       />`;
     } else {
       body = html`<${PipelineList}
@@ -1146,14 +1208,14 @@ export function ContentView({ activeFeature }) {
     if (calEventsQ.isLoading) {
       body = html`<${LoadingState} />`;
     } else {
-      body = html`<${CalendarView} calEvents=${calEventsQ.data ?? CALENDAR_FIXTURE} />`;
+      body = html`<${CalendarView} calEvents=${calEventsQ.data ?? CALENDAR_FIXTURE} onSelect=${drillToPiece} />`;
     }
   } else {
     // Published view
     if (publishedQ.isLoading) {
       body = html`<${LoadingState} />`;
     } else {
-      body = html`<${PublishedView} publishedItems=${publishedQ.data ?? PUBLISHED_FIXTURE} />`;
+      body = html`<${PublishedView} publishedItems=${publishedQ.data ?? PUBLISHED_FIXTURE} onSelect=${drillToPiece} />`;
     }
   }
 

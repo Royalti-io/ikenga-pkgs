@@ -67,7 +67,8 @@
       "latest_account_balances",
       "exchange_rates",
       "cfo_processing_runs",
-      "finance_alerts"
+      "finance_alerts",
+      "paystack_splits"
     ],
     "vault.keys": [],
     "engine": [
