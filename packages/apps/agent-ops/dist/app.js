@@ -17,9 +17,6 @@ import { connectBridge, isStandalone } from './lib/bridge.js';
 import { ScheduleView } from './features/schedule/schedule-view.js';
 import tokensCss from './lib/tokens-css.js';
 import agentOpsCss from './lib/agent-ops-css.js';
-import agentOpsRunsCss from './lib/agent-ops-runs-css.js';
-import agentOpsFormCss from './lib/agent-ops-form-css.js';
-import agentOpsLiveCss from './lib/agent-ops-live-css.js';
 
 // Styling, the no-build way. A <link>/fetch to a .css fails inside the shell's
 // about:srcdoc iframe (WebKitGTK subresource bug — see index.html), so CSS
@@ -34,26 +31,13 @@ function injectCss(id, css) {
   document.head.appendChild(el);
 }
 
-// Token aliases for names agent-ops-css.js references that @ikenga/tokens
-// doesn't expose at the top level — map each to its canonical token.
-// These are theme-AGNOSTIC: they ride whatever [data-theme][data-mode] palette
-// the bundled tokens.css resolves, so they track the shell's theme automatically.
-const aliasCss = `
-:root {
-  --fg-faint:      var(--fg-subtle);
-  --systemic:      var(--success);
-  --systemic-soft: color-mix(in srgb, var(--success) 14%, transparent);
-  --achievement:   var(--warning);
-  --achievement-soft: color-mix(in srgb, var(--warning) 14%, transparent);
-  --motion-fast:   120ms;
-  --ease-calm:     ease;
-}`;
+// tokens-css.js is now the real vendored @ikenga/tokens (WP-20 — was a stale
+// hand copy) — it defines --fg-faint/--systemic/--achievement (+ -soft) per
+// theme, so the old runtime alias shim mapping those onto --fg-subtle/
+// --success/--warning is gone; agent-ops-css.js (also WP-20, codegen'd from
+// dist/agent-ops.css) resolves them directly off the Theme A/B/C blocks.
 injectCss('data-tokens-css', tokensCss);
-injectCss('data-token-aliases', aliasCss);
 injectCss('data-agent-ops-css', agentOpsCss);
-injectCss('data-agent-ops-runs-css', agentOpsRunsCss);
-injectCss('data-agent-ops-form-css', agentOpsFormCss);
-injectCss('data-agent-ops-live-css', agentOpsLiveCss);
 
 // Theme — own it directly by mirroring the shell's <html> attributes, NOT via
 // the AppBridge host-context push (which was unreliable: it clobbered our

@@ -20,15 +20,21 @@ agent-ops/
 ├── manifest.json             # sqlite capability, tables: cron_job_runs, agent_runs
 ├── package.json
 ├── README.md
+├── scripts/build.mjs         # deterministic build: vendors tokens-css.js from
+│                              # @ikenga/tokens + codegens dist/lib/agent-ops-css.js
+│                              # from dist/agent-ops.css + vendors the shared
+│                              # bridge/ui runtime from @ikenga/pkg-runtime
 ├── tsconfig.dev.json         # dev-only checkJs — NEVER in the publish path
 └── dist/                     # kernel convention — iframe sources live here
+    ├── agent-ops.css         # pane CSS source of truth (do not hand-edit lib/agent-ops-css.js)
     ├── index.html            # mount point; imports app.js as ES module
     ├── app.js                # bridge + theme mirror + QueryClient → mounts <ScheduleView/>
     ├── lib/
     │   ├── view-model.js     # G-VIEW contract (FROZEN) + FIXTURE + validators
     │   ├── ui.js             # React, ReactDOM, htm, TanStack Query (esm.sh) + Icon/Button/cn
     │   ├── bridge.js         # @modelcontextprotocol/ext-apps wrapper (tagged [agent-ops])
-    │   ├── tokens-css.js     # @ikenga/tokens CSS-as-JS-string
+    │   ├── tokens-css.js     # @ikenga/tokens CSS-as-JS-string (vendored — GENERATED, do not edit)
+    │   ├── agent-ops-css.js  # pane CSS-as-JS-string (GENERATED from dist/agent-ops.css, do not edit)
     │   └── agent-ops-css.js  # pane CSS-as-JS-string (lifted from D-01 mock, shell chrome stripped)
     └── features/schedule/
         └── schedule-view.js  # Schedule / Runs / Failures / Live views + setMenu

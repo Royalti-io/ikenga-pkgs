@@ -2,7 +2,8 @@
 //
 // JobFormModal: create ("Add job", job=null) and edit (job=JobView) surface.
 // Calls host.agentOps.upsertJob / host.agentOps.deleteJob via bridge wrappers.
-// Reuses .ao-scrim/.ao-modal CSS + the new .ao-form-* rules in agent-ops-form-css.js.
+// Reuses .ao-scrim/.ao-modal CSS + the .ao-form-* rules (agent-ops.css's JOB
+// FORM MODAL section, codegen'd into agent-ops-css.js — see scripts/build.mjs).
 //
 // AgentOpsJobInput contract (frozen — shell side builds in parallel):
 //   { id, label, schedule, timezone?, enabled?, mode?, command, model?, agent?,

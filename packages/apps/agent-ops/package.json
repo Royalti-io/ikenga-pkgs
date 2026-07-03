@@ -21,5 +21,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.dev.json"
+  },
+  "devDependencies": {
+    "@ikenga/tokens": "^0.3.0"
   }
 }
