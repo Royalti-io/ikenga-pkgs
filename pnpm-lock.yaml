@@ -15,7 +15,11 @@ importers:
         specifier: ^2.27.10
         version: 2.31.0(@types/node@22.19.19)
 
-  packages/apps/agent-ops: {}
+  packages/apps/agent-ops:
+    devDependencies:
+      '@ikenga/tokens':
+        specifier: ^0.3.0
+        version: 0.3.0
 
   packages/apps/content:
     devDependencies:
@@ -189,6 +193,8 @@ importers:
       typescript:
         specifier: ^5.4.0
         version: 5.9.3
+
+  packages/lib/pkg-runtime: {}
 
   packages/lib/registry-client:
     dependencies:
