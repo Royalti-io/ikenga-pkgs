@@ -1,6 +1,6 @@
 {
   "name": "@ikenga/pkg-content",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Content — Pipeline (kanban + list), Calendar, Published over the production content schema. Multi-file iframe pkg; deterministic CSS vendoring build.",
   "license": "Apache-2.0",
   "repository": {
