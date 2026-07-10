@@ -107,3 +107,18 @@ html, body, #root {
 .studio-scaffold__mode[data-mode='shell']      { color: var(--live); }
 .studio-scaffold__mode[data-mode='standalone'] { color: var(--achievement); }
 .studio-scaffold__mode[data-mode='connecting'] { color: var(--fg-faint); }
+
+/* ---------------------------------------------------------------------------
+ * NowRenderingBeacon (commit 12) — the pinging rendering-status dot. The ring
+ * expands + fades out, echoing interactions-crosslink.html §4's animate-ping.
+ * Motion is suppressed under prefers-reduced-motion (commit-15 global a11y
+ * rule) so the badge still reads without the pulse.
+ * ------------------------------------------------------------------------- */
+
+@keyframes beacon-ping {
+  75%, 100% { transform: scale(2); opacity: 0; }
+}
+
+.beacon-ping {
+  animation: beacon-ping 1.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+}

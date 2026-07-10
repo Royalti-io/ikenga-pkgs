@@ -23,6 +23,7 @@ import { CompositionView } from './views/Composition';
 import { ScriptView } from './views/Script';
 import { ArchetypeBuilderView } from './views/ArchetypeBuilder';
 import { LauncherView } from './views/Launcher';
+import { NowRenderingBeacon } from './components/NowRenderingBeacon';
 
 // View component registry. Each view commit (6–11) adds its entry here.
 // Until a view registers, App.tsx falls through to PanePlaceholder for it.
@@ -129,6 +130,9 @@ export function App() {
         <LayoutSwitcher />
       </header>
       <PaneRegion />
+      {/* Layout-independent rendering beacon — floats over every view/layout
+          (fixed positioning), visible whenever a render is in flight. */}
+      <NowRenderingBeacon />
     </div>
   );
 }
