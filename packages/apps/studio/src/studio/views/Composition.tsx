@@ -132,6 +132,15 @@ export function CompositionView() {
     const clip = clipAtMs(ms);
     if (clip) setCellUid(clip.uid);
   };
+  // The scrubber overlay (.scrubber, z-index 10) sits on top of the entire
+  // timeline-rail, so real pointer hover never reaches the underlying
+  // .clip-segment elements' onMouseEnter/onMouseLeave (contract-review
+  // finding — verified via elementFromPoint). Re-derive hoverBeat from the
+  // scrubber's own position-in-ms pass-through instead, using the same
+  // clipAtMs lookup the click-to-select path already relies on.
+  const onHoverMs = (ms: number | null) => {
+    setHoverBeat(ms !== null ? (clipAtMs(ms)?.uid ?? null) : null);
+  };
   const playToggle = () => {
     const p = playerRef.current;
     if (!p) return;
@@ -373,8 +382,13 @@ export function CompositionView() {
                   aria-label={`${c.beat} cell, ${c.status ?? 'pending'}, ${Math.round(c.duration_ms / 1000)} seconds`}
                   style={{ flexBasis }}
                   onClick={() => onClipClick(c)}
-                  onMouseEnter={() => setHoverBeat(c.uid)}
-                  onMouseLeave={() => setHoverBeat(null)}
+                  // Real pointer hover is driven by the scrubber overlay's
+                  // onHoverMs pass-through above (the overlay sits on top of
+                  // this element and would otherwise swallow mouse events —
+                  // see onHoverMs). onFocus/onBlur keep the same hover-link
+                  // pulse working for keyboard users tabbing onto the clip.
+                  onFocus={() => setHoverBeat(c.uid)}
+                  onBlur={() => setHoverBeat(null)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
@@ -409,6 +423,7 @@ export function CompositionView() {
               fps={FPS}
               onSeekMs={seekMs}
               onSelectMs={onSelectMs}
+              onHoverMs={onHoverMs}
             />
           </div>
 

@@ -48,6 +48,15 @@ export interface ScrubberPlayheadProps {
    *  drag). Lets the consumer ALSO focus the clip under the click without a
    *  drag continuously re-selecting. Playback never triggers this. */
   onSelectMs?: (ms: number) => void;
+  /** Fired continuously as the pointer hovers the rail WITHOUT a button
+   *  pressed (position in ms), and with `null` on pointer-leave. Because the
+   *  scrubber is an absolutely-positioned overlay that fills the whole
+   *  timeline-rail, it sits on top of the domain content underneath it (e.g.
+   *  clip segments) — native onMouseEnter/onMouseLeave on that underlying
+   *  content never fires from a real pointer. This is the pass-through a
+   *  consumer needs to re-derive hover state (e.g. hoverBeat) from cursor
+   *  position instead. */
+  onHoverMs?: (ms: number | null) => void;
   fps?: number;
   /** Overrides the default fmtClock(currentMs) announcement. */
   ariaValueText?: string;
@@ -62,6 +71,7 @@ export function ScrubberPlayhead({
   totalMs,
   onSeekMs,
   onSelectMs,
+  onHoverMs,
   fps = DEFAULT_FPS,
   ariaValueText,
   ariaLabel = 'Playhead position',
@@ -91,13 +101,27 @@ export function ScrubberPlayhead({
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
-    // Only track while the pointer is captured (i.e. mid-drag).
-    if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
-    if (downXRef.current !== null && Math.abs(e.clientX - downXRef.current) > CLICK_SLOP_PX) {
-      draggedRef.current = true;
+    // Mid-drag (pointer captured after a pointerdown): keep driving the seek
+    // authority as before.
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      if (downXRef.current !== null && Math.abs(e.clientX - downXRef.current) > CLICK_SLOP_PX) {
+        draggedRef.current = true;
+      }
+      const ms = msFromClientX(e.clientX);
+      if (ms !== null) onSeekMs(ms);
+      return;
     }
-    const ms = msFromClientX(e.clientX);
-    if (ms !== null) onSeekMs(ms);
+    // Plain hover (no button pressed): this overlay is the only element the
+    // pointer ever actually hits, so it is the pass-through point for
+    // position-derived hover state.
+    if (onHoverMs) {
+      const ms = msFromClientX(e.clientX);
+      onHoverMs(ms);
+    }
+  };
+
+  const onPointerLeave = () => {
+    onHoverMs?.(null);
   };
 
   const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -152,6 +176,7 @@ export function ScrubberPlayhead({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerLeave={onPointerLeave}
       onKeyDown={onKeyDown}
     >
       <Playhead leftPct={leftPct} />
