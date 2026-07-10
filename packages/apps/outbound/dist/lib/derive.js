@@ -366,11 +366,14 @@ export function mapSocialQueue(row) {
     // Grouping signal for the social master list (spec 04).
     source_group: socialSourceGroup(b.item, b.meta),
     blog_slug: b.item.blogSlug || null,
-    // Media + hashtags + fan-out platforms (spec 03 / 04). Passthrough-only:
-    // media_url surfaces item.media_url; hashtags falls back to a /#\w+/ body
-    // parse; platforms defaults to [platformOf(item)] when no explicit list.
-    media_url: b.item.media_url ?? null,
-    hashtags: deriveHashtags(b.item),
+    // Media + hashtags + fan-out platforms (spec 03 / 04). edited_json overrides
+    // win (WP-17 round-trip parity with newsletter): media_url surfaces
+    // edited.media_url then item.media_url; hashtags derives from the edited
+    // item when the operator has touched hashtags (so a cleared [] doesn't fall
+    // back to item.hashtags) else falls back to a /#\w+/ body parse; platforms
+    // defaults to [platformOf(item)] when no explicit list.
+    media_url: b.edited.media_url ?? b.item.media_url ?? null,
+    hashtags: deriveHashtags(b.edited.hashtags !== undefined ? b.edited : b.item),
     platforms: socialPlatforms(b.item),
     thread: b.item.thread ?? null,
   };
@@ -389,9 +392,10 @@ export function mapSocialSent(row) {
     delivery_status: b.delivery_status,
     source: b.meta.actionName || null,
     slug: row.batch_id || null,
-    // Media + hashtags + fan-out platforms passthrough (parity with mapSocialQueue).
-    media_url: b.item.media_url ?? null,
-    hashtags: deriveHashtags(b.item),
+    // Media + hashtags + fan-out platforms — edited_json overrides win (parity
+    // with mapSocialQueue / WP-17 round-trip).
+    media_url: b.edited.media_url ?? b.item.media_url ?? null,
+    hashtags: deriveHashtags(b.edited.hashtags !== undefined ? b.edited : b.item),
     platforms: socialPlatforms(b.item),
   };
 }

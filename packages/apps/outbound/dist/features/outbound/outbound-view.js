@@ -629,20 +629,19 @@ async function updateDraft(id, patch) {
   await hostPaActionsUpdate(id, patch);
 }
 
-// ── LATENT-VERB GAP (WP-17): host.paActions.* is unwired in the shell ──────────
+// ── COMPAT FALLBACK: host.paActions.* on an older shell build ──────────────────
 // approve/reject/retry/edit all route through the four host.paActions.* verbs
-// above. The shell's dispatchHostCall (pkg-iframe-host.tsx) has NO case for any
-// of them — every call hits the `unknown host tool: <name>` fallthrough
-// (pkg-iframe-host.tsx:829). So from INSIDE the iframe these writes cannot land
-// today. The real fix is shell work (add the four verbs to dispatchHostCall,
-// wrapping the already-tested pa_actions_* Rust commands the native
-// /outbox/approvals route uses via @/lib/tauri-cmd) — out of a pkg agent's scope.
+// above. The shell's dispatchHostCall (pkg-iframe-host.tsx) wired all four as of
+// WP-18, so on a current shell these writes land normally from inside the
+// iframe. Older shell builds predating WP-18 still hit the `unknown host tool:
+// <name>` fallthrough (pkg-iframe-host.tsx:829) — this block is the honest
+// degradation for that case, not the everyday path.
 //
-// Honest degradation until then: detect the unknown-verb refusal and, instead of
-// dumping a raw "unknown host tool" string, steer the operator to the shell's
-// NATIVE approve-gate surface at /outbox/approvals, which calls the Rust commands
-// directly (paActionsCommit/Reject/Retry/Update) and WORKS. `host.navigate` is a
-// real, handled verb (pkg-iframe-host.tsx:426).
+// Detect the unknown-verb refusal and, instead of dumping a raw "unknown host
+// tool" string, steer the operator to the shell's NATIVE approve-gate surface
+// at /outbox/approvals, which calls the Rust commands directly
+// (paActionsCommit/Reject/Retry/Update) and WORKS. `host.navigate` is a real,
+// handled verb (pkg-iframe-host.tsx:426).
 function isPaActionsUnavailable(err) {
   const m = String(err?.message ?? err ?? '');
   return /unknown host tool|host\.paActions/i.test(m);
@@ -736,8 +735,8 @@ function StatusChip({ rawStatus }) {
 // C-5: inline error chip surfaced near the action footer when a commit is refused
 // (e.g. "Already committed — nothing sent.").
 //
-// WP-17: when the refusal is the unwired-verb gap (isPaActionsUnavailable), the
-// raw "unknown host tool: host.paActions.commit" string is useless to an
+// WP-17: when the refusal is the pre-WP-18-shell compat gap (isPaActionsUnavailable),
+// the raw "unknown host tool: host.paActions.commit" string is useless to an
 // operator. Render an actionable notice steering them to the shell's native
 // approve-gate (/outbox/approvals) — which drives the same pa_actions_* Rust
 // commands directly and works — instead of the bare error.

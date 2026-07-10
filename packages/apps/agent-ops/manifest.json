@@ -84,9 +84,6 @@
       "cron_job_runs",
       "agent_runs"
     ],
-    "vault.keys": [],
-    "engine": [
-      "invoke"
-    ]
+    "vault.keys": []
   }
 }
