@@ -20,6 +20,7 @@ import { PanePlaceholder } from './components/PanePlaceholder';
 import { CanvasView } from './views/Canvas';
 import { CellView } from './views/Cell';
 import { CompositionView } from './views/Composition';
+import { ScriptView } from './views/Script';
 
 // View component registry. Each view commit (6–11) adds its entry here.
 // Until a view registers, App.tsx falls through to PanePlaceholder for it.
@@ -27,6 +28,7 @@ const VIEW_COMPONENTS: ViewComponentRegistry = {
   canvas:      CanvasView,
   cell:        CellView,
   composition: CompositionView,
+  script:      ScriptView,
 };
 
 function Pane({ index }: { index: PaneIndex }) {
