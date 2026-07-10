@@ -11,6 +11,8 @@
 // shared store the views already subscribe to — App.tsx itself stays
 // cross-link-agnostic.
 
+import { useEffect } from 'react';
+
 import { useLayoutStore } from './layout-store';
 import { useProjectStore, selectIsProjectOpen } from './project-store';
 import type { PaneIndex, ViewComponentRegistry } from './routes';
@@ -25,6 +27,7 @@ import { ArchetypeBuilderView } from './views/ArchetypeBuilder';
 import { LauncherView } from './views/Launcher';
 import { NowRenderingBeacon } from './components/NowRenderingBeacon';
 import { useStudioKeyboard } from './lib/use-studio-keyboard';
+import { initStudioMenu } from './menu';
 
 // View component registry. Each view commit (6–11) adds its entry here.
 // Until a view registers, App.tsx falls through to PanePlaceholder for it.
@@ -122,6 +125,10 @@ export function App() {
   // App-level keyboard map + V-split focus trap (commit 15). Registered
   // unconditionally; its handlers no-op until a pane region exists.
   useStudioKeyboard();
+
+  // Sidebar menu: publish on mount, republish on project open/close, route
+  // menu clicks (activeFeature) onto the focused pane.
+  useEffect(() => initStudioMenu(), []);
 
   // The launcher pre-empts the pane layout entirely — it isn't a sub-view
   // and doesn't share the layout/view-switcher chrome (launcher.md §"Chrome
