@@ -8,14 +8,11 @@
 
 import { VIEWS, type ViewId } from '../routes';
 
-// Each view commit removes its own entry as it lands; canvas (commit 6),
-// cell (commit 7), composition (commit 8), and script (commit 9) are gone.
-// Partial<…> so the type narrows naturally as the registry in App.tsx fills
-// out — `LANDS_IN[view]` returns undefined for landed views, which is fine
-// because PanePlaceholder is no longer rendered for them.
-const LANDS_IN: Partial<Record<ViewId, string>> = {
-  archetype: 'commit 10',
-};
+// Every view has registered a concrete component as of commit 10 (canvas·6,
+// cell·7, composition·8, script·9, archetype·10) — this map is kept empty,
+// not deleted, so a future view added post-P1 has an obvious place to note
+// its landing commit again.
+const LANDS_IN: Partial<Record<ViewId, string>> = {};
 
 export function PanePlaceholder({ view }: { view: ViewId }) {
   const meta = VIEWS[view];
