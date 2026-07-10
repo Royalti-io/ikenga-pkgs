@@ -1,0 +1,166 @@
+/*
+ * com.ikenga.studio · iframe-local styles
+ *
+ * Order matters: Tailwind first, then the canonical token surface, then the
+ * @theme map that lets Tailwind utilities resolve to those tokens. Same
+ * pattern as shell/src/styles.css.
+ *
+ * Importing @ikenga/tokens here is the WP-07 fix for G21 (Round 8): the
+ * iframe sandbox must own its own --bg-*, --fg-*, --border-*, --font-*
+ * namespace, because the shell's chrome stylesheet doesn't leak through the
+ * iframe boundary. The AppBridge host-context handshake (bridge.ts) layers
+ * runtime theme/mode overrides on top via applyHostStyleVariables.
+ */
+
+@import 'tailwindcss';
+@import '@ikenga/tokens/tokens.css';
+
+/* studio-editor layer — video-domain component CSS (timeline-rail,
+ * clip-segment, waveform-strip) + the media-controls transport family. See
+ * studio-editor.css for the 00-editor-base var set + tokenization notes.
+ *
+ * Imported INTO a real `studio-editor` cascade layer (contract §2 / G-09): a
+ * plain unlayered @import here would sit above ALL of Tailwind's layers
+ * (theme/base/components/utilities) — the latent §2 violation. As a named
+ * layer it composes cleanly; declared after `tailwindcss`, it still wins over
+ * utilities exactly as the unlayered import did, so there is no regression. */
+@import './studio-editor.css' layer(studio-editor);
+
+/* ---------------------------------------------------------------------------
+ * Tailwind 4 @theme map — Ikenga semantic tokens → utility names.
+ *
+ * Lets view code write `bg-base`, `text-fg-muted`, `border-soft` etc. and
+ * have them resolve to the active theme/mode token (set per
+ * [data-mode] in tokens.css, overridden at runtime by the host handshake).
+ * Arbitrary values (`bg-[var(--bg-raised)]`) also work for one-offs; these
+ * named utilities cover the common surfaces so the views read cleanly.
+ * ------------------------------------------------------------------------- */
+
+@theme {
+  --color-base:    var(--bg-base);
+  --color-sunken:  var(--bg-sunken);
+  --color-surface: var(--bg-surface);
+  --color-raised:  var(--bg-raised);
+
+  --color-fg:       var(--fg);
+  --color-fg-muted: var(--fg-muted);
+  --color-fg-faint: var(--fg-faint);
+
+  --color-border:      var(--border);
+  --color-border-soft: var(--border-soft);
+
+  --color-achievement: var(--achievement);
+  --color-live:        var(--live);
+  --color-agent:       var(--agent);
+  --color-danger:      var(--danger);
+
+  --font-display: var(--font-display);
+  --font-mono:    var(--font-mono);
+}
+
+html, body, #root {
+  height: 100%;
+  margin: 0;
+  background: var(--bg-base);
+  color: var(--fg);
+  font-family: var(--font-display);
+}
+
+#root {
+  position: relative;
+  isolation: isolate;
+}
+
+/* ---------------------------------------------------------------------------
+ * Scaffold placeholder (commit 1–4 boot screen). Replaced when <App /> takes
+ * over in commit 5; the mode chip stays useful for the launcher fallback.
+ * ------------------------------------------------------------------------- */
+
+.studio-scaffold {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  padding: 2rem;
+  text-align: center;
+}
+
+.studio-scaffold__title {
+  font-family: var(--font-display);
+  font-size: 2rem;
+  margin: 0 0 0.5rem;
+  color: var(--fg);
+}
+
+.studio-scaffold__hint {
+  margin: 0;
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+}
+
+.studio-scaffold__mode {
+  margin: 1rem 0 0;
+  padding: 0.25rem 0.6rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-soft);
+  background: var(--bg-raised);
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+}
+
+.studio-scaffold__mode[data-mode='shell']      { color: var(--live); }
+.studio-scaffold__mode[data-mode='standalone'] { color: var(--achievement); }
+.studio-scaffold__mode[data-mode='connecting'] { color: var(--fg-faint); }
+
+/* ---------------------------------------------------------------------------
+ * NowRenderingBeacon (commit 12) — the pinging rendering-status dot. The ring
+ * expands + fades out, echoing interactions-crosslink.html §4's animate-ping.
+ * Motion is suppressed under prefers-reduced-motion (commit-15 global a11y
+ * rule) so the badge still reads without the pulse.
+ * ------------------------------------------------------------------------- */
+
+@keyframes beacon-ping {
+  75%, 100% { transform: scale(2); opacity: 0; }
+}
+
+.beacon-ping {
+  animation: beacon-ping 1.4s cubic-bezier(0, 0, 0.2, 1) infinite;
+}
+
+/* ---------------------------------------------------------------------------
+ * Global keyboard-only focus ring (commit 15, a11y-keyboard.html §"Focus
+ * rings"): the info/sky token, shown only on :focus-visible (keyboard), never
+ * on mouse click. `:where()` keeps specificity at 0 so the Composition editor's
+ * own bespoke focus styles (.clip-segment / .scrubber / .transport-btn / .seg
+ * button — class selectors in studio-editor.css) always win; every interactive
+ * element OUTSIDE Composition gets this consistent ring.
+ *
+ * Composition lives in a cascade layer now (studio-editor), so its focus styles
+ * would LOSE to this unlayered rule — the `:where(:not(.composition-frame *))`
+ * guard excludes Composition's interactive elements entirely, so the layered
+ * .scrubber / .transport-btn / .clip-segment / .seg-button focus rings own
+ * their look. Both `:where()` wrappers keep specificity at 0.
+ * ------------------------------------------------------------------------- */
+
+:where(
+  button, a[href], input, select, textarea,
+  [role='button'], [role='tab'], [role='slider'],
+  [tabindex]:not([tabindex='-1'])
+):where(:not(.composition-frame *)):focus-visible {
+  outline: 2px solid var(--info, #5bb3e0);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Reduced-motion (commit 15, editor-motion F3): kill the beacon ping + the
+ * Tailwind ping/pulse decorations so the playhead + status dots JUMP rather
+ * than glide. The playhead's own seek transition is gated on
+ * prefers-reduced-motion: no-preference in studio-editor.css, so it snaps here.
+ * ------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .beacon-ping { animation: none; }
+  .animate-ping, .animate-pulse { animation: none !important; }
+}

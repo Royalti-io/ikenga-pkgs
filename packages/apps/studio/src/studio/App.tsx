@@ -1,0 +1,151 @@
+// com.ikenga.studio · App
+//
+// The Pattern C harness: a top bar with the LayoutSwitcher, and a pane region
+// that renders 1–3 panes per the active layout preset. Each pane has its own
+// header (ViewSwitcher) and body (the registered view component, or a
+// PanePlaceholder until that view's commit lands).
+//
+// This commit (5) wired layout + view routing + focus only; the launcher
+// pre-empt (no open project → full-bleed Launcher, G25) lands in commit 11
+// as the `!isOpen` early-return below. Cross-linking (commit 12) reads the
+// shared store the views already subscribe to — App.tsx itself stays
+// cross-link-agnostic.
+
+import { useLayoutStore } from './layout-store';
+import { useProjectStore, selectIsProjectOpen } from './project-store';
+import type { PaneIndex, ViewComponentRegistry } from './routes';
+import { LayoutSwitcher } from './components/LayoutSwitcher';
+import { ViewSwitcher } from './components/ViewSwitcher';
+import { PanePlaceholder } from './components/PanePlaceholder';
+import { CanvasView } from './views/Canvas';
+import { CellView } from './views/Cell';
+import { CompositionView } from './views/Composition';
+import { ScriptView } from './views/Script';
+import { ArchetypeBuilderView } from './views/ArchetypeBuilder';
+import { LauncherView } from './views/Launcher';
+import { NowRenderingBeacon } from './components/NowRenderingBeacon';
+import { useStudioKeyboard } from './lib/use-studio-keyboard';
+
+// View component registry. Each view commit (6–11) adds its entry here.
+// Until a view registers, App.tsx falls through to PanePlaceholder for it.
+const VIEW_COMPONENTS: ViewComponentRegistry = {
+  canvas:      CanvasView,
+  cell:        CellView,
+  composition: CompositionView,
+  script:      ScriptView,
+  archetype:   ArchetypeBuilderView,
+};
+
+function Pane({ index }: { index: PaneIndex }) {
+  const view = useLayoutStore((s) => s.paneViews[index]);
+  const focused = useLayoutStore((s) => s.focusedPane === index);
+  const setFocusedPane = useLayoutStore((s) => s.setFocusedPane);
+
+  const ViewComponent = VIEW_COMPONENTS[view];
+
+  return (
+    <section
+      // `data-pane-index` + a programmatic-only tab stop (-1) let the commit-15
+      // keyboard map target this pane's chrome (Esc / F6 focus moves) and scope
+      // the Tab focus-trap to it. focused pane gets the info/sky ring.
+      data-pane-index={index}
+      tabIndex={-1}
+      className={
+        'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border bg-surface outline-none '
+        + (focused
+          ? 'border-[var(--border)] ring-1 ring-inset ring-[color-mix(in_oklab,var(--info,#5bb3e0)_45%,transparent)]'
+          : 'border-soft')
+      }
+      // Click OR keyboard focus entering the pane makes it the active pane
+      // (drives the 1–5 view shortcut + the focus trap).
+      onMouseDown={() => setFocusedPane(index)}
+      onFocusCapture={() => setFocusedPane(index)}
+      aria-current={focused ? 'true' : undefined}
+    >
+      <header className="flex items-center justify-between gap-2 border-b border-soft bg-sunken px-2 py-1">
+        <ViewSwitcher pane={index} />
+        <span className="font-mono text-[9px] uppercase tracking-wider text-fg-faint">
+          pane {index + 1}
+        </span>
+      </header>
+      <div className="min-h-0 flex-1">
+        {ViewComponent ? <ViewComponent /> : <PanePlaceholder view={view} />}
+      </div>
+    </section>
+  );
+}
+
+function PaneRegion() {
+  const layout = useLayoutStore((s) => s.layout);
+
+  if (layout === 'single') {
+    return (
+      <div className="flex min-h-0 flex-1 p-1.5">
+        <Pane index={0} />
+      </div>
+    );
+  }
+
+  if (layout === 'vsplit') {
+    return (
+      <div className="flex min-h-0 flex-1 gap-1.5 p-1.5">
+        <Pane index={0} />
+        <Pane index={1} />
+      </div>
+    );
+  }
+
+  if (layout === 'hsplit') {
+    return (
+      <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-1.5">
+        <Pane index={0} />
+        <Pane index={1} />
+      </div>
+    );
+  }
+
+  // tripane: two on top, one full-width below — matches the design glyph.
+  return (
+    <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-1.5">
+      <div className="flex min-h-0 flex-1 gap-1.5">
+        <Pane index={0} />
+        <Pane index={1} />
+      </div>
+      <Pane index={2} />
+    </div>
+  );
+}
+
+export function App() {
+  const isProjectOpen = useProjectStore(selectIsProjectOpen);
+
+  // App-level keyboard map + V-split focus trap (commit 15). Registered
+  // unconditionally; its handlers no-op until a pane region exists.
+  useStudioKeyboard();
+
+  // The launcher pre-empts the pane layout entirely — it isn't a sub-view
+  // and doesn't share the layout/view-switcher chrome (launcher.md §"Chrome
+  // & Navigation": "There is no pane chrome or view-switcher"). It unmounts
+  // the moment a project opens.
+  if (!isProjectOpen) {
+    return <LauncherView />;
+  }
+
+  return (
+    <div className="flex h-full flex-col bg-base text-fg">
+      <header className="flex items-center justify-between border-b border-soft bg-sunken px-3 py-1.5">
+        <div className="flex items-center gap-2">
+          <span className="font-display text-sm font-semibold tracking-tight">Studio</span>
+          <span className="font-mono text-[9px] uppercase tracking-wider text-fg-faint">
+            com.ikenga.studio
+          </span>
+        </div>
+        <LayoutSwitcher />
+      </header>
+      <PaneRegion />
+      {/* Layout-independent rendering beacon — floats over every view/layout
+          (fixed positioning), visible whenever a render is in flight. */}
+      <NowRenderingBeacon />
+    </div>
+  );
+}

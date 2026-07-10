@@ -1,0 +1,339 @@
+// com.ikenga.studio · iframe ↔ host bridge
+//
+// One module, two surfaces:
+//
+//  1. The MCP Apps SDK (`@modelcontextprotocol/ext-apps`) — the canonical
+//     iframe⇄host protocol the shell speaks (see shell/src/components/pkg/
+//     pkg-iframe-host.tsx). After `connectBridge()` resolves, the host has
+//     handed us a `hostContext` with theme, CSS variables, royaltiAuth, an
+//     optional supabase config block, and a royaltiSuite namespace for shell
+//     state. We call back into the host via `app.callServerTool({ name:
+//     'host.*', ... })`; the shell's `dispatchHostCall` resolves names that
+//     start with `host.` directly.
+//
+//  2. The iyke postMessage channel (`{ __iyke: true, kind: 'state', ... }`)
+//     — orthogonal to MCP. The shell-side `iframe-bridge.ts` listens for
+//     state envelopes so the `iyke iframe-state <pane>` CLI (and any
+//     observing agent) can read the iframe's published 4-value snapshot
+//     without crossing the MCP bus. Cheap, fire-and-forget, no awaiting
+//     replies. WP-07's shared store calls `publishStudioState` from every
+//     setter (see commit 3).
+//
+// Both surfaces are gracefully degraded in standalone-dev mode (no parent
+// window): `connectBridge()` resolves with `mode: 'standalone'` and every
+// helper becomes a no-op or returns mocked values. This is what lets
+// `pnpm dev` boot the iframe in a plain browser tab without a shell.
+
+import {
+  App,
+  applyDocumentTheme,
+  applyHostStyleVariables,
+  applyHostFonts,
+  type McpUiHostContext,
+} from '@modelcontextprotocol/ext-apps';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+
+// ─── Host-context contract ────────────────────────────────────────────────
+//
+// Mirrors shell/src/lib/pkg/host-context.ts. Kept in this file (not @ikenga/
+// contract) until the WP-08 manifest authoring lands — at which point the
+// canonical type should move there and this file should re-export. Tracked
+// as a follow-up in 10-wp07-iframe.md commit 16's swap line item.
+
+export interface HostSupabaseConfig {
+  url: string;
+  anonKey: string;
+}
+
+export interface RoyaltiAuth {
+  token: string;
+  pkg_id: string;
+  /** Current user's Supabase access token; null when signed out. */
+  supabaseJwt: string | null;
+}
+
+export interface RoyaltiSuiteContext {
+  /** Last shell-sidebar selection — pkgs that publish menus should route off
+   *  this rather than their own internal selection state. Undefined means the
+   *  iframe picks its own default (used for first-mount). */
+  activeFeature?: string;
+}
+
+/** The shape we actually read off the MCP `hostContext` passthrough. The MCP
+ *  spec types `McpUiHostContext` as `[key: string]: unknown`, so all Royalti
+ *  namespaces (`royaltiAuth`, `supabase`, `royaltiSuite`) are technically
+ *  optional from the SDK's standpoint. */
+export type StudioHostContext = McpUiHostContext & {
+  royaltiAuth?: RoyaltiAuth;
+  supabase?: HostSupabaseConfig;
+  royaltiSuite?: RoyaltiSuiteContext;
+};
+
+// ─── The 4-value publish payload ──────────────────────────────────────────
+//
+// Authoritative shape for the iyke channel — the shared store (commit 3)
+// will call publishStudioState() with exactly this snapshot on every change.
+// `cellUid: null` and `playheadMs: 0` are the empty-project defaults.
+
+export interface StudioPublishedState {
+  cellUid: string | null;
+  playheadMs: number;
+  hoverBeat: string | null;
+  engineMode: 'hf' | 'remotion';
+}
+
+// ─── Connection lifecycle ─────────────────────────────────────────────────
+
+export interface BridgeConnection {
+  /** 'shell' when running inside an Ikenga pane; 'standalone' when running
+   *  in a plain browser tab (no parent). Caller branches off this rather
+   *  than re-checking `window.parent === window` everywhere. */
+  mode: 'shell' | 'standalone';
+  /** Initial host context. `undefined` in standalone mode. */
+  hostContext: StudioHostContext | undefined;
+}
+
+let _app: App | null = null;
+let _connection: BridgeConnection | null = null;
+let _connectionPromise: Promise<BridgeConnection> | null = null;
+let _contextListeners = new Set<(ctx: StudioHostContext) => void>();
+
+/** True when there is no parent window — the iframe is being run standalone
+ *  via `pnpm dev` rather than embedded in a shell pane. The MCP handshake
+ *  would hang forever in this case, so we skip it. */
+export function isStandalone(): boolean {
+  return typeof window === 'undefined' || window.parent === window;
+}
+
+/** Connect to the host and resolve once the initial context handshake is
+ *  complete. Idempotent — a second call returns the same promise. */
+export function connectBridge(opts: {
+  name?: string;
+  version?: string;
+} = {}): Promise<BridgeConnection> {
+  if (_connectionPromise) return _connectionPromise;
+
+  if (isStandalone()) {
+    const connection: BridgeConnection = { mode: 'standalone', hostContext: undefined };
+    _connection = connection;
+    _connectionPromise = Promise.resolve(connection);
+    return _connectionPromise;
+  }
+
+  const name = opts.name ?? '@ikenga/studio';
+  const version = opts.version ?? '0.1.0';
+
+  _connectionPromise = (async () => {
+    const app = new App({ name, version }, {
+      // Studio publishes no MCP tools of its own at P1 — the host-tool
+      // surface (`host.navigate`, `host.openFolder`, etc.) is invoked via
+      // `callServerTool`, not provided by us.
+      tools: { listChanged: false },
+    });
+
+    app.onerror = (err: unknown) => {
+      // Never throw out of the iframe boot — log and let the App stay up
+      // so the user at least sees the placeholder rather than a blank pane.
+      // eslint-disable-next-line no-console
+      console.error('[studio] bridge error', err);
+    };
+
+    app.onhostcontextchanged = (ctx: McpUiHostContext) => {
+      const typed = ctx as StudioHostContext;
+      applyContext(typed);
+      for (const fn of _contextListeners) fn(typed);
+    };
+
+    app.onteardown = async () => ({});
+
+    await app.connect();
+    const ctx = app.getHostContext() as StudioHostContext | undefined;
+    if (ctx) applyContext(ctx);
+
+    _app = app;
+    const connection: BridgeConnection = { mode: 'shell', hostContext: ctx };
+    _connection = connection;
+    return connection;
+  })();
+
+  return _connectionPromise;
+}
+
+/** Apply theme + CSS vars + fonts from a hostContext snapshot. Idempotent;
+ *  safe to call from both initial connect and `onhostcontextchanged`. */
+function applyContext(ctx: StudioHostContext): void {
+  if (ctx.theme) applyDocumentTheme(ctx.theme);
+  if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
+  if (ctx.styles?.css?.fonts) applyHostFonts(ctx.styles.css.fonts);
+}
+
+/** Subscribe to hostContext changes (theme flips, royaltiSuite.activeFeature
+ *  swaps, supabaseJwt refresh). Returns an unsubscribe fn. */
+export function onHostContextChange(fn: (ctx: StudioHostContext) => void): () => void {
+  _contextListeners.add(fn);
+  return () => _contextListeners.delete(fn);
+}
+
+/** Synchronous read of the most recent hostContext. `undefined` before
+ *  `connectBridge()` resolves and in standalone mode. */
+export function getHostContext(): StudioHostContext | undefined {
+  return _connection?.hostContext ?? undefined;
+}
+
+// ─── Lazy Supabase getter ─────────────────────────────────────────────────
+//
+// Per workspace CLAUDE.md "Supabase capability" rule: the iframe must not
+// run `createClient()` at module-eval, because `hostContext.supabase` is
+// resolved from the shell's Stronghold vault and threaded through an async
+// handshake. Views that need Supabase call `await getSupabase()` lazily;
+// the first call awaits the connect promise, subsequent calls reuse the
+// same client. In standalone mode the getter throws — pkgs that need a
+// real backend should hand-author a dev token via env (the launcher will
+// surface that path in commit 11).
+
+let _supabasePromise: Promise<SupabaseClient> | null = null;
+
+export function getSupabase(): Promise<SupabaseClient> {
+  if (!_supabasePromise) {
+    _supabasePromise = connectBridge().then((conn) => {
+      if (conn.mode === 'standalone') {
+        throw new Error(
+          '[studio] Supabase is unavailable in standalone dev. Run inside the shell, or '
+          + 'supply a dev token (the launcher exposes this path in WP-07 commit 11).',
+        );
+      }
+      const sb = conn.hostContext?.supabase;
+      if (!sb) {
+        throw new Error(
+          '[studio] hostContext.supabase missing — declare `capabilities.supabase` in '
+          + 'manifest.json (the WP-08 manifest authoring step) for this pkg.',
+        );
+      }
+      return createClient(sb.url, sb.anonKey, {
+        auth: {
+          // The pkg-side client never owns the session; the shell threads the
+          // user's JWT via hostContext.royaltiAuth.supabaseJwt. Persisting in
+          // localStorage here would race with the shell on token refresh.
+          persistSession: false,
+          autoRefreshToken: false,
+        },
+      });
+    });
+  }
+  return _supabasePromise;
+}
+
+/** Read the per-iframe auth token (used by views that authenticate to
+ *  pkg-owned sidecars over the host bus). `null` before connect / in
+ *  standalone. */
+export function getRoyaltiAuth(): RoyaltiAuth | null {
+  return _connection?.hostContext?.royaltiAuth ?? null;
+}
+
+// ─── Host-tool calls ──────────────────────────────────────────────────────
+//
+// Thin typed wrappers around `app.callServerTool({ name: 'host.*', ... })`.
+// Names match the host's `dispatchHostCall` (shell/src/components/pkg/
+// pkg-iframe-host.tsx). All return the raw tool-call result; callers narrow.
+
+interface HostCallResult {
+  content: Array<{ type: 'text'; text: string }>;
+  structuredContent?: Record<string, unknown>;
+  isError?: boolean;
+}
+
+async function callHostTool(name: string, args: Record<string, unknown> = {}): Promise<HostCallResult> {
+  if (!_app) {
+    throw new Error(`[studio] callHostTool(${name}) before connectBridge() resolved`);
+  }
+  // The MCP App's callServerTool returns the spec's CallToolResult shape;
+  // we narrow to HostCallResult since that's the contract the shell-side
+  // dispatchHostCall honours (text + optional structuredContent + isError).
+  return (await _app.callServerTool({ name, arguments: args })) as HostCallResult;
+}
+
+/** Cross-pkg or in-pkg sub-route navigation. The shell routes this through
+ *  pane-store + TanStack Router. */
+export function hostNavigate(path: string): Promise<HostCallResult> {
+  return callHostTool('host.navigate', { path });
+}
+
+/** Open an external link via the host (Tauri opens it in the default
+ *  browser, not a child webview). */
+export function openLink(url: string): Promise<HostCallResult> {
+  return callHostTool('host.openLink', { url });
+}
+
+/** Trust-gate seam for the Launcher's "Open folder…" affordance (10-wp07-
+ *  iframe.md commit 11 — "calls host.openFolder()"). Same shape as every
+ *  other `host.*` call: routed through the shell's `dispatchHostCall`. The
+ *  shell side of the per-folder trust gate (Tauri `pkg_studio_request_
+ *  project_access`, WP-04) isn't wired yet — in standalone/dev this call
+ *  simply rejects (no `_app`) or the shell responds `isError` until the real
+ *  command lands; the Launcher's own dialog is the mocked trust-gate UX for
+ *  now (launcher.md §"API"). */
+export function openFolder(): Promise<HostCallResult> {
+  return callHostTool('host.openFolder', {});
+}
+
+/** Publish a sidebar menu to the shell. Items: [{ id, label, icon?, badge? }].
+ *  Click feedback arrives back through `hostContext.royaltiSuite.activeFeature`
+ *  on the next `onhostcontextchanged`. */
+export function setMenu(items: Array<{
+  id: string;
+  label: string;
+  icon?: string;
+  badge?: string;
+}>): Promise<HostCallResult> {
+  return callHostTool('host.pkg.setMenu', { items });
+}
+
+// ─── iyke postMessage channel ─────────────────────────────────────────────
+//
+// Separate from MCP — small payloads, no replies. The shell-side
+// iframe-bridge listens for `{ __iyke: true, kind: 'state', payload }`
+// envelopes and surfaces them to `iyke iframe-state <pane>`. The shared
+// store (WP-07 commit 3) calls `publishStudioState` on every setter; the
+// agent loop reads the 4-value snapshot to reason about cursor + playhead
+// without rolling another RPC.
+
+interface IykeEnvelope {
+  __iyke: true;
+  kind: string;
+  payload: unknown;
+}
+
+function postIyke(envelope: IykeEnvelope): void {
+  if (typeof window === 'undefined' || window.parent === window) return;
+  try {
+    window.parent.postMessage(envelope, '*');
+  } catch {
+    // postMessage is heavily-sandboxed in some iframe configs; swallow the
+    // error rather than crash the studio.
+  }
+}
+
+/** Publish a single key/value pair on the iyke state channel. The four
+ *  shared-state values use the canonical key 'studio'; ad-hoc keys are
+ *  allowed for view-local introspection. */
+export function publishState(key: string, value: unknown): void {
+  postIyke({ __iyke: true, kind: 'state', payload: { key, value } });
+}
+
+/** Publish the canonical 4-value snapshot under key 'studio'. Called from
+ *  every setter in src/studio/shared-state.ts (WP-07 commit 3). */
+export function publishStudioState(snapshot: StudioPublishedState): void {
+  publishState('studio', snapshot);
+}
+
+// ─── Internal — exposed for tests / debug ─────────────────────────────────
+
+/** TEST/DEV ONLY. Tears down the cached connection so a follow-up
+ *  `connectBridge()` re-handshakes. Production code should never need this. */
+export function __resetBridge(): void {
+  _app = null;
+  _connection = null;
+  _connectionPromise = null;
+  _supabasePromise = null;
+  _contextListeners = new Set();
+}

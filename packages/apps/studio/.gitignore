@@ -1,0 +1,8 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# WP-02 (studio/wp02-schema branch) builds shared/ to disk. Its dist/ +
+# node_modules/ are scoped to that branch and never tracked here.
+shared/dist/
+shared/node_modules/
