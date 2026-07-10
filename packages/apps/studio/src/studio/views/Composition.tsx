@@ -36,6 +36,7 @@ import {
   snapMsToFrame,
 } from '../lib/time';
 import {
+  clipAtMs,
   COMPOSITION_META,
   COMPOSITION_NARRATION,
   COMPOSITION_TIMELINE,
@@ -47,6 +48,7 @@ import {
 import {
   selectCellUid,
   selectEngineMode,
+  selectHoverBeat,
   selectPlayheadMs,
   useSharedStore,
 } from '../shared-state';
@@ -54,14 +56,6 @@ import {
 const FPS = DEFAULT_FPS;
 const TOTAL_MS = COMPOSITION_TOTAL_MS;
 const SEED_MS = 8_400; // design fixture snapshot — c02 problem active
-
-function clipAtMs(ms: number): TimelineClip | null {
-  return (
-    COMPOSITION_TIMELINE.find(
-      (c) => ms >= c.start_ms && ms < c.start_ms + c.duration_ms,
-    ) ?? null
-  );
-}
 
 // ─── Inline icons for the transport right slot ───────────────────────────
 
@@ -79,9 +73,11 @@ const IconExport = () => (
 export function CompositionView() {
   const playheadMs = useSharedStore(selectPlayheadMs);
   const cellUid = useSharedStore(selectCellUid);
+  const hoverBeat = useSharedStore(selectHoverBeat);
   const engineMode = useSharedStore(selectEngineMode);
   const setPlayheadMs = useSharedStore((s) => s.setPlayheadMs);
   const setCellUid = useSharedStore((s) => s.setCellUid);
+  const setHoverBeat = useSharedStore((s) => s.setHoverBeat);
   const setEngineMode = useSharedStore((s) => s.setEngineMode);
 
   const [playing, setPlaying] = useState(false);
@@ -362,17 +358,23 @@ export function CompositionView() {
               const showMarker = c.transition && c.transition !== 'cut' && prev;
               const selected =
                 c.uid === cellUid || c.uid === activeClip?.uid ? ' is-selected' : '';
+              // Cross-linking §12 — hoverBeat carries the hovered cell's uid
+              // (same value-space cellUid uses); hovering this clip in Canvas
+              // or Script pulses the matching segment here, and vice versa.
+              const hoverLinked = hoverBeat === c.uid ? ' is-hover-link' : '';
               const glyph = clipGlyph(c);
               return (
                 <div
                   key={c.uid}
-                  className={`clip-segment${clipStateClass(c)}${selected}`}
+                  className={`clip-segment${clipStateClass(c)}${selected}${hoverLinked}`}
                   data-accent={c.accent}
                   role="button"
                   tabIndex={0}
                   aria-label={`${c.beat} cell, ${c.status ?? 'pending'}, ${Math.round(c.duration_ms / 1000)} seconds`}
                   style={{ flexBasis }}
                   onClick={() => onClipClick(c)}
+                  onMouseEnter={() => setHoverBeat(c.uid)}
+                  onMouseLeave={() => setHoverBeat(null)}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();

@@ -29,6 +29,8 @@ import {
 } from '../__stubs__/canvas';
 import {
   selectCellUid,
+  selectHoverBeat,
+  selectPlayheadMs,
   useSharedStore,
 } from '../shared-state';
 import type { Rung } from '../mcp-types';
@@ -37,6 +39,7 @@ import {
   type CellColor,
   type MockCell,
 } from '../__mocks__/cells';
+import { clipAtMs } from '../__mocks__/composition';
 
 const COLUMN_X = (col: number) => col * 200;
 const ROW_Y: Record<Rung, number> = {
@@ -98,7 +101,16 @@ function rungGlyph(rung: Rung): string {
 
 export function CanvasView() {
   const selectedCellUid = useSharedStore(selectCellUid);
+  const hoverBeat = useSharedStore(selectHoverBeat);
+  const playheadMs = useSharedStore(selectPlayheadMs);
   const setCellUid = useSharedStore((s) => s.setCellUid);
+  const setHoverBeat = useSharedStore((s) => s.setHoverBeat);
+
+  // Cross-linking §12 — "Composition scrub → playheadMs → Canvas active-cell
+  // highlight". Derived, not stored (activeCellAtPlayhead stays a selector,
+  // per shared-state.ts's deferred-selector note); shares clipAtMs with
+  // Composition so both views agree on the same [start,start+duration) window.
+  const activeAtPlayheadUid = clipAtMs(playheadMs)?.uid ?? null;
 
   const [viewport, setViewport] = useState<Viewport>({ x: 80, y: 30, scale: 0.9 });
   const [editMode, setEditMode] = useState(false);
@@ -221,18 +233,31 @@ export function CanvasView() {
             }
             const tint = THUMB_TINT[item.color];
             const isRendering = item.progress != null && item.progress < 1;
+            // Cross-linking §12 — hoverBeat/playheadMs both carry a cell uid
+            // (same value-space cellUid uses): hoverLinked pulses when this
+            // cell is hovered in Composition/Script; scrubActive rings when
+            // the Composition playhead is inside this cell's window. Distinct
+            // from state.isSelected (click-to-focus), which the canvas stub
+            // already renders via the achievement outline above.
+            const hoverLinked = hoverBeat === item.uid;
+            const scrubActive = !state.isSelected && activeAtPlayheadUid === item.uid;
             return (
               <button
                 type="button"
+                onMouseEnter={() => setHoverBeat(item.uid)}
+                onMouseLeave={() => setHoverBeat(null)}
                 className={[
                   'cell-card group rounded-md text-left transition-shadow',
                   'border border-[var(--border)] bg-surface hover:shadow-lg',
                   state.isSelected
                     ? 'outline-2 outline outline-offset-2 outline-[var(--achievement)]'
-                    : '',
+                    : scrubActive
+                      ? 'outline-2 outline outline-offset-2 outline-[var(--info,#5bb3e0)]'
+                      : '',
                   state.isEditMode
                     ? 'ring-1 ring-dashed ring-[color-mix(in_oklab,var(--achievement)_50%,transparent)]'
                     : '',
+                  hoverLinked ? ' is-hover-link' : '',
                 ].join(' ')}
                 style={{ height: CELL_H }}
               >

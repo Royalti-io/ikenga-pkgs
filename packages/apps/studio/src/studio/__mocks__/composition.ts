@@ -32,6 +32,19 @@ export interface TimelineClip {
 
 export const COMPOSITION_TOTAL_MS = 60_000;
 
+/** Cell active at a given playhead position, or null in a transition gap.
+ *  Shared by Composition (the seek/scrub surface) and Canvas (the cross-link
+ *  consumer, commit 12 — "Composition scrub → playheadMs → Canvas active-cell
+ *  highlight") so both views agree on the same [start_ms, start_ms+duration_ms)
+ *  windows without duplicating the lookup. */
+export function clipAtMs(ms: number): TimelineClip | null {
+  return (
+    COMPOSITION_TIMELINE.find(
+      (c) => ms >= c.start_ms && ms < c.start_ms + c.duration_ms,
+    ) ?? null
+  );
+}
+
 export const COMPOSITION_TIMELINE: TimelineClip[] = [
   { uid: 'c01', beat: 'hook',     accent: 'amber',   start_ms: 0,      duration_ms: 4_000,  status: 'done' },
   { uid: 'c02', beat: 'problem',  accent: 'rose',    start_ms: 4_000,  duration_ms: 8_000,  transition: 'cut',       status: 'done' },
