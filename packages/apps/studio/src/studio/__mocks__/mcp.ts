@@ -27,7 +27,7 @@ import type {
 const MOCK_PROJECT: Project = {
   project_id: 'mock-1',
   schema_version: 1,
-  archetype_id: 'arch.music_video_v1',
+  archetype_id: 'musicvideo',
   name: 'Untitled (mock)',
   aspect_ratio: '9:16',
   resolution: { w: 1080, h: 1920 },
@@ -62,24 +62,54 @@ const MOCK_BLOCKS: Block[] = [
   { id: 'blk.thumb_sketch',   kind: 'sketch',     name: 'Thumb sketch',    tags: ['sketch', 'beat-sheet'] },
 ];
 
+// The 7 P1 archetypes (designs/launcher.html's ARCHETYPES, minus the
+// non-instantiable 'custom' gallery tile — Custom archetypes are built via
+// the ArchetypeBuilder view + `archetype.save_custom`, not picked from this
+// list). `chain` reuses the existing MOCK_BLOCKS ids loosely — the mock
+// doesn't need every id to resolve to a real Block, only to be a plausible
+// string[] per the frozen ArchetypeChainEntry shape.
 const MOCK_ARCHETYPES: Archetype[] = [
   {
-    id: 'arch.music_video_v1',
-    name: 'Music Video — classic',
-    description: 'Hook → Verse → Chorus → Bridge → Outro → CTA. The default for label releases.',
+    id: 'explainer',
+    name: 'Explainer',
+    description: 'AV-script + narration. Fireship-style fast cuts. Hook → problem → agitate → solution → proof → cta.',
     chain: ['blk.intro_cu', 'blk.wide_establish', 'blk.chorus_drop', 'blk.cut_on_beat'],
   },
   {
-    id: 'arch.lyric_video_v1',
-    name: 'Lyric video',
-    description: 'Lyric-forward, fewer shots, holds typography on beats.',
+    id: 'product',
+    name: 'Product',
+    description: 'Bring-your-own UI capture; benefit-led. Feature → benefit → demo → proof → cta.',
+    chain: ['blk.wide_establish', 'blk.chorus_drop', 'blk.cut_on_beat'],
+  },
+  {
+    id: 'ai-short',
+    name: 'AI short',
+    description: 'Anchor-locked identity/style, 1–3 beats. AI-gen adapters land in P3.',
+    chain: ['blk.thumb_sketch'],
+  },
+  {
+    id: 'narrative',
+    name: 'Narrative',
+    description: 'Reads .fountain natively; beat = scene. INT./EXT. scene headings render as scene cards.',
     chain: ['blk.thumb_sketch', 'blk.cut_on_beat'],
   },
   {
-    id: 'arch.behind_scenes',
-    name: 'Behind the scenes',
-    description: 'Diaristic intro for an album rollout. Wide → CU → roll.',
-    chain: ['blk.wide_establish', 'blk.intro_cu'],
+    id: 'montage',
+    name: 'Montage',
+    description: 'EDL-style cuts over source clips; cells reference source clips w/ in/out timecodes.',
+    chain: ['blk.wide_establish', 'blk.cut_on_beat'],
+  },
+  {
+    id: 'tutorial',
+    name: 'Tutorial',
+    description: 'Numbered steps + UI capture; voiceover per step.',
+    chain: ['blk.intro_cu', 'blk.wide_establish'],
+  },
+  {
+    id: 'musicvideo',
+    name: 'Music video',
+    description: 'Beats from BPM/onset analysis (studio-beat-detect). Hook → verse → chorus → bridge → outro → cta.',
+    chain: ['blk.intro_cu', 'blk.wide_establish', 'blk.chorus_drop', 'blk.cut_on_beat'],
   },
 ];
 

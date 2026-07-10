@@ -5,14 +5,14 @@
 // header (ViewSwitcher) and body (the registered view component, or a
 // PanePlaceholder until that view's commit lands).
 //
-// This commit (5) wires layout + view routing + focus only. The concrete
-// views (Canvas/Cell/Composition/Script/Archetype) register into
-// VIEW_COMPONENTS as commits 6–11 land; the launcher pre-empt (no open
-// project → full-bleed Launcher) lands in commit 11. Cross-linking (commit
-// 12) reads the shared store the views already subscribe to — App.tsx itself
-// stays cross-link-agnostic.
+// This commit (5) wired layout + view routing + focus only; the launcher
+// pre-empt (no open project → full-bleed Launcher, G25) lands in commit 11
+// as the `!isOpen` early-return below. Cross-linking (commit 12) reads the
+// shared store the views already subscribe to — App.tsx itself stays
+// cross-link-agnostic.
 
 import { useLayoutStore } from './layout-store';
+import { useProjectStore, selectIsProjectOpen } from './project-store';
 import type { PaneIndex, ViewComponentRegistry } from './routes';
 import { LayoutSwitcher } from './components/LayoutSwitcher';
 import { ViewSwitcher } from './components/ViewSwitcher';
@@ -22,6 +22,7 @@ import { CellView } from './views/Cell';
 import { CompositionView } from './views/Composition';
 import { ScriptView } from './views/Script';
 import { ArchetypeBuilderView } from './views/ArchetypeBuilder';
+import { LauncherView } from './views/Launcher';
 
 // View component registry. Each view commit (6–11) adds its entry here.
 // Until a view registers, App.tsx falls through to PanePlaceholder for it.
@@ -106,6 +107,16 @@ function PaneRegion() {
 }
 
 export function App() {
+  const isProjectOpen = useProjectStore(selectIsProjectOpen);
+
+  // The launcher pre-empts the pane layout entirely — it isn't a sub-view
+  // and doesn't share the layout/view-switcher chrome (launcher.md §"Chrome
+  // & Navigation": "There is no pane chrome or view-switcher"). It unmounts
+  // the moment a project opens.
+  if (!isProjectOpen) {
+    return <LauncherView />;
+  }
+
   return (
     <div className="flex h-full flex-col bg-base text-fg">
       <header className="flex items-center justify-between border-b border-soft bg-sunken px-3 py-1.5">

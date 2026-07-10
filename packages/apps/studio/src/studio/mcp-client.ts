@@ -101,7 +101,7 @@ export const projectApi = {
     c.callTool<{ closed: boolean }>('project.close', { project_id }),
   list:   (c: McpClient) =>
     c.callTool<{ projects: Project[] }>('project.list'),
-  create: (c: McpClient, args: { archetype_id: string; path: string; name: string }) =>
+  create: (c: McpClient, args: { archetype_id: string; path: string; name: string; aspect_ratio?: AspectRatio }) =>
     c.callTool<{ project_id: string }>('project.create', args),
   info:   (c: McpClient, project_id: string) =>
     c.callTool<Project>('project.info', { project_id }),

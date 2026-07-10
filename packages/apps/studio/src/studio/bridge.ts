@@ -264,6 +264,18 @@ export function openLink(url: string): Promise<HostCallResult> {
   return callHostTool('host.openLink', { url });
 }
 
+/** Trust-gate seam for the Launcher's "Open folder…" affordance (10-wp07-
+ *  iframe.md commit 11 — "calls host.openFolder()"). Same shape as every
+ *  other `host.*` call: routed through the shell's `dispatchHostCall`. The
+ *  shell side of the per-folder trust gate (Tauri `pkg_studio_request_
+ *  project_access`, WP-04) isn't wired yet — in standalone/dev this call
+ *  simply rejects (no `_app`) or the shell responds `isError` until the real
+ *  command lands; the Launcher's own dialog is the mocked trust-gate UX for
+ *  now (launcher.md §"API"). */
+export function openFolder(): Promise<HostCallResult> {
+  return callHostTool('host.openFolder', {});
+}
+
 /** Publish a sidebar menu to the shell. Items: [{ id, label, icon?, badge? }].
  *  Click feedback arrives back through `hostContext.royaltiSuite.activeFeature`
  *  on the next `onhostcontextchanged`. */
