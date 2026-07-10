@@ -1,7 +1,7 @@
 {
   "name": "@ikenga/pkg-agent-ops",
-  "version": "0.2.1",
-  "description": "Agent Ops \u2014 schedule observability, run history, and failure triage over ikenga.db. Multi-file iframe pkg, no build step.",
+  "version": "0.2.2",
+  "description": "Agent Ops — schedule observability, run history, and failure triage over ikenga.db. Multi-file iframe pkg, no build step.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",

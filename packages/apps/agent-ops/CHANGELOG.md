@@ -1,5 +1,15 @@
 # @ikenga/pkg-agent-ops
 
+## 0.2.2
+
+### Patch Changes
+
+- [`3dc1a19`](https://github.com/Royalti-io/ikenga-pkgs/commit/3dc1a197b3f295f4b392170f1d5e352ab2e34064) Thanks [@nedjamez](https://github.com/nedjamez)! - Remove the stray `private: true` that contradicted the package's own
+  publishConfig.access:public and kept changesets from ever publishing it —
+  the pkg is now on npm like its 8 domain siblings.
+
+- [`70fddec`](https://github.com/Royalti-io/ikenga-pkgs/commit/70fddec5b5ec30324d44d656e0a42b32e120f2d3) Thanks [@nedjamez](https://github.com/nedjamez)! - Outbound: social media/hashtag edits now round-trip (queue + sent mappers read edited_json first, matching the newsletter mapper). Finance/agent-ops: drop the unused engine:invoke grant.
+
 ## 0.2.1
 
 ### Patch Changes
