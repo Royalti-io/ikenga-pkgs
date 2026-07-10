@@ -15,6 +15,11 @@
 @import 'tailwindcss';
 @import '@ikenga/tokens/tokens.css';
 
+/* studio-editor layer — video-domain component CSS (timeline-rail,
+ * clip-segment, waveform-strip) + the media-controls transport family. See
+ * studio-editor.css for the 00-editor-base var set + tokenization notes. */
+@import './studio-editor.css';
+
 /* ---------------------------------------------------------------------------
  * Tailwind 4 @theme map — Ikenga semantic tokens → utility names.
  *
