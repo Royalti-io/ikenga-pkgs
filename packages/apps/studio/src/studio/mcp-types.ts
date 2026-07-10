@@ -1,97 +1,76 @@
-// com.ikenga.studio · MCP surface types (LOCAL DRAFT — swaps to schema import)
+// com.ikenga.studio · MCP surface types
 //
-// The canonical types live in @ikenga/studio-schema (WP-02, commit c139ad1 on
-// branch studio/wp02-schema). Until WP-02 merges to ikenga-pkgs main, this
-// file declares the minimal subset the iframe needs against a hand-typed
-// shape that mirrors the Zod schema verbatim. WP-07 commit 16 swaps these
-// declarations to:
+// WP-07 commit 16 (G-CANVAS + schema swap, contract §6): the canonical
+// Project / Cell / Block / Archetype / RenderRecord / AssetRef / Anchor /
+// Rung / AspectRatio / BeatStatus / ShotType / RenderStatus shapes now come
+// straight from `@ikenga/studio-schema` (the frozen Zod schema — WP-02,
+// `shared/schema.ts`). This file re-exports them so every existing
+// `from './mcp-types'` / `from '../mcp-types'` import keeps resolving
+// unchanged across the pkg, and layers on the small set of P1 UI/MCP-local
+// additions the schema deliberately does not define:
 //
-//   import type {
-//     Project, Cell, Beat, Block, Archetype, RenderRecord, ExportRecord, …
-//   } from '@ikenga/studio-schema';
+//   - `Beat`             — the script-level beat summary `storyboard.read` /
+//                           `block.instantiate` echo back (id/label/order/
+//                           status/duration_ms). Distinct from the schema's
+//                           `ScriptBeat` (lives on `Project.script`, carries
+//                           vo/scene_id/shot_id, written by the Script view —
+//                           not the storyboard-read beat rail).
+//   - `ExportRecord`      — P1 sidecar export-job bookkeeping; not part of
+//                           the persisted storyboard document.
+//   - `EngineCapability`  — the render-engine capability matrix (G2); a
+//                           sidecar/MCP-server concept, not a schema entity.
+//   - Event payloads      — the `pkg://com.ikenga.studio/<event>` channel
+//                           shapes (09 §WP-03 PRODUCES); transport, not schema.
 //
-// The mock client (./__mocks__/mcp.ts) must satisfy these types so the day
-// the swap happens, every consumer compiles unchanged. If the swap surfaces
-// a type drift (the local shape doesn't match the schema), the build breaks
-// loudly at commit 16 — exactly the behaviour 09's mock contract asks for.
+// `RenderStatus` drift (contract §6): the frozen schema has NO `'idle'`
+// (`'queued' | 'running' | 'done' | 'failed' | 'cancelled'` only). `'idle'`
+// is a UI-local cell-editor concept — see `views/Cell.tsx`'s own local
+// `RenderState` — and never belonged on the wire type; it is NOT re-added.
 
-// ─── Enums / brands ─────────────────────────────────────────────────────
+import type { BeatStatus, AspectRatio, Rung } from '@ikenga/studio-schema';
 
-export type Rung = '0_beat_sheet' | '1_lofi' | '2_hifi';
-export type AspectRatio = '16:9' | '9:16' | '1:1';
-export type BeatStatus = 'pending' | 'pending-review' | 'approved' | 'needs-rework';
-export type ShotType =
-  | 'ews' | 'ws' | 'ls' | 'fs' | 'ms' | 'cu' | 'ecu'
-  | 'ots' | 'pov' | 'insert' | 'aerial' | 'unset';
-export type RenderStatus = 'idle' | 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+export type {
+  // Enums / brands
+  Rung,
+  AspectRatio,
+  BeatStatus,
+  ShotType,
+  CameraMove,
+  RenderStatus,
+  ProjectMode,
+  ScriptArchetype,
+  // Core entities
+  AssetRef,
+  Anchor,
+  Block,
+  BlockParameter,
+  BlockParameterType,
+  Archetype,
+  ArchetypeChainEntry,
+  Script,
+  ScriptBeat,
+  Comment,
+  NarrationBlock,
+  NarrationWord,
+  AudioAnalysis,
+  RenderRecord,
+  Cell,
+  Project,
+} from '@ikenga/studio-schema';
 
-export const RUNG_DIR: Record<Rung, string> = {
-  '0_beat_sheet': 'beatsheet',
-  '1_lofi':       'lofi',
-  '2_hifi':       'hifi',
-};
-export const rungDir = (r: Rung): string => RUNG_DIR[r];
+export { RUNG_DIR, rungDir, DEFAULT_RESOLUTION } from '@ikenga/studio-schema';
 
-// ─── Core entities ──────────────────────────────────────────────────────
+// ─── P1-local additions (deliberately NOT in @ikenga/studio-schema) ─────
 
-export interface AssetRef {
-  uri: string;
-  mime?: string;
-}
-
-export interface RenderRecord {
-  record_id: string;
-  cell_uid: string;
-  rung: Rung;
-  engine: string;
-  status: RenderStatus;
-  frame?: number;        // 0..1 progress fraction
-  output_uri?: string;   // present on status='done'
-  error?: string;        // present on status='failed'
-}
-
-export interface Cell {
-  uid: string;
-  beat_id: string;
-  rung: Rung;
-  approved: boolean;
-  shot_type?: ShotType;
-  text?: string;
-  asset?: AssetRef;
-  block_id?: string;
-  render?: { latest?: RenderRecord };
-}
-
+/** Script-level beat summary as `storyboard.read` / `block.instantiate` echo
+ *  it back — the beat rail's order + duration_ms + status bookkeeping.
+ *  See file header — distinct from the schema's `ScriptBeat`. */
 export interface Beat {
   id: string;
   label: string;     // e.g. "Hook" / "Verse" / "Chorus" / "Bridge" / "CTA"
   order: number;
   status?: BeatStatus;
   duration_ms?: number;
-}
-
-export interface Project {
-  project_id: string;
-  schema_version: 1;
-  archetype_id: string | null;
-  name: string;
-  aspect_ratio: AspectRatio;
-  resolution: { w: number; h: number };
-  approved: boolean;
-}
-
-export interface Block {
-  id: string;
-  kind: 'beat' | 'transition' | 'sketch';
-  name: string;
-  tags: string[];
-}
-
-export interface Archetype {
-  id: string;
-  name: string;
-  description: string;
-  chain: string[];    // block ids in order
 }
 
 export interface ExportRecord {

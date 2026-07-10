@@ -79,6 +79,9 @@ importers:
       '@excalidraw/excalidraw':
         specifier: ^0.18.1
         version: 0.18.1(@types/react-dom@19.2.3(@types/react@19.2.15))(@types/react@19.2.15)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@ikenga/contract':
+        specifier: ^0.13.0
+        version: 0.13.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@ikenga/studio-schema':
         specifier: workspace:*
         version: link:shared
@@ -1087,6 +1090,17 @@ packages:
 
   '@ikenga/contract@0.11.0':
     resolution: {integrity: sha512-Uf9FDJURFqj9UkoYKqiaqPsCICK3b12gLOHikXLpPz9v0Sw3IzOdB2E6gfJZ/AC29K9pIdj1z2T7Zm2+HjAlxw==}
+    peerDependencies:
+      react: ^19.0.0
+      react-dom: ^19.0.0
+    peerDependenciesMeta:
+      react:
+        optional: true
+      react-dom:
+        optional: true
+
+  '@ikenga/contract@0.13.0':
+    resolution: {integrity: sha512-I3rcK7PZsFWafLziw7YXQTXzZRT8ajtSfIFDEKTe4WIP9obPZUOT7ux9VF88msYooJRj9+MB/BKYgGuIvhGyow==}
     peerDependencies:
       react: ^19.0.0
       react-dom: ^19.0.0
@@ -4540,6 +4554,14 @@ snapshots:
       import-meta-resolve: 4.2.0
 
   '@ikenga/contract@0.11.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+    dependencies:
+      zod: 3.25.76
+      zod-to-json-schema: 3.25.2(zod@3.25.76)
+    optionalDependencies:
+      react: 19.2.6
+      react-dom: 19.2.6(react@19.2.6)
+
+  '@ikenga/contract@0.13.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
       zod: 3.25.76
       zod-to-json-schema: 3.25.2(zod@3.25.76)

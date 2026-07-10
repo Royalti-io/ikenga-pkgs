@@ -1,10 +1,10 @@
 // com.ikenga.studio · Canvas view
 //
-// Beat × rung storyboard. Mounts the local stub of @ikenga/contract/canvas
-// (swapped to the real import in WP-07 commit 16, post-G-CANVAS) with a fixed
-// set of mock cells so the view is visually credible before the MCP wiring
-// in commit 12 lands. Reads `cellUid` from the shared store for selection
-// and writes back on every selection change, which is what makes
+// Beat × rung storyboard. Mounts @ikenga/contract/canvas (WP-07 commit 16 —
+// G-CANVAS: the local stub is gone, this is the real extracted home-page
+// Canvas) with a fixed set of mock cells so the view is visually credible
+// before the MCP wiring lands. Reads `cellUid` from the shared store for
+// selection and writes back on every selection change, which is what makes
 // click-to-focus cross-linking light up across panes once the other views
 // register their components.
 //
@@ -13,20 +13,19 @@
 // is hand-rolled here; the rung gutter (hi-fi / lo-fi / beat sheet) and
 // the cells are rendered as canvas items so they pan with the surface.
 //
-// Anchor bar, render-progress overlays, agent activity feed, and the right-
-// side details panel are not in scope for this commit — they land alongside
-// the cross-link work (commit 12) and the empty/edge-state pass (commit 13).
+// Anchor bar, render-progress overlays, and the agent activity feed are not
+// in scope for this commit.
 
 import { useMemo, useRef, useState } from 'react';
 
 import {
   Canvas,
-  asItemId,
   type CanvasHandle,
   type ItemId,
   type Placement,
   type Viewport,
-} from '../__stubs__/canvas';
+} from '@ikenga/contract/canvas';
+import '@ikenga/contract/canvas/canvas.css';
 import {
   selectCellUid,
   selectHoverBeat,
@@ -40,6 +39,12 @@ import {
   type MockCell,
 } from '../__mocks__/cells';
 import { clipAtMs } from '../__mocks__/composition';
+
+// @ikenga/contract/canvas ships `ItemId` as an opaque branded string but
+// (unlike the pre-swap __stubs__/canvas.tsx mirror) does not export a helper
+// to brand one — the real Canvas's consumers all mint their own ids from
+// already-typed sources. This is the same one-line cast the stub had.
+const asItemId = (s: string): ItemId => s as ItemId;
 
 const COLUMN_X = (col: number) => col * 200;
 const ROW_Y: Record<Rung, number> = {

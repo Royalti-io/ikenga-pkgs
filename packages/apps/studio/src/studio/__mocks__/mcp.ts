@@ -13,6 +13,19 @@
 // (0.3 → 0.7 → 1.0) and one render/done. Subscribers registered before the
 // call get all of them; subscribers registered mid-stream miss earlier
 // frames — same semantics as the real WP-06 pkg-event bus, no replay.
+//
+// Schema conformance (WP-07 commit 16, contract §6): Project / Cell / Block /
+// Archetype / RenderRecord below are the real `@ikenga/studio-schema` output
+// types (re-exported through ../mcp-types), not the old local draft. Two
+// naming drifts the draft got wrong, fixed here:
+//   - Project has no `project_id`/`name` — it's `slug`/`title`. The MCP-call
+//     handle callers pass around (`project.open` etc.) is a separate opaque
+//     string (`MOCK_PROJECT_ID` below), not a field read off the entity.
+//   - RenderRecord's id field is `id`, not `record_id`, and it carries
+//     `output: AssetRef` (not `output_uri: string`) — `record_id` stays a
+//     local name only inside the render/progress|done EVENT payloads
+//     (mcp-types.ts's RenderProgressEvent/RenderDoneEvent), which are
+//     transport shapes the schema doesn't define at all.
 
 import type {
   McpClient,
@@ -24,14 +37,30 @@ import type {
 
 // ─── Fixture data ───────────────────────────────────────────────────────
 
+/** Opaque MCP-call handle for the one open project. NOT a field on `Project`
+ *  (the schema entity's own identity is `slug`) — this is what `project.open`
+ *  / `.create` / `.info` etc. take/return as their `project_id` argument. */
+const MOCK_PROJECT_ID = 'mock-1';
+
+const NOW = '2026-07-10T00:00:00.000Z';
+
 const MOCK_PROJECT: Project = {
-  project_id: 'mock-1',
   schema_version: 1,
+  slug: MOCK_PROJECT_ID,
+  title: 'Untitled (mock)',
+  created_at: NOW,
+  updated_at: NOW,
+  mode: 'studio',
   archetype_id: 'musicvideo',
-  name: 'Untitled (mock)',
   aspect_ratio: '9:16',
   resolution: { w: 1080, h: 1920 },
+  current_rung: 0,
+  anchors: [],
+  script: null,
+  cells: [],
+  narration: null,
   approved: false,
+  metadata: {},
 };
 
 const MOCK_BEATS: Beat[] = [
@@ -43,74 +72,149 @@ const MOCK_BEATS: Beat[] = [
   { id: 'b.cta',    label: 'CTA',    order: 6, duration_ms:  3000, status: 'pending' },
 ];
 
+/** A fully-populated rung workflow triple, defaulted to 'pending' — nothing
+ *  writes per-rung status in P1 (schema.ts's own note on BeatStatusSchema);
+ *  the canvas reads `Cell.approved`, not this. */
+function emptyRungs(): Cell['rungs'] {
+  return {
+    '0_beat_sheet': { status: 'pending' },
+    '1_lofi': { status: 'pending' },
+    '2_hifi': { status: 'pending' },
+  };
+}
+
+/** Builds a schema-conformant Cell from the mock's presentation-era fields.
+ *  `text` (the old draft's ad-hoc shot description) maps to the schema's
+ *  `action` field (visual description) — the closest real slot for it. */
+function mockCell(args: {
+  uid: string; beat_id: string; rung: Cell['rung']; approved: boolean;
+  shot_type?: Cell['shot_type']; text: string;
+}): Cell {
+  return {
+    uid: args.uid,
+    beat_id: args.beat_id,
+    rung: args.rung,
+    index: 0,
+    label: args.beat_id,
+    time: { start: 0, end: 0 },
+    frames: { start: 0, end: 0 },
+    narration_excerpt: null,
+    shot_type: args.shot_type ?? 'unset',
+    camera_move: 'unset',
+    duration_ms: 0,
+    prompt: '',
+    anchors: [],
+    action: args.text,
+    renderer: 'auto',
+    content_path: `cells/mock/${args.uid}/content.html`,
+    notes: '',
+    reference_layer: [],
+    rungs: emptyRungs(),
+    comments: [],
+    approved: args.approved,
+    last_edited: NOW,
+    renders: [],
+    metadata: {},
+  };
+}
+
 // 6 cells, one per beat, mixed rungs per the 09 mock contract.
 const MOCK_CELLS: Cell[] = [
-  { uid: 'c.hook.h',    beat_id: 'b.hook',   rung: '2_hifi',       approved: true,  shot_type: 'cu',  text: 'Eye-level on talent — vinyl spinning bg, gold sparks.' },
-  { uid: 'c.verse1.l',  beat_id: 'b.verse1', rung: '1_lofi',       approved: false, shot_type: 'ws',  text: 'Wide of studio loft, sun raking through window blinds.' },
-  { uid: 'c.chorus.h',  beat_id: 'b.chorus', rung: '2_hifi',       approved: false, shot_type: 'fs',  text: 'Full shot — talent on rooftop, city at golden hour, crane down.' },
-  { uid: 'c.bridge.b',  beat_id: 'b.bridge', rung: '0_beat_sheet', approved: false,                  text: 'Quiet moment — close-up hands on console, dawn-blue lit.' },
-  { uid: 'c.outro.l',   beat_id: 'b.outro',  rung: '1_lofi',       approved: false, shot_type: 'ms',  text: 'Talent walks away, frame holds on empty room.' },
-  { uid: 'c.cta.b',     beat_id: 'b.cta',    rung: '0_beat_sheet', approved: false,                  text: 'Logo + drop date + handle. Hold 2s.' },
+  mockCell({ uid: 'c.hook.h',   beat_id: 'b.hook',   rung: '2_hifi',       approved: true,  shot_type: 'cu', text: 'Eye-level on talent — vinyl spinning bg, gold sparks.' }),
+  mockCell({ uid: 'c.verse1.l', beat_id: 'b.verse1', rung: '1_lofi',       approved: false, shot_type: 'ws', text: 'Wide of studio loft, sun raking through window blinds.' }),
+  mockCell({ uid: 'c.chorus.h', beat_id: 'b.chorus', rung: '2_hifi',       approved: false, shot_type: 'fs', text: 'Full shot — talent on rooftop, city at golden hour, crane down.' }),
+  mockCell({ uid: 'c.bridge.b', beat_id: 'b.bridge', rung: '0_beat_sheet', approved: false,                  text: 'Quiet moment — close-up hands on console, dawn-blue lit.' }),
+  mockCell({ uid: 'c.outro.l',  beat_id: 'b.outro',  rung: '1_lofi',       approved: false, shot_type: 'ms', text: 'Talent walks away, frame holds on empty room.' }),
+  mockCell({ uid: 'c.cta.b',    beat_id: 'b.cta',    rung: '0_beat_sheet', approved: false,                  text: 'Logo + drop date + handle. Hold 2s.' }),
 ];
 
+function mockBlock(args: {
+  id: string; kind: Block['kind']; name: string; tags: string[];
+}): Block {
+  return {
+    id: args.id,
+    kind: args.kind,
+    name: args.name,
+    description: args.name,
+    default_renderer: 'auto',
+    template_path: `blocks/${args.id.replace(/\./g, '/')}/template.html`,
+    parameters: [],
+    tags: args.tags,
+    metadata: {},
+  };
+}
+
 const MOCK_BLOCKS: Block[] = [
-  { id: 'blk.intro_cu',       kind: 'beat',       name: 'Intro CU',        tags: ['music-video', 'opener'] },
-  { id: 'blk.wide_establish', kind: 'beat',       name: 'Wide establish',  tags: ['music-video'] },
-  { id: 'blk.chorus_drop',    kind: 'beat',       name: 'Chorus drop',     tags: ['music-video', 'energy'] },
-  { id: 'blk.fade_to_white',  kind: 'transition', name: 'Fade → white',    tags: ['transition'] },
-  { id: 'blk.cut_on_beat',    kind: 'transition', name: 'Cut on beat',     tags: ['transition', 'rhythm'] },
-  { id: 'blk.thumb_sketch',   kind: 'sketch',     name: 'Thumb sketch',    tags: ['sketch', 'beat-sheet'] },
+  mockBlock({ id: 'blk.intro_cu',       kind: 'beat',       name: 'Intro CU',       tags: ['music-video', 'opener'] }),
+  mockBlock({ id: 'blk.wide_establish', kind: 'beat',       name: 'Wide establish', tags: ['music-video'] }),
+  mockBlock({ id: 'blk.chorus_drop',    kind: 'beat',       name: 'Chorus drop',    tags: ['music-video', 'energy'] }),
+  mockBlock({ id: 'blk.fade_to_white',  kind: 'transition', name: 'Fade → white',   tags: ['transition'] }),
+  mockBlock({ id: 'blk.cut_on_beat',    kind: 'transition', name: 'Cut on beat',    tags: ['transition', 'rhythm'] }),
+  mockBlock({ id: 'blk.thumb_sketch',   kind: 'sketch',     name: 'Thumb sketch',   tags: ['sketch', 'beat-sheet'] }),
 ];
+
+function mockArchetype(args: {
+  id: string; name: string; description: string; blockIds: string[];
+}): Archetype {
+  return {
+    id: args.id,
+    name: args.name,
+    description: args.description,
+    builtin: true,
+    chain: args.blockIds.map((block_id) => ({ block_id, bindings: {} })),
+    metadata: {},
+  };
+}
 
 // The 7 P1 archetypes (designs/launcher.html's ARCHETYPES, minus the
 // non-instantiable 'custom' gallery tile — Custom archetypes are built via
 // the ArchetypeBuilder view + `archetype.save_custom`, not picked from this
 // list). `chain` reuses the existing MOCK_BLOCKS ids loosely — the mock
 // doesn't need every id to resolve to a real Block, only to be a plausible
-// string[] per the frozen ArchetypeChainEntry shape.
+// `ArchetypeChainEntry[]` per the frozen schema (block_id + bindings, Round-2).
 const MOCK_ARCHETYPES: Archetype[] = [
-  {
+  mockArchetype({
     id: 'explainer',
     name: 'Explainer',
     description: 'AV-script + narration. Fireship-style fast cuts. Hook → problem → agitate → solution → proof → cta.',
-    chain: ['blk.intro_cu', 'blk.wide_establish', 'blk.chorus_drop', 'blk.cut_on_beat'],
-  },
-  {
+    blockIds: ['blk.intro_cu', 'blk.wide_establish', 'blk.chorus_drop', 'blk.cut_on_beat'],
+  }),
+  mockArchetype({
     id: 'product',
     name: 'Product',
     description: 'Bring-your-own UI capture; benefit-led. Feature → benefit → demo → proof → cta.',
-    chain: ['blk.wide_establish', 'blk.chorus_drop', 'blk.cut_on_beat'],
-  },
-  {
+    blockIds: ['blk.wide_establish', 'blk.chorus_drop', 'blk.cut_on_beat'],
+  }),
+  mockArchetype({
     id: 'ai-short',
     name: 'AI short',
     description: 'Anchor-locked identity/style, 1–3 beats. AI-gen adapters land in P3.',
-    chain: ['blk.thumb_sketch'],
-  },
-  {
+    blockIds: ['blk.thumb_sketch'],
+  }),
+  mockArchetype({
     id: 'narrative',
     name: 'Narrative',
     description: 'Reads .fountain natively; beat = scene. INT./EXT. scene headings render as scene cards.',
-    chain: ['blk.thumb_sketch', 'blk.cut_on_beat'],
-  },
-  {
+    blockIds: ['blk.thumb_sketch', 'blk.cut_on_beat'],
+  }),
+  mockArchetype({
     id: 'montage',
     name: 'Montage',
     description: 'EDL-style cuts over source clips; cells reference source clips w/ in/out timecodes.',
-    chain: ['blk.wide_establish', 'blk.cut_on_beat'],
-  },
-  {
+    blockIds: ['blk.wide_establish', 'blk.cut_on_beat'],
+  }),
+  mockArchetype({
     id: 'tutorial',
     name: 'Tutorial',
     description: 'Numbered steps + UI capture; voiceover per step.',
-    chain: ['blk.intro_cu', 'blk.wide_establish'],
-  },
-  {
+    blockIds: ['blk.intro_cu', 'blk.wide_establish'],
+  }),
+  mockArchetype({
     id: 'musicvideo',
     name: 'Music video',
     description: 'Beats from BPM/onset analysis (studio-beat-detect). Hook → verse → chorus → bridge → outro → cta.',
-    chain: ['blk.intro_cu', 'blk.wide_establish', 'blk.chorus_drop', 'blk.cut_on_beat'],
-  },
+    blockIds: ['blk.intro_cu', 'blk.wide_establish', 'blk.chorus_drop', 'blk.cut_on_beat'],
+  }),
 ];
 
 const MOCK_ENGINES: EngineCapability[] = [
@@ -181,10 +285,10 @@ function callMockTool(
 ): unknown {
   switch (name) {
     // ─── project ───────────────────────────────────────────────────
-    case 'project.open':   return { project_id: MOCK_PROJECT.project_id };
+    case 'project.open':   return { project_id: MOCK_PROJECT_ID };
     case 'project.close':  return { closed: true };
     case 'project.list':   return { projects: [MOCK_PROJECT] };
-    case 'project.create': return { project_id: MOCK_PROJECT.project_id };
+    case 'project.create': return { project_id: MOCK_PROJECT_ID };
     case 'project.info':   return MOCK_PROJECT;
 
     // ─── storyboard ────────────────────────────────────────────────
@@ -204,7 +308,7 @@ function callMockTool(
       MOCK_CELLS[idx] = { ...MOCK_CELLS[idx], ...patch } as Cell;
       // Mirror what WP-03's sidecar will publish on every write.
       queueMicrotask(() => emit(hub, 'cells/changed', {
-        project_id: MOCK_PROJECT.project_id,
+        project_id: MOCK_PROJECT_ID,
         changed_uids: [uid],
       }));
       return MOCK_CELLS[idx];
@@ -225,7 +329,7 @@ function callMockTool(
       if (idx === -1) throw new Error(`mock: cell ${uid} not found`);
       MOCK_CELLS[idx] = { ...MOCK_CELLS[idx], approved };
       queueMicrotask(() => emit(hub, 'cells/changed', {
-        project_id: MOCK_PROJECT.project_id,
+        project_id: MOCK_PROJECT_ID,
         changed_uids: [uid],
       }));
       return { ok: true };
@@ -257,10 +361,13 @@ function callMockTool(
     case 'render.list_engines': return { engines: MOCK_ENGINES };
     case 'render.status': {
       const recordId = args.record_id as string;
+      // Schema field is `id`, not `record_id` (contract §6 — record_id stays
+      // a name local to the render/progress|done EVENT payloads above).
       const record: RenderRecord = {
-        record_id: recordId, cell_uid: MOCK_CELLS[0].uid, rung: '2_hifi',
-        engine: 'hf', status: 'done', frame: 1.0,
-        output_uri: `mock://renders/${recordId}.mp4`,
+        id: recordId, cell_uid: MOCK_CELLS[0].uid,
+        engine: 'hf', variant: 'default', status: 'done',
+        output: { uri: `mock://renders/${recordId}.mp4` },
+        metadata: {},
       };
       return record;
     }
@@ -286,10 +393,10 @@ function callMockTool(
     case 'block.instantiate': {
       // Echo a synthetic beat + one cell so the archetype builder can render.
       const beat: Beat = { id: `b.mock-${Date.now()}`, label: 'New beat', order: 99, duration_ms: 6000 };
-      const cell: Cell = {
+      const cell = mockCell({
         uid: `c.mock-${Date.now()}`, beat_id: beat.id, rung: '0_beat_sheet',
         approved: false, text: 'Inserted from block (mock).',
-      };
+      });
       return { beat, cells: [cell] };
     }
 
@@ -315,7 +422,7 @@ function callMockTool(
     case 'export.status': {
       const exportId = args.export_id as string;
       return {
-        export_id: exportId, project_id: MOCK_PROJECT.project_id,
+        export_id: exportId, project_id: MOCK_PROJECT_ID,
         status: 'done', output_uri: 'mock://exports/latest.mp4',
       };
     }

@@ -19,6 +19,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@excalidraw/excalidraw": "^0.18.1",
+    "@ikenga/contract": "^0.13.0",
     "@ikenga/studio-schema": "workspace:*",
     "@ikenga/tokens": "^0.3.0",
     "@ikenga/ui-lib": "workspace:*",
