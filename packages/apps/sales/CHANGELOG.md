@@ -1,5 +1,11 @@
 # @ikenga/pkg-sales
 
+## 0.4.0
+
+### Minor Changes
+
+- [`4c6a2b4`](https://github.com/Royalti-io/ikenga-pkgs/commit/4c6a2b4b608b41cd4ebaed5a1426d4f2463c4db6) Thanks [@nedjamez](https://github.com/nedjamez)! - Operator identity now comes from hostContext.operator instead of a hardcoded handle. "Mine" filters, owner fallbacks, and avatar initials derive from the shell-provided operator; when absent, dispatch ux_mode fails safe to 'confirm' (never 'silent' for an unknown operator).
+
 ## 0.3.0
 
 ### Minor Changes
