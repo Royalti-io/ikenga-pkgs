@@ -168,15 +168,24 @@ export function CompositionView() {
   const renderedCount = COMPOSITION_TIMELINE.filter((c) => c.status === 'done').length;
   const playheadPct = Math.min(100, Math.max(0, (playheadMs / TOTAL_MS) * 100));
 
+  // All 6 RenderStatus values (contract §6 — no 'idle', that's UI-local to
+  // the Cell editor only) get a distinct clip-segment treatment; `undefined`
+  // (no render record yet) is the 7th, UI-local "pending" state.
   const clipStateClass = (c: TimelineClip): string => {
     if (c.status === 'running') return ' is-rendering';
     if (c.status === 'queued') return ' is-queued';
+    if (c.status === 'done') return ' is-done';
+    if (c.status === 'failed') return ' is-failed';
+    if (c.status === 'cancelled') return ' is-cancelled';
     if (c.status === undefined) return ' is-pending';
     return '';
   };
   const clipGlyph = (c: TimelineClip): string | null => {
     if (c.status === 'running') return '◐';
     if (c.status === 'queued' || c.status === undefined) return '○';
+    if (c.status === 'done') return '✓';
+    if (c.status === 'failed') return '⚠';
+    if (c.status === 'cancelled') return '✕';
     return null;
   };
 
@@ -222,6 +231,21 @@ export function CompositionView() {
       </button>
     </>
   );
+
+  // Empty edge state (contract §8 commit-13, states-empty.html parity): no
+  // cells have materialized on the timeline yet (pre archetype.instantiate,
+  // or a freshly-created project). Matches Script.tsx's existing empty-state
+  // convention for visual consistency across sub-views.
+  if (COMPOSITION_TIMELINE.length === 0) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-2 bg-base p-8 text-center">
+        <span className="font-display text-sm text-fg-muted">Nothing to play yet</span>
+        <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">
+          render cells to populate the timeline
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full min-h-0 flex-col overflow-auto bg-base" data-workspace="studio">
@@ -288,7 +312,11 @@ export function CompositionView() {
                   ? 'rendering'
                   : activeClip.status === 'queued'
                     ? 'queued'
-                    : 'pending'
+                    : activeClip.status === 'failed'
+                      ? 'failed'
+                      : activeClip.status === 'cancelled'
+                        ? 'cancelled'
+                        : 'pending'
           }
           ariaLabel={
             activeClip
@@ -344,8 +372,26 @@ export function CompositionView() {
                 {activeClip.uid} · {activeClip.beat}
               </div>
               <PreviewStatus
-                glyph={activeClip.status === 'running' ? '◐' : '○'}
+                glyph={
+                  activeClip.status === 'running'
+                    ? '◐'
+                    : activeClip.status === 'failed'
+                      ? '⚠'
+                      : activeClip.status === 'cancelled'
+                        ? '✕'
+                        : '○'
+                }
                 text={activeClip.status ?? 'pending'}
+                action={
+                  activeClip.status === 'failed' ? (
+                    // Local-only for now — same "not yet MCP-wired" stage as
+                    // the "Re-render all" button above (Wave 3 lights up
+                    // render.retry against the real MCP server).
+                    <button type="button" className="btn btn-sm btn-ghost" aria-label={`Retry render for ${activeClip.uid}`}>
+                      ↺ Retry
+                    </button>
+                  ) : undefined
+                }
               />
             </div>
           )}

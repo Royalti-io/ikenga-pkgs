@@ -260,6 +260,13 @@
   text-transform: uppercase;
   color: var(--fg-faint);
 }
+.preview-status-action { margin-top: var(--space-1); }
+
+/* RenderStatus 'failed' / 'cancelled' on the preview surface (contract §6/
+   §8 commit-13 — states-cell.html parity). */
+.preview-surface.is-failed { background: var(--beat-accent-rose-soft); }
+.preview-surface.is-failed .preview-status-glyph { color: var(--beat-accent-rose); }
+.preview-surface.is-cancelled .preview-status-glyph { color: var(--fg-faint); }
 .preview-engine-note {
   margin-top: var(--space-4);
   font-family: var(--font-mono);
@@ -360,6 +367,33 @@
 }
 .clip-segment.is-pending .clip-segment__label,
 .clip-segment.is-pending .clip-segment__glyph { color: var(--fg-faint); }
+
+/* RenderStatus 'done' (contract §6, the frozen 6-status enum) — a subtle
+   affirmative glyph, no re-tint (the beat-accent colour already reads as
+   "final"). */
+.clip-segment.is-done .clip-segment__glyph { color: var(--beat-accent-emerald); }
+
+/* RenderStatus 'failed' — error tint overrides the beat-accent background so
+   a failed clip reads as broken regardless of which beat it belongs to. */
+.clip-segment.is-failed {
+  background: var(--beat-accent-rose-soft) !important;
+  box-shadow: inset 0 0 0 1px var(--beat-accent-rose-border);
+}
+.clip-segment.is-failed .clip-segment__label,
+.clip-segment.is-failed .clip-segment__glyph { color: var(--beat-accent-rose); }
+
+/* RenderStatus 'cancelled' — dimmed + struck, distinct from the UI-local
+   'pending' (no render record at all) dim treatment above. */
+.clip-segment.is-cancelled {
+  opacity: 0.5;
+  background: var(--bg-sunken) !important;
+}
+.clip-segment.is-cancelled .clip-segment__label {
+  color: var(--fg-faint);
+  text-decoration: line-through;
+  text-decoration-color: var(--border-soft);
+}
+.clip-segment.is-cancelled .clip-segment__glyph { color: var(--fg-faint); }
 
 .clip-segment.is-selected { box-shadow: inset 0 0 0 2px var(--beat-accent-amber); }
 

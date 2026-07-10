@@ -6,12 +6,22 @@
 // It only supplies the framed background + the not-ready status affordance.
 //
 // Class API (studio-editor layer): .preview-surface (.is-rendering /
-// .is-queued / .is-pending) / .preview-surface-content · .preview-status /
-// .preview-status-glyph / .preview-status-text · .media-thumb
+// .is-queued / .is-pending / .is-failed / .is-cancelled) /
+// .preview-surface-content · .preview-status / .preview-status-glyph /
+// .preview-status-text / .preview-status-action · .media-thumb
 
 import type { ReactNode } from 'react';
 
-export type PreviewStatusKind = 'ready' | 'rendering' | 'queued' | 'pending';
+export type PreviewStatusKind =
+  | 'ready'
+  | 'rendering'
+  | 'queued'
+  | 'pending'
+  // Added for contract §8 commit-13 (states-cell.html parity) — the frozen
+  // 6-value RenderStatus enum has no home elsewhere for these on the
+  // preview surface, so 'failed'/'cancelled' round out the not-ready set.
+  | 'failed'
+  | 'cancelled';
 
 export interface PreviewSurfaceProps {
   /** Drives the state class; 'ready' shows the framed engine content. */
@@ -40,18 +50,23 @@ export function PreviewSurface({
 // ─── Status overlay (composed as PreviewSurface children when not ready) ──
 
 export interface PreviewStatusProps {
-  /** ◐ (rendering) · ○ (queued/pending). */
+  /** ◐ (rendering) · ○ (queued/pending) · ⚠ (failed) · ✕ (cancelled). */
   glyph?: string;
   text: string;
+  /** Optional affordance row (e.g. a Retry button for a failed render). The
+   *  consumer owns the click handler/MCP call — this component stays
+   *  domain-free. */
+  action?: ReactNode;
 }
 
-export function PreviewStatus({ glyph = '○', text }: PreviewStatusProps) {
+export function PreviewStatus({ glyph = '○', text, action }: PreviewStatusProps) {
   return (
     <div className="preview-status">
       <span className="preview-status-glyph" aria-hidden="true">
         {glyph}
       </span>
       <span className="preview-status-text">{text}</span>
+      {action && <div className="preview-status-action">{action}</div>}
     </div>
   );
 }
