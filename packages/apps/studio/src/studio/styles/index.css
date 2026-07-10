@@ -17,8 +17,14 @@
 
 /* studio-editor layer — video-domain component CSS (timeline-rail,
  * clip-segment, waveform-strip) + the media-controls transport family. See
- * studio-editor.css for the 00-editor-base var set + tokenization notes. */
-@import './studio-editor.css';
+ * studio-editor.css for the 00-editor-base var set + tokenization notes.
+ *
+ * Imported INTO a real `studio-editor` cascade layer (contract §2 / G-09): a
+ * plain unlayered @import here would sit above ALL of Tailwind's layers
+ * (theme/base/components/utilities) — the latent §2 violation. As a named
+ * layer it composes cleanly; declared after `tailwindcss`, it still wins over
+ * utilities exactly as the unlayered import did, so there is no regression. */
+@import './studio-editor.css' layer(studio-editor);
 
 /* ---------------------------------------------------------------------------
  * Tailwind 4 @theme map — Ikenga semantic tokens → utility names.
@@ -130,13 +136,19 @@ html, body, #root {
  * own bespoke focus styles (.clip-segment / .scrubber / .transport-btn / .seg
  * button — class selectors in studio-editor.css) always win; every interactive
  * element OUTSIDE Composition gets this consistent ring.
+ *
+ * Composition lives in a cascade layer now (studio-editor), so its focus styles
+ * would LOSE to this unlayered rule — the `:where(:not(.composition-frame *))`
+ * guard excludes Composition's interactive elements entirely, so the layered
+ * .scrubber / .transport-btn / .clip-segment / .seg-button focus rings own
+ * their look. Both `:where()` wrappers keep specificity at 0.
  * ------------------------------------------------------------------------- */
 
 :where(
   button, a[href], input, select, textarea,
   [role='button'], [role='tab'], [role='slider'],
   [tabindex]:not([tabindex='-1'])
-):focus-visible {
+):where(:not(.composition-frame *)):focus-visible {
   outline: 2px solid var(--info, #5bb3e0);
   outline-offset: 2px;
 }
