@@ -29,7 +29,7 @@
       {
         "path": "/studio",
         "kind": "iframe",
-        "source": "dist/studio/index.html"
+        "source": "dist/index.html"
       }
     ],
     "csp": {
