@@ -8,6 +8,14 @@ import tailwindcss from '@tailwindcss/vite';
 // index.css so utilities like `bg-base` / `text-fg` resolve to the active
 // theme's CSS vars. Nothing externalized — views, store, MCP mock all bundle.
 export default defineConfig({
+  // Relative base: the shell's iframe content server serves this bundle out
+  // of dist/studio via a per-request token URL, not from the site root, and
+  // on WebKitGTK/Linux <base href> is ignored inside a srcdoc iframe — only
+  // relative asset URLs get inlined by inline_subresources(). A root-absolute
+  // '/assets/..' (the vite default) is skipped by both absolutize + inline
+  // paths in shell/src-tauri/src/pkg_content/mod.rs, so the iframe would load
+  // no JS/CSS and render a blank pane. Keep this relative.
+  base: './',
   plugins: [react(), tailwindcss()],
   build: {
     target: 'es2022',
