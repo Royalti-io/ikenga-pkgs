@@ -243,12 +243,13 @@
   margin-inline: auto;
 }
 
-/* Safe-zone bands — informational only (pointer-events: none via the
-   ::before/::after default, and they carry no interactive semantics), tint +
-   label together so the affordance never relies on colour alone (1.4.1). */
-.preview-surface.safe-zone-on::before,
-.preview-surface.safe-zone-on::after {
-  content: 'Safe zone';
+/* Safe-zone bands — the shared F4 overlay (media-controls SafeZoneBands),
+   reused by the composition preview, the Canvas cell thumbnails, and the Cell
+   editor preview. Informational only (pointer-events: none — never obscures
+   the transport nor captures focus, 2.4.11); each band pairs its --info tint
+   with a "Safe zone" label so the affordance never relies on colour alone
+   (1.4.1). Positioned against the nearest positioned 9:16 frame. */
+.safe-zone-bands__band {
   position: absolute;
   left: 0;
   right: 0;
@@ -262,10 +263,11 @@
   display: flex;
   align-items: center;
   justify-content: center;
+  pointer-events: none;
   z-index: 4;
 }
-.preview-surface.safe-zone-on::before { top: 0; }
-.preview-surface.safe-zone-on::after  { bottom: 0; }
+.safe-zone-bands__band--top    { top: 0; }
+.safe-zone-bands__band--bottom { bottom: 0; }
 .preview-cell-label {
   font-family: var(--font-mono);
   font-size: var(--text-micro);

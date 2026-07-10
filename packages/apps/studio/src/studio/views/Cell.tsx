@@ -36,8 +36,10 @@ import {
   type MockCell,
 } from '../__mocks__/cells';
 import { selectCellUid, useSharedStore } from '../shared-state';
-import type { Rung } from '../mcp-types';
+import { useProjectStore, selectOpenProject } from '../project-store';
+import type { Rung, AspectRatio } from '../mcp-types';
 import { EmptyState } from '../components/EmptyState';
+import { SafeZoneBands } from '../media-controls';
 
 // ─── Tag palette (mirrors the design's per-color rings) ─────────────────
 
@@ -73,6 +75,21 @@ const RUNG_DIR: Record<Rung, string> = {
 
 function cellPath(cell: MockCell): string {
   return `cells/${RUNG_DIR[cell.rung]}/${cell.uid}/content.html`;
+}
+
+// Project.aspect_ratio → the preview frame's source resolution + box style
+// (contract §8 commit-14). Portrait / square derive width from height via
+// aspect-ratio so a 9:16 project's preview is a real vertical frame.
+const ASPECT_RES: Record<AspectRatio, string> = {
+  '16:9': '1920×1080',
+  '9:16': '1080×1920',
+  '1:1': '1080×1080',
+};
+
+function previewFrameStyle(aspect: AspectRatio): React.CSSProperties {
+  if (aspect === '9:16') return { height: '100%', aspectRatio: '9 / 16', maxWidth: '100%' };
+  if (aspect === '1:1') return { height: '100%', aspectRatio: '1 / 1', maxWidth: '100%' };
+  return { width: '100%', height: '100%' };
 }
 
 // ─── Render lifecycle (local simulation) ────────────────────────────────
@@ -127,6 +144,7 @@ function useRenderLifecycle(cellUid: string | null) {
 
 export function CellView() {
   const cellUid = useSharedStore(selectCellUid);
+  const project = useProjectStore(selectOpenProject);
   const cell = useMemo(() => getCellByUid(cellUid), [cellUid]);
 
   const initialHtml = useMemo(() => getCellHtml(cellUid), [cellUid]);
@@ -150,6 +168,8 @@ export function CellView() {
 
   const narration = getNarrationExcerpt(cellUid);
   const path = cellPath(cell);
+  const aspect: AspectRatio = project?.aspect_ratio ?? '16:9';
+  const isPortrait = aspect === '9:16';
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-base text-fg">
@@ -284,7 +304,7 @@ export function CellView() {
         </div>
         <div className="flex w-[42%] min-h-0 flex-col bg-surface">
           <div className="flex items-center justify-between border-b border-soft px-3 py-1.5 text-[11px] text-fg-muted">
-            <span className="font-mono">preview · 1920×1080 → 16:9</span>
+            <span className="font-mono">preview · {ASPECT_RES[aspect]} → {aspect}</span>
             <div className="flex items-center gap-2">
               <span className="font-mono text-fg-faint">1.2s</span>
               <div className="h-1 w-24 overflow-hidden rounded-full bg-raised">
@@ -293,15 +313,24 @@ export function CellView() {
               <span className="font-mono text-fg-faint">3.2s</span>
             </div>
           </div>
-          <div className="grid flex-1 place-items-center bg-[#1a1a2e]">
-            {/* Hand-coded mock of the HF output. Real @hyperframes/player iframe is P2. */}
-            <h1 className="text-center text-4xl font-extrabold tracking-tight text-white">
-              <span className="opacity-30">most</span>{' '}
-              <span className="opacity-30">labels</span>{' '}
-              <span className="opacity-30">still</span>{' '}
-              <span className="text-[var(--achievement)]">treat</span>{' '}
-              <span className="opacity-30">retention</span>
-            </h1>
+          {/* preview stage — outer is neutral chrome; the aspect-framed inner
+              box is the engine "video surface" (tokenized bg, was #1a1a2e §5)
+              and carries the 9:16 safe-zone bands (contract §8 commit-14). */}
+          <div className="grid flex-1 place-items-center bg-base p-3">
+            <div
+              className="relative flex items-center justify-center overflow-hidden rounded-sm bg-sunken"
+              style={previewFrameStyle(aspect)}
+            >
+              {isPortrait && <SafeZoneBands />}
+              {/* Hand-coded mock of the HF output. Real @hyperframes/player iframe is P2. */}
+              <h1 className="px-4 text-center text-4xl font-extrabold tracking-tight text-white">
+                <span className="opacity-30">most</span>{' '}
+                <span className="opacity-30">labels</span>{' '}
+                <span className="opacity-30">still</span>{' '}
+                <span className="text-[var(--achievement)]">treat</span>{' '}
+                <span className="opacity-30">retention</span>
+              </h1>
+            </div>
           </div>
           {narration && (
             <div className="border-t border-soft bg-surface px-3 py-2 text-[11px] text-fg-muted">

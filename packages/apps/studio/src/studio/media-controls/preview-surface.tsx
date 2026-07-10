@@ -56,16 +56,43 @@ export function PreviewSurface({
   children,
 }: PreviewSurfaceProps) {
   const stateClass = status === 'ready' ? '' : ` is-${status}`;
-  const safeZoneClass = safeZoneOn && aspect === '9-16' ? ' safe-zone-on' : '';
+  const showSafeZone = safeZoneOn && aspect === '9-16';
   return (
     <div
-      className={`preview-surface${stateClass}${safeZoneClass}`}
+      className={`preview-surface${stateClass}`}
       data-aspect={aspect}
       role="img"
       aria-label={ariaLabel}
     >
       <div className="preview-surface-content">{children}</div>
+      {showSafeZone && <SafeZoneBands />}
     </div>
+  );
+}
+
+// ─── Safe-zone bands (F4 aspect-safe-area — shared overlay) ────────────────
+//
+// The two `--safe-zone-band` bands (top action-safe / bottom caption-safe)
+// from the F4 aspect-safe-area foundation. Lifted out of PreviewSurface's old
+// `::before`/`::after` pseudo-elements so Canvas cell thumbnails + the Cell
+// editor preview reuse ONE overlay instead of re-deriving it (contract §8
+// commit-14: "lift it to a shared component rather than duplicating").
+//
+// Informational only: `pointer-events: none` (can never obscure the transport
+// or capture focus, WCAG 2.4.11) and each band pairs its --beat-accent-sky tint
+// (→ --info, §5) with a "Safe zone" label so the affordance never relies on
+// colour alone (1.4.1). Mount it inside any `position: relative` container that
+// represents a 9:16 frame.
+export function SafeZoneBands() {
+  return (
+    <>
+      <div className="safe-zone-bands__band safe-zone-bands__band--top" aria-hidden="true">
+        Safe zone
+      </div>
+      <div className="safe-zone-bands__band safe-zone-bands__band--bottom" aria-hidden="true">
+        Safe zone
+      </div>
+    </>
   );
 }
 

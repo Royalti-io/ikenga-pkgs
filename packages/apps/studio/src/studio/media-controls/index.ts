@@ -17,7 +17,7 @@ export type { TimecodeDisplayProps, TimeRulerProps } from './timecode-display';
 export { ScrubberPlayhead, Playhead, PlayheadEcho } from './scrubber-playhead';
 export type { ScrubberPlayheadProps, PlayheadProps } from './scrubber-playhead';
 
-export { PreviewSurface, PreviewStatus, MediaThumb } from './preview-surface';
+export { PreviewSurface, PreviewStatus, MediaThumb, SafeZoneBands } from './preview-surface';
 export type {
   PreviewSurfaceProps,
   PreviewStatusProps,

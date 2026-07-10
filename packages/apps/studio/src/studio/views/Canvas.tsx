@@ -32,6 +32,9 @@ import {
   selectPlayheadMs,
   useSharedStore,
 } from '../shared-state';
+import { useProjectStore, selectOpenProject } from '../project-store';
+import { SafeZoneBands } from '../media-controls';
+import type { AspectRatio } from '../mcp-types';
 import type { Rung } from '../mcp-types';
 import {
   MOCK_CELLS,
@@ -103,6 +106,16 @@ function rungGlyph(rung: Rung): string {
   return 'cell.html';
 }
 
+// Project.aspect_ratio → the inner thumb frame's box style. 9:16 / 1:1 derive
+// their width from a fixed thumb height via aspect-ratio (a real portrait /
+// square frame — no 16:9 letterbox on a vertical project, contract §8
+// commit-14); 16:9 fills the wide thumb area as before.
+function aspectFrameStyle(aspect: AspectRatio): React.CSSProperties {
+  if (aspect === '9:16') return { height: '100%', aspectRatio: '9 / 16' };
+  if (aspect === '1:1') return { height: '100%', aspectRatio: '1 / 1' };
+  return { width: '100%', height: '100%' };
+}
+
 // ─── View ───────────────────────────────────────────────────────────────
 
 export function CanvasView() {
@@ -111,6 +124,13 @@ export function CanvasView() {
   const playheadMs = useSharedStore(selectPlayheadMs);
   const setCellUid = useSharedStore((s) => s.setCellUid);
   const setHoverBeat = useSharedStore((s) => s.setHoverBeat);
+
+  // Project aspect drives cell-thumbnail framing + the 9:16 safe-zone overlay
+  // (contract §8 commit-14). Defaults to 16:9 in standalone dev where no
+  // project is open (the pane region only renders once a project IS open).
+  const project = useProjectStore(selectOpenProject);
+  const aspect: AspectRatio = project?.aspect_ratio ?? '16:9';
+  const isPortrait = aspect === '9:16';
 
   // Cross-linking §12 — "Composition scrub → playheadMs → Canvas active-cell
   // highlight". Derived, not stored (activeCellAtPlayhead stays a selector,
@@ -284,27 +304,41 @@ export function CanvasView() {
                 ].join(' ')}
                 style={{ height: CELL_H }}
               >
-                <div
-                  className={[
-                    'relative flex h-24 items-center justify-center rounded-t-md',
-                    'border-b border-[var(--border)] font-mono text-[10px] text-fg-muted',
-                    tint,
-                  ].join(' ')}
-                >
-                  {rungGlyph(item.rung)}
-                  {isRendering && (
-                    <>
-                      <div className="absolute right-1.5 top-1.5 flex items-center gap-1 font-mono text-[9px] text-[var(--info,#5bb3e0)]">
-                        <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--info,#5bb3e0)]" />
-                        {Math.round((item.progress ?? 0) * 100)}%
-                      </div>
+                <div className="relative flex h-24 items-center justify-center overflow-hidden rounded-t-md border-b border-[var(--border)] bg-sunken">
+                  {/* aspect-framed inner preview — portrait/square derive width
+                      from height so a 9:16 project reads as a real vertical
+                      frame, not a letterboxed 16:9 thumb. */}
+                  <div
+                    className={[
+                      'relative flex items-center justify-center overflow-hidden',
+                      'font-mono text-[10px] text-fg-muted',
+                      isPortrait ? 'rounded-sm' : '',
+                      tint,
+                    ].join(' ')}
+                    style={aspectFrameStyle(aspect)}
+                  >
+                    {rungGlyph(item.rung)}
+                    {/* 9:16 action-safe / caption-safe bands (F4) */}
+                    {isPortrait && <SafeZoneBands />}
+                    {isRendering && (
                       <div className="absolute inset-x-0 bottom-0 h-0.5 bg-[var(--bg-sunken)]">
                         <div
                           className="h-full bg-[var(--info,#5bb3e0)]"
                           style={{ width: `${(item.progress ?? 0) * 100}%` }}
                         />
                       </div>
-                    </>
+                    )}
+                  </div>
+                  {isRendering && (
+                    <div className="absolute right-1.5 top-1.5 flex items-center gap-1 font-mono text-[9px] text-[var(--info,#5bb3e0)]">
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--info,#5bb3e0)]" />
+                      {Math.round((item.progress ?? 0) * 100)}%
+                    </div>
+                  )}
+                  {isPortrait && (
+                    <span className="absolute left-1 top-1 rounded border border-[var(--beat-accent-sky-border)] bg-[var(--beat-accent-sky-soft)] px-1 py-px font-mono text-[7px] uppercase tracking-wider text-[var(--info,#5bb3e0)]">
+                      9:16
+                    </span>
                   )}
                 </div>
                 <div className="px-2 py-1.5">
