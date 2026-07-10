@@ -41,52 +41,76 @@ export function PlayheadEcho({ leftPct }: PlayheadProps) {
 export interface ScrubberPlayheadProps {
   currentMs: number;
   totalMs: number;
-  /** Single seek authority. The consumer snaps to frame + drives seekTo. */
+  /** Single seek authority. Fires on click AND throughout a drag. The
+   *  consumer snaps to frame + drives the engine's seekTo. */
   onSeekMs: (ms: number) => void;
+  /** Fired once on a discrete click (pointer down+up with no meaningful
+   *  drag). Lets the consumer ALSO focus the clip under the click without a
+   *  drag continuously re-selecting. Playback never triggers this. */
+  onSelectMs?: (ms: number) => void;
   fps?: number;
   /** Overrides the default fmtClock(currentMs) announcement. */
   ariaValueText?: string;
   ariaLabel?: string;
 }
 
+/** px of pointer travel below which a press counts as a click, not a drag. */
+const CLICK_SLOP_PX = 4;
+
 export function ScrubberPlayhead({
   currentMs,
   totalMs,
   onSeekMs,
+  onSelectMs,
   fps = DEFAULT_FPS,
   ariaValueText,
   ariaLabel = 'Playhead position',
 }: ScrubberPlayheadProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const downXRef = useRef<number | null>(null);
+  const draggedRef = useRef(false);
   const denom = totalMs > 0 ? totalMs : 1;
   const leftPct = Math.min(100, Math.max(0, (currentMs / denom) * 100));
 
-  const seekFromClientX = (clientX: number) => {
+  const msFromClientX = (clientX: number): number | null => {
     const el = ref.current;
-    if (!el) return;
+    if (!el) return null;
     const rect = el.getBoundingClientRect();
-    if (rect.width <= 0) return;
+    if (rect.width <= 0) return null;
     const ratio = (clientX - rect.left) / rect.width;
-    const ms = Math.min(totalMs, Math.max(0, ratio * totalMs));
-    onSeekMs(ms);
+    return Math.min(totalMs, Math.max(0, ratio * totalMs));
   };
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.preventDefault();
     e.currentTarget.setPointerCapture(e.pointerId);
-    seekFromClientX(e.clientX);
+    downXRef.current = e.clientX;
+    draggedRef.current = false;
+    const ms = msFromClientX(e.clientX);
+    if (ms !== null) onSeekMs(ms);
   };
 
   const onPointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
     // Only track while the pointer is captured (i.e. mid-drag).
     if (!e.currentTarget.hasPointerCapture(e.pointerId)) return;
-    seekFromClientX(e.clientX);
+    if (downXRef.current !== null && Math.abs(e.clientX - downXRef.current) > CLICK_SLOP_PX) {
+      draggedRef.current = true;
+    }
+    const ms = msFromClientX(e.clientX);
+    if (ms !== null) onSeekMs(ms);
   };
 
   const onPointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId);
     }
+    // A press with no meaningful travel = a click → also focus the clip.
+    if (!draggedRef.current) {
+      const ms = msFromClientX(e.clientX);
+      if (ms !== null) onSelectMs?.(ms);
+    }
+    downXRef.current = null;
+    draggedRef.current = false;
   };
 
   // Basic frame-stepping — full keyboard map is commit 15; this covers the
