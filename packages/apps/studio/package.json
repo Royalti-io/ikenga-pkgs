@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "com.ikenga.studio app pkg — sidecars/project, mcp, src/studio. (WP-05a scaffolding minimum.)",
+  "description": "com.ikenga.studio app pkg — project sidecar (storyboard/render queue + HuggingFace and Excalidraw renderer adapters), FFmpeg-backed exporter, and a 40-tool MCP server; iframe UI in progress.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.web.json --noEmit && vite build",
