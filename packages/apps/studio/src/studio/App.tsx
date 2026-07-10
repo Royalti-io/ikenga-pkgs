@@ -24,6 +24,7 @@ import { ScriptView } from './views/Script';
 import { ArchetypeBuilderView } from './views/ArchetypeBuilder';
 import { LauncherView } from './views/Launcher';
 import { NowRenderingBeacon } from './components/NowRenderingBeacon';
+import { useStudioKeyboard } from './lib/use-studio-keyboard';
 
 // View component registry. Each view commit (6–11) adds its entry here.
 // Until a view registers, App.tsx falls through to PanePlaceholder for it.
@@ -44,13 +45,21 @@ function Pane({ index }: { index: PaneIndex }) {
 
   return (
     <section
+      // `data-pane-index` + a programmatic-only tab stop (-1) let the commit-15
+      // keyboard map target this pane's chrome (Esc / F6 focus moves) and scope
+      // the Tab focus-trap to it. focused pane gets the info/sky ring.
+      data-pane-index={index}
+      tabIndex={-1}
       className={
-        'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border bg-surface '
-        + (focused ? 'border-[var(--border)]' : 'border-soft')
+        'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border bg-surface outline-none '
+        + (focused
+          ? 'border-[var(--border)] ring-1 ring-inset ring-[color-mix(in_oklab,var(--info,#5bb3e0)_45%,transparent)]'
+          : 'border-soft')
       }
-      // Click anywhere in the pane focuses it (drives the 1–5 view shortcut
-      // + the focus trap in commit 15).
+      // Click OR keyboard focus entering the pane makes it the active pane
+      // (drives the 1–5 view shortcut + the focus trap).
       onMouseDown={() => setFocusedPane(index)}
+      onFocusCapture={() => setFocusedPane(index)}
       aria-current={focused ? 'true' : undefined}
     >
       <header className="flex items-center justify-between gap-2 border-b border-soft bg-sunken px-2 py-1">
@@ -109,6 +118,10 @@ function PaneRegion() {
 
 export function App() {
   const isProjectOpen = useProjectStore(selectIsProjectOpen);
+
+  // App-level keyboard map + V-split focus trap (commit 15). Registered
+  // unconditionally; its handlers no-op until a pane region exists.
+  useStudioKeyboard();
 
   // The launcher pre-empts the pane layout entirely — it isn't a sub-view
   // and doesn't share the layout/view-switcher chrome (launcher.md §"Chrome

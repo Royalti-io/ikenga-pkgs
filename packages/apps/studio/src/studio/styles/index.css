@@ -122,3 +122,33 @@ html, body, #root {
 .beacon-ping {
   animation: beacon-ping 1.4s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
+
+/* ---------------------------------------------------------------------------
+ * Global keyboard-only focus ring (commit 15, a11y-keyboard.html §"Focus
+ * rings"): the info/sky token, shown only on :focus-visible (keyboard), never
+ * on mouse click. `:where()` keeps specificity at 0 so the Composition editor's
+ * own bespoke focus styles (.clip-segment / .scrubber / .transport-btn / .seg
+ * button — class selectors in studio-editor.css) always win; every interactive
+ * element OUTSIDE Composition gets this consistent ring.
+ * ------------------------------------------------------------------------- */
+
+:where(
+  button, a[href], input, select, textarea,
+  [role='button'], [role='tab'], [role='slider'],
+  [tabindex]:not([tabindex='-1'])
+):focus-visible {
+  outline: 2px solid var(--info, #5bb3e0);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+ * Reduced-motion (commit 15, editor-motion F3): kill the beacon ping + the
+ * Tailwind ping/pulse decorations so the playhead + status dots JUMP rather
+ * than glide. The playhead's own seek transition is gated on
+ * prefers-reduced-motion: no-preference in studio-editor.css, so it snaps here.
+ * ------------------------------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  .beacon-ping { animation: none; }
+  .animate-ping, .animate-pulse { animation: none !important; }
+}

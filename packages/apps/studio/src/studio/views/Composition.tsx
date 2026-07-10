@@ -453,7 +453,7 @@ export function CompositionView() {
 
           {/* Timeline rail — proportional clip segments + scrubber overlay */}
           <div
-            className="timeline-rail"
+            className={`timeline-rail${playing ? ' is-playing' : ''}`}
             style={{ ['--total-ms' as string]: String(TOTAL_MS) }}
             role="presentation"
           >
@@ -525,7 +525,7 @@ export function CompositionView() {
 
           {/* Narration waveform + playhead echo */}
           <div
-            className="waveform-strip"
+            className={`waveform-strip${playing ? ' is-playing' : ''}`}
             role="img"
             aria-label={`Narration waveform — ${COMPOSITION_NARRATION.audio.uri}`}
             style={{ ['--bar-count' as string]: String(WAVEFORM_BAR_COUNT) }}

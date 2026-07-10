@@ -518,6 +518,20 @@
   z-index: 5;
 }
 
+/* Playhead glide on discrete seeks — smooth under normal motion, SNAPS under
+ * reduced-motion (editor-motion F3, contract §8 commit-15). While playing the
+ * frameupdate cadence moves it every frame, so the rail/waveform carry
+ * `is-playing` to suppress the transition and stay frame-accurate; only paused
+ * seeks glide, and reduced-motion (this block never matching) makes them jump. */
+@media (prefers-reduced-motion: no-preference) {
+  .timeline-rail:not(.is-playing) .playhead {
+    transition: left var(--motion-fast) var(--ease-calm);
+  }
+  .waveform-strip:not(.is-playing) .playhead--echo {
+    transition: left var(--motion-fast) var(--ease-calm);
+  }
+}
+
 /* ═══ studio-editor · waveform-strip ══════════════════════════════════════ */
 .waveform-strip {
   position: relative;
