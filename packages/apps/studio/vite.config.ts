@@ -20,8 +20,32 @@ export default defineConfig({
   build: {
     target: 'es2022',
     sourcemap: true,
-    // manifest.json's ui.routes source is `dist/studio/index.html` (main's
-    // shipped route, WP-08+); point the vite build at that same subpath.
-    outDir: 'dist/studio',
+    // FLAT dist (WP-13 delivery fix). The manifest's ui.routes source is
+    // `dist/index.html` — the served HTML's own directory IS the dist root,
+    // exactly like the working `com.ikenga.research` pkg. This dodges the
+    // shell's `pkg_content::mint_html` defect (Finding A): it canonicalizes
+    // `./assets/*` subresource paths against the pkg's `dist/` root rather
+    // than the served HTML's directory, so a nested `dist/studio/index.html`
+    // (whose assets live one level deeper at `dist/studio/assets/*`) never
+    // inlines and the pane renders blank. Keeping HTML at dist root aligns
+    // the two paths. Only this pkg-root `dist/` is emptied on build — the
+    // separate `mcp/dist` and `sidecars/*/dist` trees are untouched.
+    outDir: 'dist',
+    rollupOptions: {
+      output: {
+        // Single-chunk JS (Finding B). The shell serves pkg iframes via a
+        // `srcdoc` document minted by `mint_html`, which inlines only the
+        // top-level <script>/<link> tags; WebKitGTK silently drops any HTTP
+        // fetch issued from inside a `srcdoc` iframe (Tauri #12767), so
+        // dynamic-import chunks can never load and the MCP client — itself a
+        // dynamic import — would never resolve, leaving the gallery empty.
+        // Forcing a single bundle means the whole app (views + store + MCP
+        // client) inlines with the one top-level <script>. This is NOT the
+        // forbidden `vite-plugin-singlefile` (which the resume-contract §1
+        // packaging rule bars) — it's a plain rollup output flag. See the
+        // WP-13 report's amendment note to that contract row.
+        inlineDynamicImports: true,
+      },
+    },
   },
 });
