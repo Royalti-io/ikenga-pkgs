@@ -17,7 +17,7 @@
   "dependencies": {
     "@excalidraw/excalidraw": "^0.18.1",
     "@ikenga/studio-schema": "workspace:*",
-    "@ikenga/tokens": "workspace:*",
+    "@ikenga/tokens": "^0.3.0",
     "@ikenga/ui-lib": "workspace:*",
     "@modelcontextprotocol/ext-apps": "^1.7.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
