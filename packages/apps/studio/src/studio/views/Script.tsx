@@ -34,6 +34,7 @@ import {
   selectPlayheadMs,
   useSharedStore,
 } from '../shared-state';
+import { EmptyState } from '../components/EmptyState';
 
 type ScriptMode = 'script' | 'fountain';
 
@@ -204,12 +205,11 @@ export function ScriptView() {
 
   if (SCRIPT_BEATS.length === 0) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 bg-base p-8 text-center">
-        <span className="font-display text-sm text-fg-muted">No script yet</span>
-        <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">
-          ask the agent to write a beat list
-        </span>
-      </div>
+      <EmptyState
+        glyph="✍"
+        title="No script yet"
+        hint="ask the agent to write a beat list"
+      />
     );
   }
 

@@ -37,6 +37,7 @@ import {
 } from '../__mocks__/cells';
 import { selectCellUid, useSharedStore } from '../shared-state';
 import type { Rung } from '../mcp-types';
+import { EmptyState } from '../components/EmptyState';
 
 // ─── Tag palette (mirrors the design's per-color rings) ─────────────────
 
@@ -139,12 +140,11 @@ export function CellView() {
 
   if (!cell) {
     return (
-      <div className="flex h-full flex-col items-center justify-center gap-2 bg-base p-8 text-center">
-        <span className="font-display text-sm text-fg-muted">No cell selected</span>
-        <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">
-          pick a cell on the Canvas pane to edit it here
-        </span>
-      </div>
+      <EmptyState
+        glyph="▤"
+        title="No cell selected"
+        hint="pick a cell on the Canvas pane to edit it here"
+      />
     );
   }
 

@@ -65,6 +65,7 @@ import {
   type LibraryBlock,
 } from '../__mocks__/archetype-builder';
 import { getMcpClient, archetypeApi } from '../mcp-client';
+import { EmptyState } from '../components/EmptyState';
 
 // ─── Inline picker — the click-driven insert affordance ──────────────────
 
@@ -597,9 +598,12 @@ export function ArchetypeBuilderView() {
                   </div>
                 ))}
                 {chain.length === 0 && (
-                  <div className="flex flex-col items-center gap-1 rounded border border-dashed border-[var(--border)] bg-base py-8 text-center text-xs text-fg-faint">
-                    <span>Add blocks from the library to build your archetype</span>
-                  </div>
+                  <EmptyState
+                    glyph="⛓"
+                    title="No blocks yet"
+                    hint="drag blocks from the library to build your archetype"
+                    className="flex flex-col items-center gap-2 rounded border border-dashed border-[var(--border)] bg-base py-8 text-center"
+                  />
                 )}
               </div>
             </SortableContext>

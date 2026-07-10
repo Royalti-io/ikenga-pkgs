@@ -39,6 +39,7 @@ import {
   type MockCell,
 } from '../__mocks__/cells';
 import { clipAtMs } from '../__mocks__/composition';
+import { EmptyState } from '../components/EmptyState';
 
 // @ikenga/contract/canvas ships `ItemId` as an opaque branded string but
 // (unlike the pre-swap __stubs__/canvas.tsx mirror) does not export a helper
@@ -153,6 +154,23 @@ export function CanvasView() {
   const canvasRef = useRef<CanvasHandle | null>(null);
   const selectedId: ItemId | null =
     selectedCellUid ? asItemId(selectedCellUid) : null;
+
+  // Empty-project state (contract §8 commit-13, states-empty.html §1): before
+  // any cells materialize from an archetype chain the beat×rung grid is empty.
+  if (MOCK_CELLS.length === 0) {
+    return (
+      <EmptyState
+        glyph="▦"
+        title="No cells yet"
+        hint="cells materialize from an archetype chain — beatsheet → lofi → hifi"
+      >
+        <p className="mt-1 max-w-xs text-[11px] leading-relaxed text-fg-faint">
+          The agent can scaffold the full grid via chat — try{' '}
+          <span className="font-mono text-fg-muted">"storyboard a 30s explainer"</span>.
+        </p>
+      </EmptyState>
+    );
+  }
 
   return (
     <div className="relative flex h-full flex-col bg-base text-fg">
