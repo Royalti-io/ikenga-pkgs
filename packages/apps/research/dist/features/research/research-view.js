@@ -39,6 +39,9 @@ import {
 } from '../../lib/ui.js';
 import { hostDbQuery, hostDbExec, hostSendToActiveSession, hostNavigate, setMenu, isStandalone } from '../../lib/bridge.js';
 import { applyFacet, RESET_FACET } from '../../lib/facet-filter.js';
+// operator-identity recipe: hostContext.operator threaded down from app.js —
+// "mine" predicates/fallbacks fail safe (empty/unclaimed) when unknown.
+import { isMine } from '../../lib/operator.js';
 // create-wire recipe (atelier-parity RECIPE 3): the dead "New report" buttons —
 // and the R-04 hand-to-sales path when no deal is linked yet — dispatch a
 // structured creation brief to the active Chi session rather than writing a
@@ -161,15 +164,19 @@ function isAgentOwner(owner) {
 // 'f:all' is intentionally ABSENT — RESET_FACET makes applyFacet return every
 // row. Keep each predicate in lockstep with its badge count in buildResearchMenu
 // (same expression) so the count and the filtered slice never disagree.
-const FACET_PREDICATES = {
-  'f:mine':         (r) => r.owner === 'nedjamez',
-  'f:agent-run':    (r) => isAgentOwner(r.owner),
-  'f:fresh':        (r) => r.is_stale === 0 || r.is_stale == null,
-  'f:t:persona':    (r) => typeKey(r.entity_type) === 'persona',
-  'f:t:competitor': (r) => typeKey(r.entity_type) === 'competitor',
-  'f:t:prospect':   (r) => typeKey(r.entity_type) === 'prospect',
-  'f:t:market':     (r) => typeKey(r.entity_type) === 'market',
-};
+/** operatorId-parameterized so 'f:mine' fails safe (matches nothing) when the
+ *  operator is unknown — see lib/operator.js. */
+function researchFacetPredicates(operatorId) {
+  return {
+    'f:mine':         (r) => isMine(r.owner, operatorId),
+    'f:agent-run':    (r) => isAgentOwner(r.owner),
+    'f:fresh':        (r) => r.is_stale === 0 || r.is_stale == null,
+    'f:t:persona':    (r) => typeKey(r.entity_type) === 'persona',
+    'f:t:competitor': (r) => typeKey(r.entity_type) === 'competitor',
+    'f:t:prospect':   (r) => typeKey(r.entity_type) === 'prospect',
+    'f:t:market':     (r) => typeKey(r.entity_type) === 'market',
+  };
+}
 
 // ─── Query keys ───────────────────────────────────────────────────────────────
 
@@ -202,7 +209,7 @@ async function ensureMigration() {
   }
 }
 
-async function fetchReports() {
+async function fetchReports(operatorId) {
   if (isStandalone()) return REPORTS_FIXTURE;
   try {
     await ensureMigration();
@@ -218,7 +225,7 @@ async function fetchReports() {
       return rows.map((r) => ({
         ...r,
         // owner falls back to researched_by (the explicit "Mine" vs agent split).
-        owner: r.owner ?? r.researched_by ?? 'nedjamez',
+        owner: r.owner ?? r.researched_by ?? operatorId ?? null,
       }));
     }
     // research_notes empty — fall back to the canonical fixture so the pane still renders.
@@ -327,10 +334,12 @@ async function fetchPersonas() {
  * PINNED setMenu contract:
  *   - PkgMenuItem  { id, label, icon?, badge?, section?, disabled?, active? }
  *   - the shell relays clicks back via host-context re-emit → royaltiSuite.activeFeature = id.
+ *
+ * operatorId: current known operator id (null when unknown — see lib/operator.js)
  */
-function buildResearchMenu(activeView, reports, activeFacet) {
+function buildResearchMenu(activeView, reports, activeFacet, operatorId) {
   const total = reports.length;
-  const mine = reports.filter((r) => r.owner === 'nedjamez').length;
+  const mine = reports.filter((r) => isMine(r.owner, operatorId)).length;
   const agentRun = reports.filter((r) => isAgentOwner(r.owner)).length;
   // "Fresh this week" — fixture has 4; live derives from is_stale=0 (or unknown).
   const fresh = reports.filter((r) => r.is_stale === 0 || r.is_stale == null).length;
@@ -716,7 +725,7 @@ function StreamingState() {
 
 // ─── ResearchView root ─────────────────────────────────────────────────────────
 
-export function ResearchView({ activeFeature }) {
+export function ResearchView({ activeFeature, operatorId }) {
   // View state: 0=Reports | 1=Sources | 2=Personas (persisted to localStorage).
   const [activeView, setActiveView] = useState(() => {
     const stored = parseInt(localStorage.getItem('ikenga-research-view') ?? '', 10);
@@ -732,7 +741,7 @@ export function ResearchView({ activeFeature }) {
   const qc = useQueryClient();
 
   // ── Data queries ────────────────────────────────────────────────────────────
-  const reportsQ = useQuery({ queryKey: QK.reports, queryFn: fetchReports });
+  const reportsQ = useQuery({ queryKey: QK.reports, queryFn: () => fetchReports(operatorId) });
   const sourcesQ = useQuery({ queryKey: QK.sources, queryFn: fetchSources, enabled: activeView === 1 });
   const personasQ = useQuery({ queryKey: QK.personas, queryFn: fetchPersonas, enabled: activeView === 2 });
 
@@ -743,8 +752,8 @@ export function ResearchView({ activeFeature }) {
   // when the source list or the active facet changes; badge counts in the menu
   // still derive from the FULL list so they stay live.
   const visibleReports = useMemo(
-    () => applyFacet(reports, activeFacet, FACET_PREDICATES),
-    [reports, activeFacet],
+    () => applyFacet(reports, activeFacet, researchFacetPredicates(operatorId)),
+    [reports, activeFacet, operatorId],
   );
 
   // ── db-updated refresh (refresh on event, not remount) ──────────────────────
@@ -797,8 +806,8 @@ export function ResearchView({ activeFeature }) {
   // ── setMenu publish ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (isStandalone()) return;
-    setMenu(buildResearchMenu(activeView, reports, activeFacet)).catch(() => {/* ignore */});
-  }, [activeView, reports, activeFacet]);
+    setMenu(buildResearchMenu(activeView, reports, activeFacet, operatorId)).catch(() => {/* ignore */});
+  }, [activeView, reports, activeFacet, operatorId]);
 
   // ── Hand-to-sales mutation (R-04 / R-05 / R-06 cross-domain link) ────────────
   // approve-mode action with TWO honest branches keyed on whether a sales deal

@@ -42,7 +42,7 @@ const runtime = vendorRuntime({
   destLibDir: fileURLToPath(new URL('../dist/lib', import.meta.url)),
   pkgId: 'com.ikenga.content',
   logTag: 'content',
-  files: ['bridge', 'ui', 'dispatch', 'create-dispatch'],
+  files: ['bridge', 'ui', 'dispatch', 'create-dispatch', 'operator'],
 });
 
 console.log(

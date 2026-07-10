@@ -16,6 +16,7 @@
     "dispatch.js",
     "create-dispatch.js",
     "facet-filter.js",
+    "operator.js",
     "vendor.mjs",
     "runtime.manifest.json",
     "README.md"

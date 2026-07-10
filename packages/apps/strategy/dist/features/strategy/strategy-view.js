@@ -42,6 +42,9 @@ import { hostDbQuery, hostDbExec, setMenu, isStandalone } from '../../lib/bridge
 import { dispatchItemAction } from '../../lib/dispatch.js';
 // facet-wire recipe: sidebar filter facets (f:*) narrow the OKR board/list.
 import { applyFacet, RESET_FACET } from '../../lib/facet-filter.js';
+// operator-identity recipe: hostContext.operator threaded down from app.js —
+// "mine"/is-agent checks and the ux_mode gate below fail safe when unknown.
+import { isMine, isOtherOwner, initialOf } from '../../lib/operator.js';
 // create-wire recipe: dead "+ / New objective" buttons dispatch a creation brief
 // to the Chi (R-03: an objective is agent-shaped, never a client-side husk INSERT).
 import { buildCreateBrief, dispatchCreate } from '../../lib/create-dispatch.js';
@@ -196,7 +199,7 @@ const REVIEWS_FIXTURE = [
  *  not an area name — a bare flag value carries no grouping signal and must never
  *  become a board column name, so flag-like values fall through to 'Company'.
  *  No strategy_key_results table yet → KR bars come from the overall status only. */
-function initiativeToObjective(r, i) {
+function initiativeToObjective(r, i, operatorId) {
   const rawGoal = (r.ties_to_goal ?? r.area ?? '').toString().trim();
   const goalText = /^(?:0|1|true|false)$/i.test(rawGoal) ? '' : rawGoal;
   const area = AREAS.find((a) => goalText.toLowerCase().includes(a.toLowerCase())) || goalText || 'Company';
@@ -209,8 +212,15 @@ function initiativeToObjective(r, i) {
     : status.includes('block') || status.includes('risk') ? 25
     : 40;
   const pct = r.progress_pct != null ? r.progress_pct : proxyPct;
-  const ownerAgent = (r.owner_agent ?? r.owner ?? 'nedjamez').toString();
-  const ux_mode = ownerAgent === 'nedjamez' ? 'confirm' : 'silent';
+  // rawOwner (not display-defaulted) feeds the ux_mode gate below — an absent
+  // DB owner must never borrow the display fallback's "assume it's you" to
+  // earn 'silent'. ownerAgent (display-defaulted) is what the board/rows show.
+  const rawOwner = r.owner_agent ?? r.owner ?? null;
+  const ownerAgent = (rawOwner ?? operatorId ?? '').toString();
+  // FAIL-SAFE: 'silent' is only earned when the row's owner is POSITIVELY
+  // recorded as the CURRENT known operator — an absent owner or an unknown
+  // operator always falls to 'confirm', never auto-run.
+  const ux_mode = isMine(rawOwner, operatorId) ? 'silent' : 'confirm';
   return {
     id: r.id ?? `SI-${i}`,
     title: r.name ?? r.title ?? '(untitled)',
@@ -231,7 +241,7 @@ function initiativeToObjective(r, i) {
 }
 
 /** Map a review_items row → a Reviews-view fixture-shaped review. */
-function reviewItemToReview(r, i) {
+function reviewItemToReview(r, i, operatorId) {
   const status = (r.status ?? '').toString().toLowerCase();
   const status_cls = status.includes('done') || status.includes('complete') || status.includes('approv') ? 'done'
     : status.includes('draft') || status.includes('pending') ? 'warn'
@@ -244,7 +254,7 @@ function reviewItemToReview(r, i) {
     cadence: r.content_type ?? 'cycle',
     cadence_cls: pr === 'high' || pr === 'critical' ? 'gold' : '',
     date: r.reviewed_at ? r.reviewed_at.substring(0, 10) : '—',
-    owner: r.created_by ?? 'nedjamez',
+    owner: r.created_by ?? operatorId ?? null,
     status: r.status ?? 'open',
     status_cls,
   };
@@ -311,7 +321,7 @@ function fixtureObjectives() {
   return OBJECTIVES_FIXTURE.map((o) => ({ ...o, _provenance: 'fixture' }));
 }
 
-async function fetchObjectives() {
+async function fetchObjectives(operatorId) {
   if (isStandalone()) return fixtureObjectives();
   try {
     await ensureMigration();
@@ -341,7 +351,7 @@ async function fetchObjectives() {
         area: AREAS.find((a) => (r.area ?? '').toLowerCase().includes(a.toLowerCase())) || r.area || 'Company',
         cycle: r.cycle_id ?? 'cycle',
         overall_pct: r.overall_pct ?? 0,
-        owner: r.owner ?? 'nedjamez',
+        owner: r.owner ?? operatorId ?? null,
         ux_mode: r.ux_mode ?? 'confirm',
         next_action: r.next_action ?? null,
         when: r.cycle_id ?? '',
@@ -363,7 +373,7 @@ async function fetchObjectives() {
          ORDER BY status, name
          LIMIT 24`
       );
-      if (siRows.length > 0) return siRows.map(initiativeToObjective);
+      if (siRows.length > 0) return siRows.map((r, i) => initiativeToObjective(r, i, operatorId));
     } catch {
       // strategic_initiatives also missing — fall through to fixture
     }
@@ -408,7 +418,7 @@ async function fetchCycles() {
   }
 }
 
-async function fetchReviews() {
+async function fetchReviews(operatorId) {
   if (isStandalone()) return REVIEWS_FIXTURE;
   try {
     const rows = await hostDbQuery(
@@ -419,7 +429,7 @@ async function fetchReviews() {
        ORDER BY reviewed_at DESC
        LIMIT 20`
     );
-    if (rows.length > 0) return rows.map(reviewItemToReview);
+    if (rows.length > 0) return rows.map((r, i) => reviewItemToReview(r, i, operatorId));
     // No strategy-scoped review_items — fall back to fixtures.
     return REVIEWS_FIXTURE;
   } catch {
@@ -432,13 +442,17 @@ async function fetchReviews() {
 // buildStrategyMenu so a facet's slice always matches the count on its row.
 // 'f:all' is the reset (RESET_FACET default in facet-filter.js) → intentionally
 // absent here so applyFacet returns every objective.
-
-const FACET_PREDICATES = {
-  'f:mine':          (o) => o.owner === 'nedjamez',
-  'f:at-risk':       (o) => o.at_risk || (o.overall_pct ?? 100) < 50,
-  'f:agent-tracked': (o) => o.owner && o.owner !== 'nedjamez',
-  ...Object.fromEntries(AREAS.map((a) => [`f:area:${a}`, (o) => o.area === a])),
-};
+//
+// operatorId-parameterized so 'f:mine' fails safe (matches nothing) when the
+// operator is unknown — see lib/operator.js.
+function strategyFacetPredicates(operatorId) {
+  return {
+    'f:mine':          (o) => isMine(o.owner, operatorId),
+    'f:at-risk':       (o) => o.at_risk || (o.overall_pct ?? 100) < 50,
+    'f:agent-tracked': (o) => isOtherOwner(o.owner, operatorId),
+    ...Object.fromEntries(AREAS.map((a) => [`f:area:${a}`, (o) => o.area === a])),
+  };
+}
 
 // ─── Menu builder ─────────────────────────────────────────────────────────────
 
@@ -447,6 +461,7 @@ const FACET_PREDICATES = {
  *   activeView: 0 = OKRs | 1 = Cycles | 2 = Reviews
  *   pipeMode: 'board' | 'list' (only relevant when activeView === 0)
  *   objectives: objectives array (for counts)
+ *   operatorId: current known operator id (null when unknown — see lib/operator.js)
  *
  * PINNED WIRING CONTRACT (recipe step 7 + the pinned contract):
  *   - View group items publish their `id` back as royaltiSuite.activeFeature.
@@ -456,13 +471,13 @@ const FACET_PREDICATES = {
  *   - The seg is injected ONLY when activeView === 0 (guarded below).
  *   - Filter groups get disabled:true (→ .nav-group.is-dim) when activeView !== 0.
  */
-function buildStrategyMenu(activeView, pipeMode, objectives, activeFacet) {
+function buildStrategyMenu(activeView, pipeMode, objectives, activeFacet, operatorId) {
   const totalCount = objectives.length;
-  const mine = objectives.filter((o) => o.owner === 'nedjamez');
+  const mine = objectives.filter((o) => isMine(o.owner, operatorId));
   // At risk: <50% overall (the screen-doc count-2 idiom: O-03 + O-07).
   const atRisk = objectives.filter((o) => o.at_risk || (o.overall_pct ?? 100) < 50);
-  // Agent-tracked: owned by an agent (anything other than nedjamez).
-  const agentTracked = objectives.filter((o) => o.owner && o.owner !== 'nedjamez');
+  // Agent-tracked: owned by anyone other than the current known operator.
+  const agentTracked = objectives.filter((o) => isOtherOwner(o.owner, operatorId));
   // A facet only highlights on the OKRs view (facets dim/inert off it).
   const facetActive = (id) => activeView === 0 && activeFacet === id;
 
@@ -563,15 +578,15 @@ function buildStrategyMenu(activeView, pipeMode, objectives, activeFacet) {
 // ─── Sub-components ──────────────────────────────────────────────────────────────
 
 /** Owner mini-avatar for OKR board cards. */
-function KbAvatar({ owner }) {
-  const isAgent = owner && owner !== 'nedjamez';
-  const initial = !owner ? 'N'
-    : owner === 'nedjamez' ? 'N'
+function KbAvatar({ owner, operatorId, operatorLabel }) {
+  const isAgent = isOtherOwner(owner, operatorId);
+  const initial = !owner ? initialOf(operatorLabel)
+    : isMine(owner, operatorId) ? initialOf(operatorLabel)
     : owner === 'cmo-agent' ? 'C'
     : owner === 'cfo-agent' ? 'C'
     : owner === 'product-agent' ? 'P'
     : owner === 'strategy-agent' ? 'S'
-    : owner[0].toUpperCase();
+    : initialOf(owner);
   return html`<span class=${cn('kb-mini-avatar', isAgent && 'is-agent')} aria-label=${owner ?? ''}>${initial}</span>`;
 }
 
@@ -605,7 +620,7 @@ function colAgg(cards) {
 }
 
 /** OKR board mode — area columns with .kb-col-agg aggregate heads + okr cards. */
-function OkrBoard({ objectives, onAreaChange, onCreate }) {
+function OkrBoard({ objectives, onAreaChange, onCreate, operatorId, operatorLabel }) {
   const [dragging, setDragging] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
 
@@ -688,7 +703,7 @@ function OkrBoard({ objectives, onAreaChange, onCreate }) {
                     </span>
                     <span class="kb-card-owner">
                       <span class=${cn('ux-dot', `ux-${o.ux_mode ?? 'silent'}`)} title=${o.ux_mode ?? 'silent'}></span>
-                      <${KbAvatar} owner=${o.owner} />
+                      <${KbAvatar} owner=${o.owner} operatorId=${operatorId} operatorLabel=${operatorLabel} />
                     </span>
                   </div>
                 </div>
@@ -733,8 +748,8 @@ function handleAction(objective) {
 }
 
 /** Single objective row in list mode (.pl-row). */
-function ObjRow({ objective, isSelected, onClick }) {
-  const isAgent = objective.owner && objective.owner !== 'nedjamez';
+function ObjRow({ objective, isSelected, onClick, operatorId }) {
+  const isAgent = isOtherOwner(objective.owner, operatorId);
   return html`
     <div
       class=${cn('pl-row', isSelected && 'is-selected')}
@@ -849,7 +864,7 @@ function ObjDetail({ objective }) {
 }
 
 /** OKR list mode — .pane-split (380px 1fr): grouped list + detail panel. */
-function OkrList({ objectives, selectedObjective, onSelectObjective }) {
+function OkrList({ objectives, selectedObjective, onSelectObjective, operatorId }) {
   const grouped = useMemo(() => {
     const map = {};
     for (const a of AREAS) map[a] = [];
@@ -876,6 +891,7 @@ function OkrList({ objectives, selectedObjective, onSelectObjective }) {
                 objective=${o}
                 isSelected=${selectedObjective?.id === o.id}
                 onClick=${() => onSelectObjective(o)}
+                operatorId=${operatorId}
               />
             `)}
           </div>
@@ -1027,7 +1043,7 @@ function StreamingState() {
 
 // ─── StrategyView root ──────────────────────────────────────────────────────────
 
-export function StrategyView({ activeFeature }) {
+export function StrategyView({ activeFeature, operatorId, operatorLabel }) {
   // View state: 0=OKRs | 1=Cycles | 2=Reviews. Deep link via ?view=.
   const [activeView, setActiveView] = useState(() => {
     const p = new URLSearchParams(window.location.search).get('view');
@@ -1043,17 +1059,21 @@ export function StrategyView({ activeFeature }) {
   const qc = useQueryClient();
 
   // ── Data queries ────────────────────────────────────────────────────────────
-  const objectivesQ = useQuery({ queryKey: QK.objectives, queryFn: fetchObjectives });
+  const objectivesQ = useQuery({ queryKey: QK.objectives, queryFn: () => fetchObjectives(operatorId) });
   const cyclesQ = useQuery({ queryKey: QK.cycles, queryFn: fetchCycles, enabled: activeView === 1 });
-  const reviewsQ = useQuery({ queryKey: QK.reviews, queryFn: fetchReviews, enabled: activeView === 2 });
+  const reviewsQ = useQuery({
+    queryKey: QK.reviews,
+    queryFn: () => fetchReviews(operatorId),
+    enabled: activeView === 2,
+  });
 
   const objectives = objectivesQ.data ?? [];
   // facet-wire — the visible slice: full list narrowed by the active facet. Feeds
   // the board, list AND the empty-state check. Badges stay live because
   // buildStrategyMenu counts the FULL `objectives`, not this slice.
   const visibleObjectives = useMemo(
-    () => applyFacet(objectives, activeFacet, FACET_PREDICATES),
-    [objectives, activeFacet],
+    () => applyFacet(objectives, activeFacet, strategyFacetPredicates(operatorId)),
+    [objectives, activeFacet, operatorId],
   );
 
   // ── db-updated refresh (recipe step 6 — refresh on event, not full remount) ──
@@ -1098,9 +1118,9 @@ export function StrategyView({ activeFeature }) {
   // ── setMenu publish (recipe step 7 — keyed on view/mode/objectives) ──────────
   useEffect(() => {
     if (isStandalone()) return;
-    const items = buildStrategyMenu(activeView, pipeMode, objectives, activeFacet);
+    const items = buildStrategyMenu(activeView, pipeMode, objectives, activeFacet, operatorId);
     setMenu(items).catch(() => {/* ignore */});
-  }, [activeView, pipeMode, objectives, activeFacet]);
+  }, [activeView, pipeMode, objectives, activeFacet, operatorId]);
 
   // ── Area change mutation (board drag — schema TBD soft link) ─────────────────
   const areaChange = useMutation({
@@ -1157,12 +1177,15 @@ export function StrategyView({ activeFeature }) {
         objectives=${visibleObjectives}
         onAreaChange=${(objective, newArea) => areaChange.mutate({ objective, newArea })}
         onCreate=${createObjective}
+        operatorId=${operatorId}
+        operatorLabel=${operatorLabel}
       />`;
     } else {
       body = html`<${OkrList}
         objectives=${visibleObjectives}
         selectedObjective=${selectedObjective}
         onSelectObjective=${setSelectedObjective}
+        operatorId=${operatorId}
       />`;
     }
   } else if (activeView === 1) {

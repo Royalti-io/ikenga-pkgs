@@ -39,6 +39,9 @@ import { buildCreateBrief, dispatchCreate } from '../../lib/create-dispatch.js';
 import { dispatchItemAction } from '../../lib/dispatch.js';
 // facet-wire recipe: sidebar filter facets (f:*) narrow the pipeline list/kanban.
 import { applyFacet } from '../../lib/facet-filter.js';
+// operator-identity recipe: hostContext.operator threaded down from app.js —
+// "mine" predicates/fallbacks fail safe (empty/unclaimed) when unknown.
+import { isMine } from '../../lib/operator.js';
 
 // ─── Stage enum ───────────────────────────────────────────────────────────────
 // Per the R-04 Pipeline-stages convention (06-skill-action-contract.md §Pipeline-stages).
@@ -139,7 +142,7 @@ async function fetchOpenDeals() {
   }
 }
 
-async function fetchWonDeals() {
+async function fetchWonDeals(operatorId) {
   if (isStandalone()) return WON_DEALS_FIXTURE;
   try {
     const rows = await hostDbQuery(
@@ -153,7 +156,7 @@ async function fetchWonDeals() {
     return rows.map((r) => ({
       ...r,
       title: r.title ?? r.company,
-      owner: r.owner ?? r.assigned_to ?? 'nedjamez',
+      owner: r.owner ?? r.assigned_to ?? operatorId ?? null,
       closed: r.last_contact ? r.last_contact.substring(0, 10) : '—',
       value: typeof r.value === 'string' ? parseFloat(r.value) || 0 : (r.value ?? 0),
     }));
@@ -227,13 +230,17 @@ function handleAction(deal) {
 
 const SALES_RESET_FACET = 'f:open-pipeline';
 
-const FACET_PREDICATES = {
-  'f:my-deals':     (d) => d.owner === 'nedjamez' || d.assigned_to === 'nedjamez',
-  'f:closing-soon': (d) => d.next_action_mode === 'approve',
-  'f:agent-run':    (d) => d.owner === 'sales-agent' || d.assigned_to === 'sales-agent',
-  ...Object.fromEntries(STAGES.map((s) => [`f:stage:${s}`, (d) => d.stage === s])),
-  // 'f:open-pipeline' intentionally ABSENT → SALES_RESET_FACET returns every deal.
-};
+/** operatorId-parameterized so 'f:my-deals' fails safe (matches nothing) when
+ *  the operator is unknown — see lib/operator.js. */
+function salesFacetPredicates(operatorId) {
+  return {
+    'f:my-deals':     (d) => isMine(d.owner, operatorId) || isMine(d.assigned_to, operatorId),
+    'f:closing-soon': (d) => d.next_action_mode === 'approve',
+    'f:agent-run':    (d) => d.owner === 'sales-agent' || d.assigned_to === 'sales-agent',
+    ...Object.fromEntries(STAGES.map((s) => [`f:stage:${s}`, (d) => d.stage === s])),
+    // 'f:open-pipeline' intentionally ABSENT → SALES_RESET_FACET returns every deal.
+  };
+}
 
 // ─── Menu builder ─────────────────────────────────────────────────────────────
 
@@ -242,10 +249,11 @@ const FACET_PREDICATES = {
  *   activeView: 0 = Pipeline | 1 = Forecast | 2 = Won
  *   pipeMode: 'list' | 'kanban' (only relevant when activeView === 0)
  *   deals: the open deals array (for counts)
+ *   operatorId: current known operator id (null when unknown — see lib/operator.js)
  */
-function buildSalesMenu(activeView, pipeMode, deals, activeFacet) {
+function buildSalesMenu(activeView, pipeMode, deals, activeFacet, operatorId) {
   const openCount = deals.length;
-  const myDeals = deals.filter((d) => d.owner === 'nedjamez' || d.assigned_to === 'nedjamez');
+  const myDeals = deals.filter((d) => isMine(d.owner, operatorId) || isMine(d.assigned_to, operatorId));
   const closingSoon = deals.filter((d) => d.next_action_mode === 'approve');
   const agentRun = deals.filter((d) => (d.owner === 'sales-agent' || d.assigned_to === 'sales-agent'));
   // A facet only highlights on the Pipeline view (facets dim/inert off it).
@@ -787,7 +795,7 @@ function ErrorState({ error, onRetry }) {
 
 // ─── SalesView root ───────────────────────────────────────────────────────────
 
-export function SalesView({ activeFeature }) {
+export function SalesView({ activeFeature, operatorId }) {
   // View state: 0=Pipeline | 1=Forecast | 2=Won
   const [activeView, setActiveView] = useState(() => {
     const p = new URLSearchParams(window.location.search).get('view');
@@ -803,7 +811,11 @@ export function SalesView({ activeFeature }) {
 
   // ── Data queries ────────────────────────────────────────────────────────────
   const openDealsQ = useQuery({ queryKey: QK.openDeals, queryFn: fetchOpenDeals });
-  const wonDealsQ = useQuery({ queryKey: QK.wonDeals, queryFn: fetchWonDeals, enabled: activeView === 2 });
+  const wonDealsQ = useQuery({
+    queryKey: QK.wonDeals,
+    queryFn: () => fetchWonDeals(operatorId),
+    enabled: activeView === 2,
+  });
 
   const activitiesQ = useQuery({
     queryKey: QK.activities(selectedDeal?.id ?? null),
@@ -818,8 +830,8 @@ export function SalesView({ activeFeature }) {
   // nothing shows the empty pane, not a stale full list). Badges stay live
   // because buildSalesMenu counts the FULL `deals`, not this slice.
   const visibleDeals = useMemo(
-    () => applyFacet(deals, activeFacet, FACET_PREDICATES, SALES_RESET_FACET),
-    [deals, activeFacet],
+    () => applyFacet(deals, activeFacet, salesFacetPredicates(operatorId), SALES_RESET_FACET),
+    [deals, activeFacet, operatorId],
   );
 
   // ── db-updated refresh ──────────────────────────────────────────────────────
@@ -859,9 +871,9 @@ export function SalesView({ activeFeature }) {
   // ── setMenu publish ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (isStandalone()) return;
-    const items = buildSalesMenu(activeView, pipeMode, deals, activeFacet);
+    const items = buildSalesMenu(activeView, pipeMode, deals, activeFacet, operatorId);
     setMenu(items).catch(() => {/* ignore */});
-  }, [activeView, pipeMode, deals, activeFacet]);
+  }, [activeView, pipeMode, deals, activeFacet, operatorId]);
 
   // ── Stage change mutation (kanban drag) ─────────────────────────────────────
   const stageChange = useMutation({

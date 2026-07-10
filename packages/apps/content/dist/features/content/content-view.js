@@ -35,6 +35,9 @@ import {
 } from '../../lib/ui.js';
 import { hostDbQuery, hostDbExec, setMenu, isStandalone } from '../../lib/bridge.js';
 import { dispatchItemAction } from '../../lib/dispatch.js';
+// operator-identity recipe: hostContext.operator threaded down from app.js —
+// "mine"/is-agent checks fail safe (empty/unclaimed) when unknown.
+import { isMine, isOtherOwner, initialOf } from '../../lib/operator.js';
 // create-wire recipe (atelier-parity RECIPE 3): dead "+ add" / "New piece"
 // buttons dispatch a structured creation brief to the active Chi session rather
 // than writing a client-side husk INSERT (a content piece is agent-shaped —
@@ -281,7 +284,7 @@ async function ensureMigration() {
   }
 }
 
-async function fetchPieces() {
+async function fetchPieces(operatorId) {
   if (isStandalone()) return PIECES_FIXTURE;
   try {
     await ensureMigration();
@@ -310,7 +313,7 @@ async function fetchPieces() {
           content_type: r.type ?? 'blog',
           channel: r.channel ?? 'royalti.io',
           stage: r.status ?? 'idea',
-          owner: r.assigned_to ?? 'nedjamez',
+          owner: r.assigned_to ?? operatorId ?? null,
           next_action: null,
           next_action_mode: 'silent',
           format: null,
@@ -431,10 +434,11 @@ async function fetchTransitions(pieceId) {
  *   activeView: 0 = Pipeline | 1 = Calendar | 2 = Published
  *   pipeMode: 'kanban' | 'list' (only relevant when activeView === 0)
  *   pieces: open pieces array (for counts)
+ *   operatorId: current known operator id (null when unknown — see lib/operator.js)
  */
-function buildContentMenu(activeView, pipeMode, pieces) {
+function buildContentMenu(activeView, pipeMode, pieces, operatorId) {
   const totalCount = pieces.length;
-  const myPieces = pieces.filter((p) => p.owner === 'nedjamez');
+  const myPieces = pieces.filter((p) => isMine(p.owner, operatorId));
   const dueThisWeek = pieces.filter((p) =>
     p.due_at != null &&
     (p.due_at === 'Today' || p.due_at === 'Fri' || p.due_at === 'Tue' || p.due_at === 'Next wk' || p.due_at.startsWith('May') || p.due_at.startsWith('Tue '))
@@ -543,21 +547,21 @@ function buildContentMenu(activeView, pipeMode, pieces) {
 // ─── Sub-components ────────────────────────────────────────────────────────────
 
 /** Owner mini-avatar for kanban cards */
-function KbAvatar({ owner }) {
-  const isAgent = owner && owner !== 'nedjamez';
-  // Initial: N=nedjamez, B=blog-writer, C=content/cmo-agent, S=social-agent
-  const initial = !owner ? 'N'
-    : owner === 'nedjamez' ? 'N'
+function KbAvatar({ owner, operatorId, operatorLabel }) {
+  const isAgent = isOtherOwner(owner, operatorId);
+  // Initial: the operator's own initial, B=blog-writer, C=content/cmo-agent, S=social-agent
+  const initial = !owner ? initialOf(operatorLabel)
+    : isMine(owner, operatorId) ? initialOf(operatorLabel)
     : owner === 'blog-writer' ? 'B'
     : owner === 'cmo-agent' ? 'C'
     : owner === 'content-agent' ? 'C'
     : owner === 'social-agent' ? 'S'
-    : owner[0].toUpperCase();
+    : initialOf(owner);
   return html`<span class=${cn('kb-mini-avatar', isAgent && 'is-agent')} aria-label=${owner ?? ''}>${initial}</span>`;
 }
 
 /** Single piece row in list mode */
-function PieceRow({ piece, isSelected, onClick }) {
+function PieceRow({ piece, isSelected, onClick, operatorId }) {
   const isUrgent = piece.due_at === 'Today';
   return html`
     <div
@@ -572,7 +576,7 @@ function PieceRow({ piece, isSelected, onClick }) {
         <div class="split-row-title dense-row-title">${piece.title}</div>
         <div class="split-row-sub dense-row-sub">
           ${piece.channel}
-          ${piece.owner ? html` · <span>${piece.owner !== 'nedjamez' ? html`<span style=${{ color: 'var(--systemic)' }}>⚡</span> ${piece.owner}` : piece.owner}</span>` : null}
+          ${piece.owner ? html` · <span>${isOtherOwner(piece.owner, operatorId) ? html`<span style=${{ color: 'var(--systemic)' }}>⚡</span> ${piece.owner}` : piece.owner}</span>` : null}
         </div>
       </div>
       <div class="dense-row-right" style=${{ display:'flex', flexDirection:'column', alignItems:'flex-end', gap:'3px' }}>
@@ -707,7 +711,7 @@ function handleAction(piece) {
 }
 
 /** Pipeline list mode — grouped by stage, split list + detail */
-function PipelineList({ pieces, selectedPiece, onSelectPiece, transitions }) {
+function PipelineList({ pieces, selectedPiece, onSelectPiece, transitions, operatorId }) {
   const grouped = useMemo(() => {
     const map = {};
     for (const s of STAGES) map[s] = [];
@@ -734,6 +738,7 @@ function PipelineList({ pieces, selectedPiece, onSelectPiece, transitions }) {
                 piece=${p}
                 isSelected=${selectedPiece?.id === p.id}
                 onClick=${() => onSelectPiece(p)}
+                operatorId=${operatorId}
               />
             `)}
           </div>
@@ -746,7 +751,7 @@ function PipelineList({ pieces, selectedPiece, onSelectPiece, transitions }) {
 }
 
 /** Pipeline kanban mode — five columns */
-function PipelineKanban({ pieces, onStageChange, onCreate }) {
+function PipelineKanban({ pieces, onStageChange, onCreate, operatorId, operatorLabel }) {
   const [dragging, setDragging] = useState(null);
   const [dropTarget, setDropTarget] = useState(null);
 
@@ -806,7 +811,7 @@ function PipelineKanban({ pieces, onStageChange, onCreate }) {
                       ${p.due_at ? html`<span class="kb-card-amt" style=${{ fontSize:'0.65rem', color:'var(--fg-muted)' }}>${p.due_at}</span>` : html`<span></span>`}
                       <div class="kb-card-owner">
                         <span class=${cn('ux-dot', `ux-${p.next_action_mode ?? 'silent'}`)}></span>
-                        <${KbAvatar} owner=${p.owner} />
+                        <${KbAvatar} owner=${p.owner} operatorId=${operatorId} operatorLabel=${operatorLabel} />
                       </div>
                     </div>
                   </div>
@@ -1040,7 +1045,7 @@ function StreamingState() {
 
 // ─── ContentView root ─────────────────────────────────────────────────────────
 
-export function ContentView({ activeFeature }) {
+export function ContentView({ activeFeature, operatorId, operatorLabel }) {
   // View state: 0=Pipeline | 1=Calendar | 2=Published
   const [activeView, setActiveView] = useState(() => {
     const p = new URLSearchParams(window.location.search).get('view');
@@ -1053,7 +1058,7 @@ export function ContentView({ activeFeature }) {
   const qc = useQueryClient();
 
   // ── Data queries ────────────────────────────────────────────────────────────
-  const piecesQ = useQuery({ queryKey: QK.pieces, queryFn: fetchPieces });
+  const piecesQ = useQuery({ queryKey: QK.pieces, queryFn: () => fetchPieces(operatorId) });
   const publishedQ = useQuery({ queryKey: QK.published, queryFn: fetchPublished, enabled: activeView === 2 });
   const calEventsQ = useQuery({ queryKey: QK.calEvents, queryFn: fetchCalEvents, enabled: activeView === 1 });
 
@@ -1100,9 +1105,9 @@ export function ContentView({ activeFeature }) {
   // ── setMenu publish ─────────────────────────────────────────────────────────
   useEffect(() => {
     if (isStandalone()) return;
-    const items = buildContentMenu(activeView, pipeMode, pieces);
+    const items = buildContentMenu(activeView, pipeMode, pieces, operatorId);
     setMenu(items).catch(() => {/* ignore */});
-  }, [activeView, pipeMode, pieces]);
+  }, [activeView, pipeMode, pieces, operatorId]);
 
   // ── Stage change mutation (kanban drag) ─────────────────────────────────────
   const stageChange = useMutation({
@@ -1112,7 +1117,7 @@ export function ContentView({ activeFeature }) {
       await hostDbExec(
         `INSERT INTO content_stage_transitions (piece_id, from_stage, to_stage, transitioned_by)
          VALUES (?, ?, ?, ?)`,
-        [piece.id, piece.stage, newStage, 'nedjamez']
+        [piece.id, piece.stage, newStage, operatorId ?? 'unknown-operator']
       ).catch(() => {});
       // Update piece stage — try content_pieces first, then content_calendar fallback
       try {
@@ -1194,6 +1199,8 @@ export function ContentView({ activeFeature }) {
         pieces=${pieces}
         onStageChange=${(piece, newStage) => stageChange.mutate({ piece, newStage })}
         onCreate=${createPiece}
+        operatorId=${operatorId}
+        operatorLabel=${operatorLabel}
       />`;
     } else {
       body = html`<${PipelineList}
@@ -1201,6 +1208,7 @@ export function ContentView({ activeFeature }) {
         selectedPiece=${selectedPiece}
         onSelectPiece=${setSelectedPiece}
         transitions=${transitionsQ.data ?? []}
+        operatorId=${operatorId}
       />`;
     }
   } else if (activeView === 1) {

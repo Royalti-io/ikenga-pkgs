@@ -20,6 +20,7 @@ cannot import across packages at runtime).
 | `dispatch.js` | recipe: item next-action → `host.sendToActiveSession` | verbatim shared |
 | `create-dispatch.js` | recipe: create-brief dispatch | verbatim shared |
 | `facet-filter.js` | recipe: facet filter helpers (pure) | verbatim shared |
+| `operator.js` | recipe: hostContext.operator identity helpers (pure) | verbatim shared; fails safe (empty/never-mine) when `operatorId` is null |
 
 ## Editing
 

@@ -127,6 +127,12 @@ function App() {
   const [bridgeReady, setBridgeReady] = useState(false);
   const [bridgeError, setBridgeError] = useState(null);
   const [activeFeature, setActiveFeature] = useState(null);
+  // Operator identity (hostContext.operator — see @ikenga/contract's
+  // host-context.ts). OPTIONAL: absent means unknown operator, standalone
+  // dev never sets it. Threaded down as a plain id/label pair, same shape
+  // as activeFeature, so the view fails safe instead of assuming a default.
+  const [operatorId, setOperatorId] = useState(null);
+  const [operatorLabel, setOperatorLabel] = useState(null);
 
   useEffect(() => {
     if (isStandalone()) {
@@ -139,11 +145,17 @@ function App() {
       onContextChange: (ctx) => {
         const af = ctx?.royaltiSuite?.activeFeature;
         if (typeof af === 'string') setActiveFeature(af);
+        const op = ctx?.operator;
+        setOperatorId(typeof op?.id === 'string' ? op.id : null);
+        setOperatorLabel(typeof op?.displayName === 'string' ? op.displayName : (typeof op?.id === 'string' ? op.id : null));
       },
     })
       .then((ctx) => {
         const af = ctx?.royaltiSuite?.activeFeature;
         if (typeof af === 'string') setActiveFeature(af);
+        const op = ctx?.operator;
+        setOperatorId(typeof op?.id === 'string' ? op.id : null);
+        setOperatorLabel(typeof op?.displayName === 'string' ? op.displayName : (typeof op?.id === 'string' ? op.id : null));
         setBridgeReady(true);
       })
       .catch((e) => setBridgeError(e.message ?? String(e)));
@@ -156,7 +168,7 @@ function App() {
     return html`<div style=${{ padding: '2rem', color: 'var(--fg-muted)' }}>Connecting…</div>`;
   }
 
-  return html`<${QueryClientProvider} client=${queryClient}><${StrategyView} activeFeature=${activeFeature} /></${QueryClientProvider}>`;
+  return html`<${QueryClientProvider} client=${queryClient}><${StrategyView} activeFeature=${activeFeature} operatorId=${operatorId} operatorLabel=${operatorLabel} /></${QueryClientProvider}>`;
 }
 
 createRoot(document.getElementById('root')).render(html`<${App} />`);
