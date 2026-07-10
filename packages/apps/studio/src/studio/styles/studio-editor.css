@@ -77,6 +77,15 @@
   --lane-audio:   var(--achievement);
   --lane-caption: var(--live);
   --lane-sfx:     var(--agent);
+
+  /* aspect-safe-area (F4 draft — plans/studio-design-system/parts/
+   * foundations/aspect-safe-area.md). --safe-zone-band derivation: 90px top
+   * + 90px bottom kept clear of a 1920px full source height per edge →
+   * 90 / 1920 = 4.6875%. */
+  --aspect-16-9:     16 / 9;
+  --aspect-9-16:     9 / 16;
+  --aspect-1-1:      1 / 1;
+  --safe-zone-band:  4.6875%;
 }
 
 /* ═══ media-controls · 40 transport-bar ═══════════════════════════════════ */
@@ -216,6 +225,47 @@
   align-items: center;
   justify-content: center;
 }
+
+/* Aspect + 9:16 safe-zone (F4 aspect-safe-area, contract §8 commit-14).
+   16:9/1:1 keep the existing fixed-height frame unchanged; 9:16 derives a
+   portrait width from --preview-h via aspect-ratio so it doesn't disturb the
+   default layout. */
+.preview-surface[data-aspect="9-16"] {
+  aspect-ratio: var(--aspect-9-16);
+  width: auto;
+  height: var(--preview-h);
+  margin-inline: auto;
+}
+.preview-surface[data-aspect="1-1"] {
+  aspect-ratio: var(--aspect-1-1);
+  width: auto;
+  height: var(--preview-h);
+  margin-inline: auto;
+}
+
+/* Safe-zone bands — informational only (pointer-events: none via the
+   ::before/::after default, and they carry no interactive semantics), tint +
+   label together so the affordance never relies on colour alone (1.4.1). */
+.preview-surface.safe-zone-on::before,
+.preview-surface.safe-zone-on::after {
+  content: 'Safe zone';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: var(--safe-zone-band);
+  background: var(--beat-accent-sky-soft);
+  color: var(--fg-faint);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 4;
+}
+.preview-surface.safe-zone-on::before { top: 0; }
+.preview-surface.safe-zone-on::after  { bottom: 0; }
 .preview-cell-label {
   font-family: var(--font-mono);
   font-size: var(--text-micro);

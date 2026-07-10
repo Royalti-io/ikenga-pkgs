@@ -22,5 +22,6 @@ export type {
   PreviewSurfaceProps,
   PreviewStatusProps,
   PreviewStatusKind,
+  PreviewAspect,
   MediaThumbProps,
 } from './preview-surface';

@@ -27,6 +27,7 @@ import {
   PlayheadEcho,
   PreviewSurface,
   PreviewStatus,
+  type PreviewAspect,
 } from '../media-controls';
 import { createMockPlayer, type PlayerHandle } from '../lib/player';
 import {
@@ -56,6 +57,15 @@ import {
 const FPS = DEFAULT_FPS;
 const TOTAL_MS = COMPOSITION_TOTAL_MS;
 const SEED_MS = 8_400; // design fixture snapshot — c02 problem active
+
+// Project.aspect_ratio ('16:9'|'9:16'|'1:1', colon form — the schema/launcher
+// convention) → PreviewSurface's `data-aspect` attribute (dash form, per F4
+// aspect-safe-area / preview-surface.md's locked class API).
+function aspectAttr(aspect: string): PreviewAspect {
+  if (aspect === '9:16') return '9-16';
+  if (aspect === '1:1') return '1-1';
+  return '16-9';
+}
 
 // ─── Inline icons for the transport right slot ───────────────────────────
 
@@ -303,6 +313,8 @@ export function CompositionView() {
 
         {/* Preview surface — frames the engine black box */}
         <PreviewSurface
+          aspect={aspectAttr(COMPOSITION_META.aspect)}
+          safeZoneOn
           status={
             !activeClip
               ? 'ready'
