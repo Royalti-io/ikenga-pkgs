@@ -447,6 +447,15 @@
 
 .clip-segment.is-selected { box-shadow: inset 0 0 0 2px var(--beat-accent-amber); }
 
+/* Keyboard-only focus ring (a11y-keyboard.html §"Focus rings" — info/sky
+   token, never shown on mouse click since :focus-visible only matches
+   keyboard-driven focus). Contract §8 commit-15. */
+.clip-segment:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: -2px;
+  z-index: 4;
+}
+
 @media (prefers-reduced-motion: no-preference) {
   .clip-segment.is-hover-link { animation: clip-hover-pulse 1s var(--ease-calm) infinite; }
   @keyframes clip-hover-pulse {
@@ -472,6 +481,10 @@
   inset: 0;
   z-index: 10;
   cursor: col-resize;
+}
+.scrubber:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: -2px;
 }
 .playhead {
   position: absolute;

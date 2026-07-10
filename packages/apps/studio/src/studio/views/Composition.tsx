@@ -257,8 +257,46 @@ export function CompositionView() {
     );
   }
 
+  // Pane-chrome keyboard map beyond the base scrubber (contract §8 commit-15,
+  // a11y-keyboard.html §"Composition / playback"). Space play/pauses; Left/
+  // Right scrub by a whole beat (playheadMs jumps to the adjacent clip's
+  // start_ms) — distinct from the scrubber's OWN Left/Right (±1 frame),
+  // which fires only when the slider itself has focus, so this handler
+  // steps aside whenever the event originated inside `.scrubber` or a form
+  // control (text input / select) to avoid double-handling the same key.
+  // Full 1/2/3/4 view-switcher + V-split focus-trap are App-shell (commit 5)
+  // concerns and stay out of scope per the "do NOT retrofit commits 1-7"
+  // invariant — this handler only covers what Composition itself owns.
+  const onViewKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    const target = e.target as HTMLElement;
+    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) return;
+    if (target.closest('.scrubber')) return;
+
+    if (e.key === ' ') {
+      e.preventDefault();
+      playToggle();
+      return;
+    }
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      const dir = e.key === 'ArrowLeft' ? -1 : 1;
+      const idx = activeClip
+        ? COMPOSITION_TIMELINE.findIndex((c) => c.uid === activeClip.uid)
+        : -1;
+      const targetIdx =
+        idx === -1 ? (dir > 0 ? 0 : COMPOSITION_TIMELINE.length - 1) : idx + dir;
+      const clamped = Math.max(0, Math.min(COMPOSITION_TIMELINE.length - 1, targetIdx));
+      const clip = COMPOSITION_TIMELINE[clamped];
+      if (clip) seekMs(clip.start_ms);
+    }
+  };
+
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-auto bg-base" data-workspace="studio">
+    <div
+      className="flex h-full min-h-0 flex-col overflow-auto bg-base"
+      data-workspace="studio"
+      onKeyDown={onViewKeyDown}
+    >
       <div className="composition-frame m-2">
         {/* Engine sub-tabs */}
         <div className="engine-tabs-row">
