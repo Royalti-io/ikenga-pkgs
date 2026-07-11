@@ -15,7 +15,7 @@ import { useEffect } from 'react';
 
 import { useLayoutStore } from './layout-store';
 import { useProjectStore, selectIsProjectOpen, selectOpenProject } from './project-store';
-import { useStoryboardStore } from './storyboard-store';
+import { useStoryboardStore, selectStoryboardSource } from './storyboard-store';
 import type { PaneIndex, ViewComponentRegistry } from './routes';
 import { LayoutSwitcher } from './components/LayoutSwitcher';
 import { ViewSwitcher } from './components/ViewSwitcher';
@@ -153,6 +153,21 @@ export function App() {
     if (projectId) void hydrateStoryboard(projectId);
     else clearStoryboard();
   }, [openProjectSummary?.project_id, hydrateStoryboard, clearStoryboard]);
+
+  // Render-status poll: the shell can't relay pkg:// render/progress events to
+  // the iframe (Round-13 Finding), so poll render.list while a REAL project is
+  // open and fold it into the storyboard-store. Runs app-wide (not per-pane) so
+  // the now-rendering beacon + the Composition timeline both reflect live
+  // running→done regardless of which view is mounted. No-op in mock/standalone.
+  const storyboardSource = useStoryboardStore(selectStoryboardSource);
+  const refreshRenders = useStoryboardStore((s) => s.refreshRenders);
+  useEffect(() => {
+    const projectId = openProjectSummary?.project_id;
+    if (!projectId || storyboardSource !== 'real') return;
+    void refreshRenders();
+    const id = window.setInterval(() => { void refreshRenders(); }, 2500);
+    return () => window.clearInterval(id);
+  }, [openProjectSummary?.project_id, storyboardSource, refreshRenders]);
 
   // The launcher pre-empts the pane layout entirely — it isn't a sub-view
   // and doesn't share the layout/view-switcher chrome (launcher.md §"Chrome

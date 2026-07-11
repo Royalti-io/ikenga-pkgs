@@ -17,8 +17,9 @@
 
 import { create } from 'zustand';
 
-import { getMcpClient, storyboardApi } from './mcp-client';
-import type { Beat, Cell } from './mcp-types';
+import { getMcpClient, storyboardApi, renderApi } from './mcp-client';
+import { foldRenderStatus } from './lib/composition-model';
+import type { Beat, Cell, Project, RenderStatus } from './mcp-types';
 
 // ─── display projection ──────────────────────────────────────────────────
 //
@@ -71,6 +72,16 @@ export interface StoryboardStoreState {
   projectId: string | null;
   cells: Cell[];
   beats: Beat[];
+  /** The full storyboard.json project doc from `storyboard.read` — carries the
+   *  narration block + resolution + current_rung the thin OpenProjectSummary
+   *  (project-store) omits. Composition builds its real timeline model + the
+   *  narration/none treatment off this. */
+  projectDoc: Project | null;
+  /** Latest render status per cell uid (real mode) — the render.list poll
+   *  folded via `foldRenderStatus`. Empty in mock/standalone (those views use
+   *  their fixture's baked-in statuses). Drives the Composition clip treatment
+   *  and the now-rendering beacon. */
+  renderStatus: Record<string, RenderStatus>;
   source: 'real' | 'mock' | 'empty';
   loading: boolean;
   error: string | null;
@@ -82,6 +93,12 @@ export interface StoryboardStoreActions {
   hydrate: (projectId: string) => Promise<void>;
   /** Re-read the current project's storyboard (view focus / after a mutation). */
   refetch: () => Promise<void>;
+  /** Re-read the render_queue via render.list and fold it into `renderStatus`
+   *  (real mode only). The on-demand + interval poll stand-in for the
+   *  render/progress events the shell can't relay to the iframe (Round-13
+   *  Finding); App.tsx polls this while a real project is open. No-op in
+   *  mock/standalone mode. */
+  refreshRenders: () => Promise<void>;
   /** Clear on project close so the launcher/mocks take over again. */
   clear: () => void;
   /** Look up the display projection of one cell by uid (Cell view). */
@@ -94,6 +111,8 @@ export const useStoryboardStore = create<StoryboardStore>((set, get) => ({
   projectId: null,
   cells: [],
   beats: [],
+  projectDoc: null,
+  renderStatus: {},
   source: 'empty',
   loading: false,
   error: null,
@@ -102,13 +121,17 @@ export const useStoryboardStore = create<StoryboardStore>((set, get) => ({
     set({ projectId, loading: true, error: null });
     try {
       const client = await getMcpClient();
-      const { beats, cells } = await storyboardApi.read(client, projectId);
+      const { project, beats, cells } = await storyboardApi.read(client, projectId);
       set({
         cells: cells ?? [],
         beats: beats ?? [],
+        projectDoc: project ?? null,
         source: client.mode === 'real' ? 'real' : 'mock',
         loading: false,
       });
+      // Seed render status right after cells load so the timeline paints its
+      // real ✓/◐/○ treatment on first render (App.tsx keeps it fresh after).
+      if (client.mode === 'real') void get().refreshRenders();
     } catch (err) {
       set({ loading: false, error: (err as Error).message });
     }
@@ -120,7 +143,21 @@ export const useStoryboardStore = create<StoryboardStore>((set, get) => ({
     await get().hydrate(projectId);
   },
 
-  clear: () => set({ projectId: null, cells: [], beats: [], source: 'empty', loading: false, error: null }),
+  refreshRenders: async () => {
+    const { projectId, source } = get();
+    if (!projectId || source !== 'real') return;
+    try {
+      const client = await getMcpClient();
+      if (client.mode !== 'real') return;
+      const { records } = await renderApi.list(client);
+      set({ renderStatus: foldRenderStatus(records ?? []) });
+    } catch {
+      // render.list unavailable / transient — keep the prior statuses rather
+      // than blanking the timeline treatment.
+    }
+  },
+
+  clear: () => set({ projectId: null, cells: [], beats: [], projectDoc: null, renderStatus: {}, source: 'empty', loading: false, error: null }),
 
   displayCell: (uid) => {
     if (!uid) return null;
@@ -132,6 +169,8 @@ export const useStoryboardStore = create<StoryboardStore>((set, get) => ({
 // ─── selectors ─────────────────────────────────────────────────────────
 
 export const selectHydratedCells = (s: StoryboardStoreState) => s.cells;
+export const selectHydratedProject = (s: StoryboardStoreState) => s.projectDoc;
+export const selectRenderStatus = (s: StoryboardStoreState) => s.renderStatus;
 export const selectStoryboardSource = (s: StoryboardStoreState) => s.source;
 /** True when real cells are loaded — the signal views use to prefer hydrated
  *  data over their static mock fixture. */
