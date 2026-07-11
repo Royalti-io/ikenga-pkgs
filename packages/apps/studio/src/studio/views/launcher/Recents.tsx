@@ -11,11 +11,57 @@
 // launcher-create-open-no-error-handling): loading skeleton (aria-busy), empty
 // with two teaching entry paths, error banner with Retry, ready rows.
 
+import { useState } from 'react';
+
 import { presentationFor } from '../../__mocks__/launcher';
 import { Icon } from './icons';
 import { accentStyle, formatAgo, type RecentRow } from './presentation';
 
+/** Rows visible before the "Show all (N)" expander kicks in. */
+const RECENTS_CAP = 8;
+
+// A recent whose folder is gone from disk. Rendered dimmed + non-interactive
+// with a "missing" chip — NO Open affordance, because opening a dead path just
+// throws. There's no forget/delete-row seam in the sidecar (project.list is
+// read-only; no project.forget), so "Remove from recents" is DEFERRED — the row
+// simply dims + notes rather than offering a remove action.
+function MissingRow({ row }: { row: RecentRow }) {
+  return (
+    <div
+      aria-label={`${row.name} (folder missing)`}
+      className="flex w-full items-center gap-3 px-4 py-3 text-left opacity-55"
+    >
+      <span
+        aria-hidden="true"
+        className="flex h-9 w-9 flex-none items-center justify-center rounded-lg border border-soft text-fg-faint"
+        style={{ background: 'var(--bg-raised)' }}
+      >
+        <Icon name="folder" size={15} />
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center gap-2">
+          <span className="truncate text-[15px] font-semibold text-fg-muted line-through decoration-fg-faint/50">
+            {row.name}
+          </span>
+          <span
+            className="inline-flex flex-none items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[10px]"
+            style={{ color: 'var(--danger)', background: 'var(--danger-soft)', borderColor: 'color-mix(in srgb, var(--danger) 40%, var(--border))' }}
+          >
+            missing
+          </span>
+        </span>
+        <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-[11.5px] text-fg-faint">
+          {row.path && <span className="truncate">{row.path}</span>}
+          <span>folder not found on disk</span>
+        </span>
+      </span>
+    </div>
+  );
+}
+
 function Row({ row, first, onOpen }: { row: RecentRow; first: boolean; onOpen: () => void }) {
+  if (!row.exists) return <MissingRow row={row} />;
+
   const pres = row.archetype_id ? presentationFor(row.archetype_id) : null;
   const ago = formatAgo(row.lastOpened);
   const meta: string[] = [];
@@ -203,14 +249,37 @@ export function Recents({
           </div>
         </div>
       ) : (
-        <div>
-          {rows.map((r, i) => (
-            <div key={r.id} className="border-b border-soft last:border-b-0">
-              <Row row={r} first={i === 0} onOpen={() => onOpen(r)} />
-            </div>
-          ))}
-        </div>
+        <RecentList rows={rows} onOpen={onOpen} />
       )}
     </section>
+  );
+}
+
+/** The ready-state list: caps at RECENTS_CAP rows behind a "Show all (N)"
+ *  expander, and highlights the first OPENABLE (exists) row for Resume rather
+ *  than blindly index 0 (which could be a missing row). */
+function RecentList({ rows, onOpen }: { rows: RecentRow[]; onOpen: (row: RecentRow) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const firstOpenableIdx = rows.findIndex((r) => r.exists);
+  const visible = expanded ? rows : rows.slice(0, RECENTS_CAP);
+  const hidden = rows.length - visible.length;
+
+  return (
+    <div>
+      {visible.map((r, i) => (
+        <div key={r.id} className="border-b border-soft last:border-b-0">
+          <Row row={r} first={i === firstOpenableIdx} onOpen={() => onOpen(r)} />
+        </div>
+      ))}
+      {hidden > 0 && (
+        <button
+          type="button"
+          onClick={() => setExpanded(true)}
+          className="flex w-full items-center justify-center gap-1.5 px-4 py-2.5 font-mono text-[11px] uppercase tracking-[0.06em] text-fg-muted hover:bg-raised hover:text-fg"
+        >
+          <Icon name="chevron" size={13} /> Show all ({rows.length})
+        </button>
+      )}
+    </div>
   );
 }

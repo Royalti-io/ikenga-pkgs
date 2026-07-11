@@ -137,6 +137,20 @@ export function writeCellContent(
   };
 }
 
+/**
+ * Read the project's Fountain screenplay source at `<projectRoot>/script.fountain`.
+ * Same shape/contract as readCellContent: `exists:false` (empty text) is a
+ * legitimate state for a project with no `.fountain` on disk (not an error) —
+ * the Script view's Fountain mode renders the real text when present and an
+ * honest "no script.fountain" note when absent, rather than faking a screenplay.
+ */
+export function readFountain(projectRoot: string): StoryboardResult {
+  const abs = join(projectRoot, 'script.fountain');
+  const exists = existsSync(abs);
+  const text = exists ? readFileSync(abs, 'utf8') : '';
+  return { result: { ok: true, exists, text } };
+}
+
 // ─── mutations ──────────────────────────────────────────────────────────────
 
 export function createCell(projectRoot: string, cellInput: unknown): StoryboardResult {

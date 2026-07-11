@@ -207,11 +207,27 @@ export function App() {
   return (
     <div className="flex h-full flex-col bg-base text-fg">
       <header className="flex items-center justify-between border-b border-soft bg-sunken px-3 py-1.5">
-        <div className="flex items-center gap-2">
-          <span className="font-display text-sm font-semibold tracking-tight">Studio</span>
-          <span className="font-mono text-[9px] uppercase tracking-wider text-fg-faint">
-            com.ikenga.studio
+        <div className="flex min-w-0 items-center gap-2">
+          {/* pkg id lives in the tooltip / debug only — not user-facing chrome. */}
+          <span
+            className="font-display text-sm font-semibold tracking-tight"
+            title="com.ikenga.studio"
+          >
+            Studio
           </span>
+          {openProjectSummary?.name && (
+            <>
+              <span className="text-fg-faint">·</span>
+              <span className="truncate font-mono text-[11px] text-fg-muted">
+                {openProjectSummary.name}
+              </span>
+              {openProjectSummary.aspect_ratio && (
+                <span className="rounded bg-raised px-1.5 py-0.5 font-mono text-[10px] text-fg-faint">
+                  {openProjectSummary.aspect_ratio}
+                </span>
+              )}
+            </>
+          )}
         </div>
         <LayoutSwitcher />
       </header>

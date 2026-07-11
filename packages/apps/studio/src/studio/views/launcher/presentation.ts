@@ -65,6 +65,11 @@ export interface RecentRow {
   path: string;
   /** Epoch ms of last-open, or null when the seam didn't carry a timestamp. */
   lastOpened: number | null;
+  /** Whether the stored path still exists on disk (real project.list). Rows
+   *  whose folder moved/was deleted render dimmed with a "missing" chip and no
+   *  Open affordance (audit: Recents hygiene). Defaults true when the seam
+   *  didn't carry it (mock rows / older sidecar). */
+  exists: boolean;
   /** Present ONLY when the row came from a full Project (standalone/mock). Real
    *  project.list ProjectSummary rows omit these — never fabricate them. */
   archetype_id?: string;
@@ -86,7 +91,9 @@ export function normalizeRecent(raw: RawRecentProject): RecentRow | null {
     if (!Number.isNaN(t)) lastOpened = t;
   }
 
-  const row: RecentRow = { id, name, path, lastOpened };
+  // exists defaults true when the seam didn't carry it (mock full-Project rows,
+  // or an older sidecar) — only a real `exists:false` dims the row.
+  const row: RecentRow = { id, name, path, lastOpened, exists: raw.exists !== false };
   if (typeof raw.archetype_id === 'string') row.archetype_id = raw.archetype_id;
   if (typeof raw.aspect_ratio === 'string') row.aspect = raw.aspect_ratio as AspectRatio;
   if (Array.isArray(raw.cells)) row.cellCount = raw.cells.length;

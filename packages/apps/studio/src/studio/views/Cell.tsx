@@ -561,6 +561,7 @@ export function CellView() {
               key={c.uid}
               role="tab"
               aria-selected={active}
+              aria-label={`${c.beat} cell, ${c.uid}, ${RUNG_LABEL[c.rung]} rung`}
               onClick={() => setCellUid(c.uid)}
               title={`${c.uid} · ${c.beat} · ${RUNG_LABEL[c.rung]}`}
               className="flex min-w-[172px] flex-1 items-center gap-2.5 rounded-md border p-1.5 text-left transition-colors"

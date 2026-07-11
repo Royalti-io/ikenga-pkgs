@@ -221,6 +221,10 @@ export function createRealMcpClient(): McpClient {
             name: (r.name ?? r.title ?? '') as string,
             path: (r.path ?? '') as string,
             lastOpened: (r.lastOpened ?? r.last_opened) as number | undefined,
+            // exists: cheap fs check the sidecar performs at list-time. Absent
+            // on older sidecars → leave undefined so the Launcher treats the
+            // row as present rather than dimming it.
+            exists: (r.exists as boolean | undefined),
           })),
         };
       }
@@ -244,6 +248,16 @@ export function createRealMcpClient(): McpClient {
         const cell = body.cell as Cell;
         if (cell) cellCache.set(cell.uid, cell);
         return cell;
+      }
+      // Fountain read seam (Wave 5) — the Script view's Fountain mode reads the
+      // REAL <root>/script.fountain. projectId injected from the active project.
+      case 'storyboard.read_fountain': {
+        const a = requireActive('storyboard.read_fountain');
+        const body = await raw('storyboard.read_fountain', { projectId: a.projectId });
+        return {
+          exists: Boolean(body.exists),
+          text: (body.text as string) ?? '',
+        };
       }
       // Cell-content seams (Wave 3) — the editor reads/writes the REAL authored
       // source file at the cell's content_path (the Cell record only points to
@@ -315,6 +329,24 @@ export function createRealMcpClient(): McpClient {
           approved: args.approved,
         });
         return { ok: true };
+      }
+      // Cell add/delete (Canvas "New cell" + per-tile delete). The UI passes a
+      // full Cell (create) or a uid (delete); projectId is injected from the
+      // active project. delete_cell removes the storyboard.json record only —
+      // the on-disk cell dir is left in place (sidecar deleteCell).
+      case 'storyboard.create_cell': {
+        const a = requireActive('storyboard.create_cell');
+        const body = await raw('storyboard.create_cell', { projectId: a.projectId, cell: args.cell });
+        const cell = body.cell as Cell | undefined;
+        if (cell) cellCache.set(cell.uid, cell);
+        return { cell };
+      }
+      case 'storyboard.delete_cell': {
+        const a = requireActive('storyboard.delete_cell');
+        const uid = args.cell_uid as string;
+        const body = await raw('storyboard.delete_cell', { projectId: a.projectId, cellId: uid });
+        cellCache.delete(uid);
+        return { cellId: (body.cellId as string) ?? uid };
       }
 
       // ─── composition / render ─────────────────────────────────────────

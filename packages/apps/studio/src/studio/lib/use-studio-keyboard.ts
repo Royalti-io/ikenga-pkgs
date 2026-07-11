@@ -14,10 +14,12 @@
 //              focus into that pane's chrome. Writes ui-only focusedPane, never
 //              the shared-state model (a11y-keyboard.html §"Focus-trap").
 //   Esc        release the focus trap → the active pane's chrome (the <section>).
-//   Tab        trap focus WITHIN the active pane (the V-split focus-trap): Tab /
-//              Shift+Tab wrap at the pane's focusable boundaries; focus never
-//              escapes to the inactive pane. The top app chrome (LayoutSwitcher)
-//              + beacon stay reachable by pointer / F6.
+//   Tab        trap focus WITHIN the active pane ONCE focus is inside it (the
+//              V-split focus-trap): Tab / Shift+Tab wrap at the pane's focusable
+//              boundaries. When focus is on the top app chrome (LayoutSwitcher)
+//              rather than inside a pane, native Tab flows normally so that
+//              chrome stays keyboard-reachable (it is NOT force-pulled into a
+//              pane); the LayoutSwitcher is itself an arrow-key radiogroup.
 //
 // Arrow keys are deliberately NOT handled here: they are context-sensitive and
 // belong to the focused view (Composition scrubs playheadMs; the scrubber steps
@@ -105,6 +107,12 @@ export function useStudioKeyboard() {
         const activeEl = active as HTMLElement | null;
         const inside = activeEl ? pane.contains(activeEl) : false;
 
+        // Exempt the top app-chrome (LayoutSwitcher etc.) from the trap: when
+        // focus is NOT inside the focused pane, let native Tab flow so the
+        // chrome above the panes is reachable by keyboard. The trap only wraps
+        // once focus is already inside a pane (below).
+        if (!inside) return;
+
         if (items.length === 0) {
           pane.focus();
           e.preventDefault();
@@ -113,11 +121,6 @@ export function useStudioKeyboard() {
         const first = items[0];
         const last = items[items.length - 1];
 
-        if (!inside) {
-          (e.shiftKey ? last : first).focus();
-          e.preventDefault();
-          return;
-        }
         if (!e.shiftKey && activeEl === last) {
           first.focus();
           e.preventDefault();

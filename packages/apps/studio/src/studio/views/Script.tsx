@@ -25,10 +25,14 @@
 // - VO/action editing is read-only — writes go via chat / MCP
 //   `storyboard.write_cell` (there is no in-pane script-write seam in P1;
 //   Wave-3/4 scope alongside Cell save). Surfaced as an inline read-only hint.
-// - Fountain-mode CONTENT for a real narrative project reads
-//   `<project>/script.fountain`, which is not exposed over the MCP surface yet.
-//   The toggle now keys off the REAL archetype, but real fountain text is not
-//   rendered (would be faking) — an honest note stands in until the seam lands.
+// - VO/action editing is read-only (see above).
+//
+// Wave-5 (closes the deferred fountain read): Fountain mode for a real
+// narrative project now reads `<project>/script.fountain` over the
+// `storyboard.read_fountain` MCP seam and renders the real screenplay
+// (read-only). When the project has no `.fountain` on disk it shows an honest
+// "no script.fountain" note instead of the mock screenplay. The mock sample is
+// kept ONLY for standalone/mock mode.
 
 import { useEffect, useMemo, useState } from 'react';
 
@@ -36,6 +40,7 @@ import { parseFountain, type FountainScene } from '../lib/fountain';
 import { fmtClock } from '../lib/time';
 import { buildScriptModel, mockScriptRows, type ScriptRowModel } from '../lib/script-model';
 import { FOUNTAIN_SAMPLE, SCRIPT_BEATS, SCRIPT_META } from '../__mocks__/script';
+import { getMcpClient, storyboardApi } from '../mcp-client';
 import {
   selectCellUid,
   selectPlayheadMs,
@@ -234,6 +239,44 @@ export function ScriptView() {
 
   const scenes = useMemo(() => parseFountain(FOUNTAIN_SAMPLE), []);
 
+  // Real Fountain source (Wave-5): lazily read <project>/script.fountain over
+  // the storyboard.read_fountain seam the first time the user switches to
+  // Fountain mode on a real narrative project. `exists:false` is an honest
+  // "no .fountain on disk" state, NOT an error. Standalone/mock never fetches
+  // (it renders the FOUNTAIN_SAMPLE below).
+  const [fountain, setFountain] = useState<{
+    loading: boolean;
+    loaded: boolean;
+    exists: boolean;
+    text: string;
+    error: string | null;
+  }>({ loading: false, loaded: false, exists: false, text: '', error: null });
+
+  useEffect(() => {
+    if (!(hasRealCells && isNarrative && mode === 'fountain')) return;
+    let cancelled = false;
+    setFountain((f) => ({ ...f, loading: true, error: null }));
+    void (async () => {
+      try {
+        const client = await getMcpClient();
+        const res = await storyboardApi.read_fountain(client);
+        if (!cancelled) {
+          setFountain({ loading: false, loaded: true, exists: res.exists, text: res.text, error: null });
+        }
+      } catch (e) {
+        if (!cancelled) {
+          setFountain({ loading: false, loaded: true, exists: false, text: '', error: (e as Error).message });
+        }
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [hasRealCells, isNarrative, mode]);
+
+  const realScenes = useMemo(
+    () => (fountain.exists && fountain.text ? parseFountain(fountain.text) : []),
+    [fountain.exists, fountain.text],
+  );
+
   if (rows.length === 0) {
     return (
       <EmptyState
@@ -295,15 +338,35 @@ export function ScriptView() {
       <div className="min-h-0 flex-1 overflow-auto">
         {mode === 'fountain' && isNarrative ? (
           hasRealCells ? (
-            // Real narrative: script.fountain has no MCP read seam yet — show an
-            // honest deferral instead of the mock screenplay (would be faking).
-            <div className="p-3">
-              <p className="max-w-md text-[11px] leading-relaxed text-fg-muted">
-                Fountain preview reads{' '}
-                <span className="font-mono text-fg-faint">{'<project>/script.fountain'}</span>{' '}
-                directly — not yet wired into this pane. The parsed beats are on the Script tab.
-              </p>
-            </div>
+            // Real narrative: render the REAL <project>/script.fountain (read-
+            // only) via storyboard.read_fountain; honest note when absent.
+            fountain.loading || !fountain.loaded ? (
+              <div className="p-3">
+                <p className="font-mono text-[11px] text-fg-faint">Loading screenplay…</p>
+              </div>
+            ) : fountain.error ? (
+              <div className="p-3">
+                <p className="max-w-md text-[11px] leading-relaxed text-fg-muted">
+                  Couldn&rsquo;t read{' '}
+                  <span className="font-mono text-fg-faint">{'<project>/script.fountain'}</span>.{' '}
+                  <span className="font-mono text-fg-faint">{fountain.error}</span>
+                </p>
+              </div>
+            ) : fountain.exists && realScenes.length > 0 ? (
+              <div className="space-y-3 p-3">
+                {realScenes.map((scene) => (
+                  <FountainSceneCard key={scene.id} scene={scene} />
+                ))}
+              </div>
+            ) : (
+              <div className="p-3">
+                <p className="max-w-md text-[11px] leading-relaxed text-fg-muted">
+                  No{' '}
+                  <span className="font-mono text-fg-faint">script.fountain</span>{' '}
+                  in this project. The parsed beats are on the Script tab — ask your Chi in chat to draft a screenplay.
+                </p>
+              </div>
+            )
           ) : (
             <div className="space-y-3 p-3">
               {scenes.map((scene) => (

@@ -175,7 +175,10 @@ function listKnownProjects(db: Db): ProjectSummary[] {
       name: string;
       last_opened: number;
     }>;
-  return rows.map(toProjectSummary);
+  // exists: cheap per-row fs.existsSync so the Launcher can dim stale/dead
+  // paths (moved or deleted project folders) instead of rendering them as
+  // first-class openable recents (audit: Recents hygiene).
+  return rows.map((row) => ({ ...toProjectSummary(row), exists: existsSync(row.path) }));
 }
 
 // Initialize a fresh project skeleton on disk (used by project.create).
@@ -360,6 +363,8 @@ function buildHandlers(db: Db): RpcHandlers {
         return storyboard.read(root).result;
       case 'storyboard.read_cell':
         return storyboard.readCell(root, params.cellId as string).result;
+      case 'storyboard.read_fountain':
+        return storyboard.readFountain(root).result;
       case 'storyboard.read_cell_content':
         return storyboard.readCellContent(root, params.cellId as string).result;
       case 'storyboard.write_cell_content': {

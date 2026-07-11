@@ -335,6 +335,26 @@ function callMockTool(
       return { ok: true };
     }
 
+    case 'storyboard.create_cell': {
+      const cell = args.cell as Cell;
+      MOCK_CELLS.push(cell);
+      queueMicrotask(() => emit(hub, 'cells/changed', {
+        project_id: MOCK_PROJECT_ID,
+        changed_uids: [cell.uid],
+      }));
+      return { cell };
+    }
+    case 'storyboard.delete_cell': {
+      const uid = args.cell_uid as string;
+      const idx = MOCK_CELLS.findIndex((c) => c.uid === uid);
+      if (idx !== -1) MOCK_CELLS.splice(idx, 1);
+      queueMicrotask(() => emit(hub, 'cells/changed', {
+        project_id: MOCK_PROJECT_ID,
+        changed_uids: [uid],
+      }));
+      return { cellId: uid };
+    }
+
     // ─── composition ───────────────────────────────────────────────
     case 'composition.render': {
       const cellUid = (args.cell_uid as string) ?? MOCK_CELLS[0].uid;

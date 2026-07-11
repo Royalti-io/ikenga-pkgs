@@ -12,15 +12,15 @@
 //            light up the cross-linking, scrub-sync, and now-rendering beacon
 //            against synthetic data.
 //
-// Selection rule for P1:
-//   - Standalone-dev (no parent window)  → mock
-//   - In-shell, but no real MCP server present (P1 default) → mock
-//   - In-shell, real MCP server present (Wave 3 onward)     → real
+// Selection rule:
+//   - Standalone-dev (no parent window)               → mock
+//   - In-shell, real MCP server answers the probe      → real
+//   - In-shell, server absent / crash-looping / slow   → mock (demo data)
 //
-// The third condition is detected by probing for the real server with a
-// cheap `render.list_engines` call wrapped in a timeout. Until WP-06 lands
-// the probe always times out and we fall back to mock — which is the
-// correct behaviour today.
+// The real-vs-mock choice in-shell is decided by a cheap `render.list_engines`
+// probe wrapped in a timeout (getMcpClient below): a pass selects the real
+// client, a throw/timeout falls back to the mock so a missing or crash-looping
+// studio MCP server degrades to demo data instead of throwing on every call.
 
 import { connectBridge, isStandalone } from './bridge';
 import type {
@@ -58,20 +58,43 @@ let _client: McpClient | null = null;
 /** Lazily resolves and caches the MCP client. Idempotent — calling twice
  *  returns the same promise.
  *
- *  Selection is RUNTIME, not a build flag (Wave-3 flip):
+ *  Selection is RUNTIME, not a build flag:
  *    • Standalone dev (plain browser tab, no shell parent) → mock. Lets
  *      `pnpm dev` boot the iframe without a backend.
- *    • In-shell (mounted in an Ikenga pane) → REAL. Every call routes through
- *      the shell bridge to the pkg's `studio` MCP server (real-mcp.ts).
+ *    • In-shell (mounted in an Ikenga pane) → REAL, but only once a cheap
+ *      `render.list_engines` probe confirms the pkg's `studio` MCP server
+ *      actually answers. If the server is absent / crash-looping / slow past
+ *      the timeout, we fall back to the mock client so the UI degrades to
+ *      demo data (mode==='mock') instead of throwing a raw '[studio] … failed'
+ *      on every view call.
  *
  *  `isStandalone()` is the synchronous discriminator. main.tsx only renders
  *  <App/> after connectBridge() resolves, so in shell mode the bridge is
  *  already connected before any view calls this; we await it again here
  *  (idempotent) so the real client's transport is guaranteed live. */
+const PROBE_TIMEOUT_MS = 3000;
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('mcp-probe-timeout')), ms)),
+  ]);
+}
+
+/** A failed probe must not strand the session in demo data forever (a slowly
+ *  booting MCP server would otherwise stay mocked until a pane reload) — the
+ *  mock result is cached soft: subsequent calls re-probe, at most once per
+ *  backoff window, and swap to the real client when it comes up. */
+const PROBE_RETRY_MS = 10_000;
+let _probeFailedAt = 0;
+
 export async function getMcpClient(): Promise<McpClient> {
-  if (_client) return _client;
+  if (_client && !(_probeFailedAt && Date.now() - _probeFailedAt >= PROBE_RETRY_MS)) {
+    return _client;
+  }
 
   if (isStandalone()) {
+    _probeFailedAt = 0;
     const { createMockMcpClient } = await import('./__mocks__/mcp.js');
     _client = createMockMcpClient();
     return _client;
@@ -79,7 +102,21 @@ export async function getMcpClient(): Promise<McpClient> {
 
   await connectBridge();
   const { createRealMcpClient } = await import('./real-mcp.js');
-  _client = createRealMcpClient();
+  const real = createRealMcpClient();
+  // Guarded probe: render.list_engines needs no open project and is cheap.
+  // A pass proves the real studio MCP server is live; a throw/timeout means it
+  // is absent or crash-looping — fall back to the mock so the UI stays usable.
+  try {
+    await withTimeout(real.callTool('render.list_engines'), PROBE_TIMEOUT_MS);
+    _client = real;
+    _probeFailedAt = 0;
+  } catch {
+    if (!_client) {
+      const { createMockMcpClient } = await import('./__mocks__/mcp.js');
+      _client = createMockMcpClient();
+    }
+    _probeFailedAt = Date.now();
+  }
   return _client;
 }
 
@@ -132,6 +169,9 @@ export interface RawRecentProject {
   // shared
   name?: string;
   path?: string;
+  /** Whether the stored path still exists on disk (real project.list only).
+   *  Absent on mock/full-Project rows → treated as present. */
+  exists?: boolean;
 }
 
 export const projectApi = {
@@ -152,6 +192,10 @@ export const storyboardApi = {
     c.callTool<{ project: Project; beats: Beat[]; cells: Cell[] }>('storyboard.read', { project_id }),
   read_cell:   (c: McpClient, cell_uid: string) =>
     c.callTool<Cell>('storyboard.read_cell', { cell_uid }),
+  /** Read the open project's Fountain screenplay source (<root>/script.fountain).
+   *  `exists:false` (empty text) = the project has no .fountain on disk yet. */
+  read_fountain: (c: McpClient) =>
+    c.callTool<FountainRead>('storyboard.read_fountain'),
   /** Read the cell's REAL authored source file (the markup at its content_path).
    *  `exists:false` (empty html) = a cell with no source written yet. */
   read_cell_content: (c: McpClient, cell_uid: string) =>
@@ -161,6 +205,15 @@ export const storyboardApi = {
     c.callTool<{ content_path: string; bytes: number }>('storyboard.write_cell_content', { cell_uid, html }),
   write_cell:  (c: McpClient, cell_uid: string, patch: Partial<Cell>) =>
     c.callTool<Cell>('storyboard.write_cell', { cell_uid, patch }),
+  /** Create a new cell from a full Cell record (Canvas "New cell"). The active
+   *  project is injected real-side; the sidecar validates against CellSchema and
+   *  scaffolds the on-disk cell dir. */
+  create_cell: (c: McpClient, cell: Cell) =>
+    c.callTool<{ cell: Cell }>('storyboard.create_cell', { cell }),
+  /** Delete a cell by uid. Removes the record from storyboard.json; the on-disk
+   *  cell dir is left in place (sidecar deleteCell — content files stay). */
+  delete_cell: (c: McpClient, cell_uid: string) =>
+    c.callTool<{ cellId: string }>('storyboard.delete_cell', { cell_uid }),
   list_cells:  (c: McpClient, args?: { beat_id?: string; rung?: Rung }) =>
     c.callTool<{ cells: Cell[] }>('storyboard.list_cells', args ?? {}),
   set_approved:(c: McpClient, cell_uid: string, approved: boolean) =>
@@ -173,6 +226,13 @@ export interface CellContent {
   html: string;
   content_path: string;
   exists: boolean;
+}
+
+/** The project's Fountain screenplay (storyboard.read_fountain). `exists:false`
+ *  (empty text) is a project with no script.fountain on disk, NOT an error. */
+export interface FountainRead {
+  exists: boolean;
+  text: string;
 }
 
 export const anchorApi = {
