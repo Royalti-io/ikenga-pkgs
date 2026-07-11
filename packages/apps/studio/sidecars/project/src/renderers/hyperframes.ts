@@ -181,6 +181,24 @@ function resolveAspect(opts: RenderOptions, ctx: RenderContext): AspectRatio {
   return opts.aspect_ratio ?? ctx.aspectRatio;
 }
 
+/** Aspect declared by the composition HTML itself (`data-width`/`data-height`
+ *  per the HF 0.6.36 contract). A portrait-authored cell in a 16:9 project
+ *  must render portrait or HF aborts with a framing error — the schema has no
+ *  per-cell aspect, so the content is the only authority. An explicit
+ *  `opts.aspect_ratio` per-call override still wins. */
+function contentDeclaredAspect(contentPath: string): AspectRatio | undefined {
+  try {
+    const html = readFileSync(contentPath, 'utf8');
+    const w = Number(/data-width="(\d+)"/.exec(html)?.[1]);
+    const h = Number(/data-height="(\d+)"/.exec(html)?.[1]);
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return undefined;
+    if (w === h) return '1:1';
+    return h > w ? '9:16' : '16:9';
+  } catch {
+    return undefined;
+  }
+}
+
 function resolveResolution(
   opts: RenderOptions,
   ctx: RenderContext,
@@ -350,7 +368,10 @@ export const hyperframesAdapter: RendererAdapter = {
     const startedAt = nowIso();
     const startedAtMs = Date.now();
 
-    const aspect = resolveAspect(opts, ctx);
+    const aspect =
+      opts.aspect_ratio
+      ?? contentDeclaredAspect(absContentPath(cell, ctx))
+      ?? resolveAspect(opts, ctx);
     const requestedResolution = resolveResolution(opts, ctx, aspect);
     const preset = ASPECT_TO_HF_PRESET[aspect];
 

@@ -29,6 +29,7 @@ bun build $WATCH_FLAG \
   --format=esm \
   --external better-sqlite3 \
   --external chokidar \
+  --external esbuild \
   src/index.ts \
   --outfile "$TMP"
 
