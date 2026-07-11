@@ -19,13 +19,16 @@
 //   subscribes to `playheadMs` and drives the highlight via word timing.
 // - The preview pane renders a hand-coded mock of the HF output, not an
 //   actual @hyperframes/player iframe. P2 work.
-// - The Anchors drawer is for show — clicking an anchor doesn't insert
-//   `<img data-anchor="…">` into the editor yet. Commit 12 wires the
-//   anchor-insert extension from @ikenga/ui-lib/extensions.
+//
+// What IS wired (make-it-work pass): the Anchors drawer inserts
+// `<img data-anchor="…">` at the editor cursor via the anchor-insert extension
+// (@ikenga/ui-lib/extensions), and editor edits persist on blur through the
+// storyboard.write_cell MCP seam.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { CodeEditor, type CodeEditorHandle } from '@ikenga/ui-lib';
+import { insertAnchor } from '@ikenga/ui-lib/extensions';
 
 import {
   getCellByUid,
@@ -185,6 +188,17 @@ export function CellView() {
 
   const [anchorDrawerOpen, setAnchorDrawerOpen] = useState(false);
   const editorRef = useRef<CodeEditorHandle>(null);
+
+  // Anchor tile → insert `<img data-anchor="…">` at the editor cursor via the
+  // anchor-insert extension. `insertAnchor(id)` is a CodeMirror Command; run it
+  // against the live view. Passing no id (the "+ new" tile) auto-numbers the
+  // next anchor from the doc. The doc change flows back through onChange, and
+  // blur persists it (save-on-blur above).
+  const insertAnchorAtCursor = (anchorId?: string) => {
+    const view = editorRef.current?.view();
+    if (!view) return;
+    insertAnchor(anchorId)(view);
+  };
   const { state: renderState, progress: renderProgress, trigger: triggerRender } =
     useRenderLifecycle(cellUid);
 
@@ -300,8 +314,9 @@ export function CellView() {
               <button
                 type="button"
                 key={a.id}
+                onClick={() => insertAnchorAtCursor(a.id)}
                 className="rounded border border-[var(--border)] bg-base p-2 text-left hover:border-[var(--border-soft)] hover:bg-raised"
-                title="Insert wiring lands in commit 12"
+                title={`Insert <img data-anchor="${a.id}"> at cursor`}
               >
                 <div className="mb-1 flex items-center gap-1.5">
                   <span className={`h-2 w-2 rounded-full ${ANCHOR_DOT[a.color]}`} />
@@ -311,9 +326,14 @@ export function CellView() {
                 <div className="font-mono text-[9px] text-fg-faint">{a.kind}</div>
               </button>
             ))}
-            <div className="flex items-center justify-center rounded border border-dashed border-[var(--border)] bg-base p-2 text-[11px] text-fg-faint">
+            <button
+              type="button"
+              onClick={() => insertAnchorAtCursor()}
+              title="Insert a new auto-numbered anchor at cursor"
+              className="flex items-center justify-center rounded border border-dashed border-[var(--border)] bg-base p-2 text-[11px] text-fg-faint hover:border-[var(--border-soft)] hover:text-fg"
+            >
               + new
-            </div>
+            </button>
           </div>
           <div className="mt-2 text-[10px] text-fg-faint">
             Inserts <span className="font-mono text-fg-muted">{'<img data-anchor="a01" src="…"/>'}</span> at cursor.
