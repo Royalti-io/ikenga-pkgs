@@ -129,6 +129,8 @@ const EXTENDED_METHODS = new Set<string>([
   'storyboard.read',
   'storyboard.read_cell',
   'storyboard.write_cell',
+  'storyboard.read_cell_content',
+  'storyboard.write_cell_content',
   'storyboard.create_cell',
   'storyboard.delete_cell',
   'storyboard.list_cells',

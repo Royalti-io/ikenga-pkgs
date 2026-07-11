@@ -360,6 +360,13 @@ function buildHandlers(db: Db): RpcHandlers {
         return storyboard.read(root).result;
       case 'storyboard.read_cell':
         return storyboard.readCell(root, params.cellId as string).result;
+      case 'storyboard.read_cell_content':
+        return storyboard.readCellContent(root, params.cellId as string).result;
+      case 'storyboard.write_cell_content': {
+        const r = storyboard.writeCellContent(root, params.cellId as string, params.html);
+        if (r.project) syncOpenProject(params.projectId as string, r.project);
+        return r.result;
+      }
       case 'storyboard.list_cells':
         return storyboard.listCells(root, {
           beat_id: params.beat_id as string | undefined,

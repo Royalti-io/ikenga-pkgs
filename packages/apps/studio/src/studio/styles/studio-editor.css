@@ -1029,9 +1029,24 @@
 .comp-spec__warn { color: var(--beat-accent-amber); }
 .comp-dialog__foot { padding: var(--space-3) var(--space-4) var(--space-4); display: flex; gap: var(--space-2); justify-content: flex-end; }
 
+/* ═══ Cell view — honest indeterminate render bar (CE-A) ═════════════════ */
+.studio-indet {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, var(--ember), transparent);
+  animation: studio-indet-move 1.25s var(--ease-calm) infinite;
+}
+@keyframes studio-indet-move {
+  from { left: -40%; }
+  to   { left: 100%; }
+}
+
 /* ═══ Reduced-motion net ══════════════════════════════════════════════════ */
 @media (prefers-reduced-motion: reduce) {
   .transport-btn,
   .waveform-bar,
   .clip-segment { transition: none; animation: none; }
+  .studio-indet { animation: none; left: 0; width: 100%; opacity: 0.55; }
 }

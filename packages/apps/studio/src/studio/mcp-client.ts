@@ -99,6 +99,8 @@ import type {
   Project, Cell, Beat, RenderRecord, EngineCapability, Block,
   Archetype, ExportRecord, AspectRatio, Rung,
 } from './mcp-types';
+// Separate line (own domain) so the shared type import above stays untouched.
+import type { Anchor } from './mcp-types';
 
 /** What `project.list` ACTUALLY returns, tolerant of the two real runtime
  *  shapes it resolves to (the "honesty rule" — this boundary genuinely drifts):
@@ -150,12 +152,32 @@ export const storyboardApi = {
     c.callTool<{ project: Project; beats: Beat[]; cells: Cell[] }>('storyboard.read', { project_id }),
   read_cell:   (c: McpClient, cell_uid: string) =>
     c.callTool<Cell>('storyboard.read_cell', { cell_uid }),
+  /** Read the cell's REAL authored source file (the markup at its content_path).
+   *  `exists:false` (empty html) = a cell with no source written yet. */
+  read_cell_content: (c: McpClient, cell_uid: string) =>
+    c.callTool<CellContent>('storyboard.read_cell_content', { cell_uid }),
+  /** Persist the FULL edited html to the cell's content_path (durable save). */
+  write_cell_content: (c: McpClient, cell_uid: string, html: string) =>
+    c.callTool<{ content_path: string; bytes: number }>('storyboard.write_cell_content', { cell_uid, html }),
   write_cell:  (c: McpClient, cell_uid: string, patch: Partial<Cell>) =>
     c.callTool<Cell>('storyboard.write_cell', { cell_uid, patch }),
   list_cells:  (c: McpClient, args?: { beat_id?: string; rung?: Rung }) =>
     c.callTool<{ cells: Cell[] }>('storyboard.list_cells', args ?? {}),
   set_approved:(c: McpClient, cell_uid: string, approved: boolean) =>
     c.callTool<{ ok: true }>('storyboard.set_approved', { cell_uid, approved }),
+};
+
+/** A cell's authored source file (storyboard.read_cell_content). `exists:false`
+ *  (empty html) is a real cell with no source written yet, NOT an error. */
+export interface CellContent {
+  html: string;
+  content_path: string;
+  exists: boolean;
+}
+
+export const anchorApi = {
+  list: (c: McpClient) =>
+    c.callTool<{ anchors: Anchor[] }>('anchor.list'),
 };
 
 export const compositionApi = {
@@ -217,7 +239,7 @@ export const archetypeApi = {
     c.callTool<Archetype>('archetype.get', { id }),
   instantiate_into_project: (c: McpClient, args: { archetype_id: string; bindings: Record<string, unknown> }) =>
     c.callTool<{ beats: Beat[]; cells: Cell[] }>('archetype.instantiate_into_project', args),
-  save_custom: (c: McpClient, args: { name: string; chain: string[]; description: string }) =>
+  save_custom: (c: McpClient, args: { archetype_id: string; name: string; chain: Array<{ block_id: string; bindings?: Record<string, unknown> }>; description: string }) =>
     c.callTool<{ archetype_id: string }>('archetype.save_custom', args),
 };
 

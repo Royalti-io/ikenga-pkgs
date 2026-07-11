@@ -245,6 +245,40 @@ export function createRealMcpClient(): McpClient {
         if (cell) cellCache.set(cell.uid, cell);
         return cell;
       }
+      // Cell-content seams (Wave 3) — the editor reads/writes the REAL authored
+      // source file at the cell's content_path (the Cell record only points to
+      // it). projectId is injected from the active project.
+      case 'storyboard.read_cell_content': {
+        const a = requireActive('storyboard.read_cell_content');
+        const body = await raw('storyboard.read_cell_content', {
+          projectId: a.projectId,
+          cellId: args.cell_uid,
+        });
+        return {
+          html: (body.html as string) ?? '',
+          content_path: (body.content_path as string) ?? '',
+          exists: Boolean(body.exists),
+        };
+      }
+      case 'storyboard.write_cell_content': {
+        const a = requireActive('storyboard.write_cell_content');
+        const body = await raw('storyboard.write_cell_content', {
+          projectId: a.projectId,
+          cellId: args.cell_uid,
+          html: args.html,
+        });
+        return {
+          content_path: (body.content_path as string) ?? '',
+          bytes: (body.bytes as number) ?? 0,
+        };
+      }
+      // anchor.list needs the active projectId injected (the default
+      // fall-through passes args verbatim, which the sidecar would reject).
+      case 'anchor.list': {
+        const a = requireActive('anchor.list');
+        const body = await raw('anchor.list', { projectId: a.projectId });
+        return { anchors: (body.anchors as unknown[]) ?? [] };
+      }
       case 'storyboard.write_cell': {
         const a = requireActive('storyboard.write_cell');
         const uid = args.cell_uid as string;
@@ -419,8 +453,20 @@ export function createRealMcpClient(): McpClient {
       }
       case 'archetype.save_custom': {
         const a = requireActive('archetype.save_custom');
+        // The catalog writer (catalog.writeCustomArchetype) keys the on-disk
+        // archetype dir off `archetype_id`/`id`; omitting it makes the write
+        // throw `archetype.archetype_id is required`. Thread the caller's id
+        // (under both keys so either lookup resolves) and persist the full
+        // ArchetypeChainEntry shape ({block_id,bindings}) so archetype.get
+        // round-trips and archetype.instantiate_into_project can consume it.
         const body = await raw('archetype.save_custom', {
-          archetype: { name: args.name, chain: args.chain, description: args.description },
+          archetype: {
+            archetype_id: args.archetype_id,
+            id: args.archetype_id,
+            name: args.name,
+            chain: args.chain,
+            description: args.description,
+          },
           project_id: a.projectId,
         });
         return { archetype_id: (body.archetype_id ?? body.archetypeId) as string };

@@ -72,7 +72,9 @@ export type RpcMethod =
   // storyboard.*
   | 'storyboard.read'
   | 'storyboard.read_cell'
+  | 'storyboard.read_cell_content'
   | 'storyboard.write_cell'
+  | 'storyboard.write_cell_content'
   | 'storyboard.create_cell'
   | 'storyboard.delete_cell'
   | 'storyboard.list_cells'

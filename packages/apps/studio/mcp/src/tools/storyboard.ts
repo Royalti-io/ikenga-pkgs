@@ -40,6 +40,46 @@ export function storyboardTools(sidecar: SidecarClient): ToolDef[] {
         callSidecar(sidecar, 'storyboard.read_cell', { projectId: args.projectId, cellId: args.cellId }),
     },
     {
+      name: 'storyboard.read_cell_content',
+      description:
+        "Read a cell's authored source file (the markup at its content_path). Returns { html, content_path, exists }. `exists:false` (empty html) means the cell has no source written yet.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          projectId: { type: 'string' },
+          cellId: { type: 'string' },
+        },
+        required: ['projectId', 'cellId'],
+        additionalProperties: false,
+      },
+      handler: (args) =>
+        callSidecar(sidecar, 'storyboard.read_cell_content', {
+          projectId: args.projectId,
+          cellId: args.cellId,
+        }),
+    },
+    {
+      name: 'storyboard.write_cell_content',
+      description:
+        "Persist a cell's authored source file (the FULL edited html) to its content_path and bump last_edited (the project FS watcher surfaces the change). This is the durable save seam for the cell editor.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          projectId: { type: 'string' },
+          cellId: { type: 'string' },
+          html: { type: 'string' },
+        },
+        required: ['projectId', 'cellId', 'html'],
+        additionalProperties: false,
+      },
+      handler: (args) =>
+        callSidecar(sidecar, 'storyboard.write_cell_content', {
+          projectId: args.projectId,
+          cellId: args.cellId,
+          html: args.html,
+        }),
+    },
+    {
       name: 'storyboard.write_cell',
       description: 'Overwrite a cell. Emits cells/changed on success.',
       inputSchema: {
