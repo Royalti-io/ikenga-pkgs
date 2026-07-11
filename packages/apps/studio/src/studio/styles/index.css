@@ -224,3 +224,27 @@ html, body, #root {
   .beacon-ping { animation: none; }
   .animate-ping, .animate-pulse { animation: none !important; }
 }
+
+/* ---------------------------------------------------------------------------
+ * Border-color utilities + default (founder-reported "extra thick borders").
+ *
+ * The @theme map names these tokens --color-border-soft/--color-border, so
+ * Tailwind v4 would only generate `border-border-soft` — the `border-soft`
+ * class the views have used since WP-07 generated NO rule, and Tailwind v4's
+ * default border color is currentColor, so every border rendered 1px in the
+ * near-white fg (reads as thick/bright on Dusk Wood). Define the intended
+ * utilities explicitly, and restore a token default for bare `border`.
+ * ------------------------------------------------------------------------- */
+
+@utility border-soft {
+  border-color: var(--border-soft);
+}
+@utility border-strong {
+  border-color: var(--border-strong, var(--border));
+}
+
+@layer base {
+  *, ::after, ::before, ::backdrop, ::file-selector-button {
+    border-color: var(--border-soft);
+  }
+}
