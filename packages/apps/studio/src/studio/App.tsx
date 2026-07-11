@@ -14,7 +14,8 @@
 import { useEffect } from 'react';
 
 import { useLayoutStore } from './layout-store';
-import { useProjectStore, selectIsProjectOpen } from './project-store';
+import { useProjectStore, selectIsProjectOpen, selectOpenProject } from './project-store';
+import { useStoryboardStore, selectStoryboardSource } from './storyboard-store';
 import type { PaneIndex, ViewComponentRegistry } from './routes';
 import { LayoutSwitcher } from './components/LayoutSwitcher';
 import { ViewSwitcher } from './components/ViewSwitcher';
@@ -121,6 +122,9 @@ function PaneRegion() {
 
 export function App() {
   const isProjectOpen = useProjectStore(selectIsProjectOpen);
+  const openProjectSummary = useProjectStore(selectOpenProject);
+  const bindPersistence = useLayoutStore((s) => s.bindPersistence);
+  const unbindPersistence = useLayoutStore((s) => s.unbindPersistence);
 
   // App-level keyboard map + V-split focus trap (commit 15). Registered
   // unconditionally; its handlers no-op until a pane region exists.
@@ -129,6 +133,41 @@ export function App() {
   // Sidebar menu: publish on mount, republish on project open/close, route
   // menu clicks (activeFeature) onto the focused pane.
   useEffect(() => initStudioMenu(), []);
+
+  // Per-folder layout persistence: rehydrate + arm the layout store when a
+  // project opens; stop persisting when it closes. Keyed by project id so each
+  // folder restores its own pane arrangement across remounts (layout-store.ts).
+  useEffect(() => {
+    const projectId = openProjectSummary?.project_id;
+    if (projectId) bindPersistence(projectId);
+    else unbindPersistence();
+  }, [openProjectSummary?.project_id, bindPersistence, unbindPersistence]);
+
+  // Storyboard hydration: read the open project's cells from disk (via
+  // storyboard.read) so Canvas/Cell render REAL cells. In mock/standalone mode
+  // this loads the mock's storyboard and the views fall back to their fixture.
+  const hydrateStoryboard = useStoryboardStore((s) => s.hydrate);
+  const clearStoryboard = useStoryboardStore((s) => s.clear);
+  useEffect(() => {
+    const projectId = openProjectSummary?.project_id;
+    if (projectId) void hydrateStoryboard(projectId);
+    else clearStoryboard();
+  }, [openProjectSummary?.project_id, hydrateStoryboard, clearStoryboard]);
+
+  // Render-status poll: the shell can't relay pkg:// render/progress events to
+  // the iframe (Round-13 Finding), so poll render.list while a REAL project is
+  // open and fold it into the storyboard-store. Runs app-wide (not per-pane) so
+  // the now-rendering beacon + the Composition timeline both reflect live
+  // running→done regardless of which view is mounted. No-op in mock/standalone.
+  const storyboardSource = useStoryboardStore(selectStoryboardSource);
+  const refreshRenders = useStoryboardStore((s) => s.refreshRenders);
+  useEffect(() => {
+    const projectId = openProjectSummary?.project_id;
+    if (!projectId || storyboardSource !== 'real') return;
+    void refreshRenders();
+    const id = window.setInterval(() => { void refreshRenders(); }, 2500);
+    return () => window.clearInterval(id);
+  }, [openProjectSummary?.project_id, storyboardSource, refreshRenders]);
 
   // The launcher pre-empts the pane layout entirely — it isn't a sub-view
   // and doesn't share the layout/view-switcher chrome (launcher.md §"Chrome

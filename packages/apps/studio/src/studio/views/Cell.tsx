@@ -15,28 +15,41 @@
 // - The Render button simulates the queued→running→done lifecycle locally;
 //   commit 12 swaps that to `composition.render` over the MCP mock then real
 //   MCP at Wave 2.
-// - The narration scrubber's `activeWordIdx` is static per cell; commit 12
-//   subscribes to `playheadMs` and drives the highlight via word timing.
+// - The narration scrubber's `activeWordIdx` is static per cell by default;
+//   the toolbar's Narration toggle subscribes to `playheadMs` and drives the
+//   highlight from the shared playhead (real per-word timing is Wave-2).
 // - The preview pane renders a hand-coded mock of the HF output, not an
 //   actual @hyperframes/player iframe. P2 work.
-// - The Anchors drawer is for show — clicking an anchor doesn't insert
-//   `<img data-anchor="…">` into the editor yet. Commit 12 wires the
-//   anchor-insert extension from @ikenga/ui-lib/extensions.
+//
+// What IS wired (make-it-work pass): the Anchors drawer inserts
+// `<img data-anchor="…">` at the editor cursor via the anchor-insert extension
+// (@ikenga/ui-lib/extensions), and editor edits persist on blur through the
+// storyboard.write_cell MCP seam.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { CodeEditor, type CodeEditorHandle } from '@ikenga/ui-lib';
+import { insertAnchor } from '@ikenga/ui-lib/extensions';
 
 import {
   getCellByUid,
   getCellHtml,
   getNarrationExcerpt,
+  setCellHtmlOverride,
   MOCK_ANCHORS,
   type CellColor,
   type MockCell,
 } from '../__mocks__/cells';
-import { selectCellUid, useSharedStore } from '../shared-state';
+import { selectCellUid, selectPlayheadMs, useSharedStore } from '../shared-state';
 import { useProjectStore, selectOpenProject } from '../project-store';
+import {
+  useStoryboardStore,
+  selectHydratedCells,
+  selectHasRealCells,
+  toDisplayCell,
+} from '../storyboard-store';
+import { getMcpClient, storyboardApi, compositionApi } from '../mcp-client';
+import { pollRenderUntilDone } from '../lib/render-poll';
 import type { Rung, AspectRatio } from '../mcp-types';
 import { EmptyState } from '../components/EmptyState';
 import { SafeZoneBands } from '../media-controls';
@@ -92,30 +105,74 @@ function previewFrameStyle(aspect: AspectRatio): React.CSSProperties {
   return { width: '100%', height: '100%' };
 }
 
-// ─── Render lifecycle (local simulation) ────────────────────────────────
+// ─── Render lifecycle ───────────────────────────────────────────────────
 //
-// Wired to the toolbar's Render button until commit 12 swaps to
-// `composition.render` over the MCP. Cancels cleanly on unmount + on
-// cellUid change (so switching cells mid-render doesn't leak the timer).
+// Two paths behind one { state, progress, trigger } surface:
+//   • REAL (a real project is open) — enqueue a render via composition.render,
+//     then POLL render.status (render-poll.ts) to reflect queued→running→done
+//     live. This is the shell's real HF/excalidraw render, not a simulation.
+//     The poll is the stand-in for the render/progress events the shell can't
+//     relay to the iframe (Round-13 Finding); a future relay drops in here.
+//   • MOCK / standalone — the original local timer simulation, so the button
+//     still animates without a backend.
+// Cancels cleanly on unmount + on cellUid change (switching cells mid-render
+// aborts the poll / clears the timers).
 
 type RenderState = 'idle' | 'queued' | 'running' | 'done' | 'failed';
 
-function useRenderLifecycle(cellUid: string | null) {
+function useRenderLifecycle(
+  cellUid: string | null,
+  real: { isReal: boolean; projectId: string | null },
+) {
   const [state, setState] = useState<RenderState>('idle');
   const [progress, setProgress] = useState(0);
   const timersRef = useRef<{ kick?: ReturnType<typeof setTimeout>; tick?: ReturnType<typeof setInterval> }>({});
+  const abortRef = useRef<{ aborted: boolean }>({ aborted: false });
 
   function cancel() {
     if (timersRef.current.kick) clearTimeout(timersRef.current.kick);
     if (timersRef.current.tick) clearInterval(timersRef.current.tick);
     timersRef.current = {};
+    abortRef.current.aborted = true;
   }
 
-  function trigger() {
+  async function trigger() {
     if (state === 'queued' || state === 'running') return;
     cancel();
+    abortRef.current = { aborted: false };
     setState('queued');
     setProgress(0);
+
+    // Real render: enqueue + poll the sidecar render_queue.
+    if (real.isReal && real.projectId && cellUid) {
+      try {
+        const client = await getMcpClient();
+        const { record_id } = await compositionApi.render(client, {
+          project_id: real.projectId,
+          cell_uid: cellUid,
+        });
+        const rec = await pollRenderUntilDone(client, record_id, {
+          signal: abortRef.current,
+          onTick: (r) => {
+            if (abortRef.current.aborted) return;
+            if (r.status === 'running') { setState('running'); setProgress((p) => Math.max(p, 0.5)); }
+            else if (r.status === 'queued') { setState('queued'); }
+            else if (r.status === 'done') { setState('done'); setProgress(1); }
+            else if (r.status === 'failed' || r.status === 'cancelled') setState('failed');
+          },
+        });
+        if (abortRef.current.aborted) return;
+        if (rec?.status === 'done') { setState('done'); setProgress(1); }
+        else if (rec) setState('failed'); // failed / cancelled / poll timeout
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[studio] cell render failed', err);
+        setState('failed');
+      }
+      return;
+    }
+
+    // Mock / standalone: local timer simulation.
     timersRef.current.kick = setTimeout(() => setState('running'), 400);
     timersRef.current.tick = setInterval(() => {
       setProgress((p) => {
@@ -142,19 +199,86 @@ function useRenderLifecycle(cellUid: string | null) {
 
 // ─── View ───────────────────────────────────────────────────────────────
 
+// Nominal narration window for the cell excerpt (the preview header shows a
+// 1.2s→3.2s span). Used to map the shared playhead onto the excerpt words when
+// narration-sync is on — the P1 stand-in for real per-word timing.
+const NARRATION_WINDOW_MS = 3200;
+
 export function CellView() {
   const cellUid = useSharedStore(selectCellUid);
+  const playheadMs = useSharedStore(selectPlayheadMs);
   const project = useProjectStore(selectOpenProject);
-  const cell = useMemo(() => getCellByUid(cellUid), [cellUid]);
+
+  // Selected cell: prefer the REAL hydrated cell (storyboard.read) when a real
+  // project is open, else the mock fixture. toDisplayCell maps the schema Cell
+  // onto the MockCell shape this view's chrome was written against.
+  const hasRealCells = useStoryboardStore(selectHasRealCells);
+  const hydratedCells = useStoryboardStore(selectHydratedCells);
+  const refetchStoryboard = useStoryboardStore((s) => s.refetch);
+  const cell = useMemo<MockCell | null>(() => {
+    if (hasRealCells) {
+      const c = hydratedCells.find((x) => x.uid === cellUid);
+      return c ? toDisplayCell(c) : null;
+    }
+    return getCellByUid(cellUid);
+  }, [hasRealCells, hydratedCells, cellUid]);
+
+  // Narration toolbar toggle: when on, the excerpt highlight follows the shared
+  // composition playhead instead of the static per-cell index.
+  const [narrationSync, setNarrationSync] = useState(false);
 
   const initialHtml = useMemo(() => getCellHtml(cellUid), [cellUid]);
   const [value, setValue] = useState(initialHtml);
   useEffect(() => setValue(initialHtml), [initialHtml]);
 
+  // Last-persisted HTML for the active cell — tracks the seed on cell switch so
+  // the blur handler skips no-op writes.
+  const savedRef = useRef(initialHtml);
+  useEffect(() => { savedRef.current = initialHtml; }, [initialHtml]);
+
+  // Save-on-blur: persist the edited HTML through the storyboard.write_cell MCP
+  // seam (mock today, real sidecar in Wave 2) so edits are no longer discarded
+  // when switching cells. The override cache is the P1 stand-in for the sidecar
+  // writing content.html back to disk, so the edit round-trips in the editor.
+  const persistCell = (html: string) => {
+    if (!cellUid || html === savedRef.current) return;
+    savedRef.current = html;
+    setCellHtmlOverride(cellUid, html);
+    void (async () => {
+      try {
+        const client = await getMcpClient();
+        await storyboardApi.write_cell(client, cellUid, {
+          last_edited: new Date().toISOString(),
+        });
+        // Real mode: re-read so Canvas + this view reflect the persisted edit
+        // (the on-demand poll stand-in for a cells/changed event relay).
+        if (client.mode === 'real') await refetchStoryboard();
+      } catch (err) {
+        // In mock mode the mock keys storyboard cells by schema uid, not the
+        // presentation uids the canvas surfaces, so a "not found" here is
+        // expected — the seam is what matters. In real mode a genuine write
+        // failure surfaces at debug rather than crashing the editor.
+        // eslint-disable-next-line no-console
+        console.debug('[studio] write_cell skipped', err);
+      }
+    })();
+  };
+
   const [anchorDrawerOpen, setAnchorDrawerOpen] = useState(false);
   const editorRef = useRef<CodeEditorHandle>(null);
+
+  // Anchor tile → insert `<img data-anchor="…">` at the editor cursor via the
+  // anchor-insert extension. `insertAnchor(id)` is a CodeMirror Command; run it
+  // against the live view. Passing no id (the "+ new" tile) auto-numbers the
+  // next anchor from the doc. The doc change flows back through onChange, and
+  // blur persists it (save-on-blur above).
+  const insertAnchorAtCursor = (anchorId?: string) => {
+    const view = editorRef.current?.view();
+    if (!view) return;
+    insertAnchor(anchorId)(view);
+  };
   const { state: renderState, progress: renderProgress, trigger: triggerRender } =
-    useRenderLifecycle(cellUid);
+    useRenderLifecycle(cellUid, { isReal: hasRealCells, projectId: project?.project_id ?? null });
 
   if (!cell) {
     return (
@@ -167,6 +291,16 @@ export function CellView() {
   }
 
   const narration = getNarrationExcerpt(cellUid);
+  // When narration-sync is on, derive the highlighted word from the shared
+  // playhead across the nominal excerpt window; otherwise use the static index.
+  const narrationActiveIdx = (() => {
+    if (!narration) return 0;
+    if (!narrationSync) return narration.activeWordIdx;
+    const wordCount = narration.text.trim().split(/\s+/).length;
+    if (wordCount === 0) return 0;
+    const phase = ((playheadMs % NARRATION_WINDOW_MS) + NARRATION_WINDOW_MS) % NARRATION_WINDOW_MS;
+    return Math.min(wordCount - 1, Math.floor((phase / NARRATION_WINDOW_MS) * wordCount));
+  })();
   const path = cellPath(cell);
   const aspect: AspectRatio = project?.aspect_ratio ?? '16:9';
   const isPortrait = aspect === '9:16';
@@ -207,8 +341,21 @@ export function CellView() {
           </button>
           <button
             type="button"
-            className="flex items-center gap-1.5 rounded px-2 py-1 text-fg-muted hover:bg-raised hover:text-fg"
-            title="Narration (stub — wired in commit 12)"
+            onClick={() => setNarrationSync((s) => !s)}
+            disabled={!narration}
+            aria-pressed={narrationSync}
+            className={
+              'flex items-center gap-1.5 rounded px-2 py-1 '
+              + (narrationSync
+                ? 'bg-raised text-fg'
+                : 'text-fg-muted hover:bg-raised hover:text-fg')
+              + (!narration ? ' cursor-not-allowed opacity-40' : '')
+            }
+            title={
+              narration
+                ? 'Sync the narration highlight to the composition playhead'
+                : 'No narration on this cell'
+            }
           >
             <span>▸ Narration</span>
           </button>
@@ -268,8 +415,9 @@ export function CellView() {
               <button
                 type="button"
                 key={a.id}
+                onClick={() => insertAnchorAtCursor(a.id)}
                 className="rounded border border-[var(--border)] bg-base p-2 text-left hover:border-[var(--border-soft)] hover:bg-raised"
-                title="Insert wiring lands in commit 12"
+                title={`Insert <img data-anchor="${a.id}"> at cursor`}
               >
                 <div className="mb-1 flex items-center gap-1.5">
                   <span className={`h-2 w-2 rounded-full ${ANCHOR_DOT[a.color]}`} />
@@ -279,9 +427,14 @@ export function CellView() {
                 <div className="font-mono text-[9px] text-fg-faint">{a.kind}</div>
               </button>
             ))}
-            <div className="flex items-center justify-center rounded border border-dashed border-[var(--border)] bg-base p-2 text-[11px] text-fg-faint">
+            <button
+              type="button"
+              onClick={() => insertAnchorAtCursor()}
+              title="Insert a new auto-numbered anchor at cursor"
+              className="flex items-center justify-center rounded border border-dashed border-[var(--border)] bg-base p-2 text-[11px] text-fg-faint hover:border-[var(--border-soft)] hover:text-fg"
+            >
               + new
-            </div>
+            </button>
           </div>
           <div className="mt-2 text-[10px] text-fg-faint">
             Inserts <span className="font-mono text-fg-muted">{'<img data-anchor="a01" src="…"/>'}</span> at cursor.
@@ -297,6 +450,7 @@ export function CellView() {
             ref={editorRef}
             value={value}
             onChange={setValue}
+            onBlur={persistCell}
             language="html"
             ariaLabel={`Cell ${cell.uid} HTML editor`}
             className="h-full min-h-0 flex-1"
@@ -344,7 +498,7 @@ export function CellView() {
                   const wordIdx = narration.text
                     .slice(0, narration.text.indexOf(tok) + tok.length)
                     .split(/\s+/).length - 1;
-                  const active = wordIdx === narration.activeWordIdx;
+                  const active = wordIdx === narrationActiveIdx;
                   return (
                     <span
                       key={`${i}-${tok}`}

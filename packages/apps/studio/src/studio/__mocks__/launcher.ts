@@ -67,6 +67,37 @@ export const ARCHETYPE_PRESENTATION: Record<string, ArchetypePresentation> = {
   },
 };
 
+// Generic decoration for any archetype id the map above doesn't cover — the
+// real catalog (@ikenga/studio-archetypes) can ship ids the presentation map
+// doesn't enumerate, and the launcher must render a card for every one rather
+// than dropping it. Never returns undefined → ArchetypeCard never null-renders.
+const GENERIC_PRESENTATION: ArchetypePresentation = {
+  icon: 'film',
+  accent: 'sky',
+  beats: 'beat sheet → lofi → hifi',
+  engine: 'HF',
+  duration: '—',
+  blurb: 'Storyboard archetype — beats materialize into cells.',
+};
+
+/** Presentation for an archetype id, tolerant of id-form drift between the
+ *  real catalog and this map. Real archetype ids use snake_case
+ *  (`ai_short`, `music_video`) while the presentation keys predate that and
+ *  use `ai-short` / `musicvideo`; normalize underscores↔hyphens before
+ *  falling back to the generic card. */
+export function presentationFor(id: string): ArchetypePresentation {
+  const candidates = [
+    id,
+    id.replace(/_/g, '-'),   // ai_short → ai-short
+    id.replace(/[-_]/g, ''), // music_video → musicvideo, ai-short → aishort
+  ];
+  for (const c of candidates) {
+    const hit = ARCHETYPE_PRESENTATION[c];
+    if (hit) return hit;
+  }
+  return GENERIC_PRESENTATION;
+}
+
 export interface RecentProject {
   slug: string;
   archetype_id: string;

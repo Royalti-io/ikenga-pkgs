@@ -16,7 +16,7 @@
 // Anchor bar, render-progress overlays, and the agent activity feed are not
 // in scope for this commit.
 
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   Canvas,
@@ -33,6 +33,13 @@ import {
   useSharedStore,
 } from '../shared-state';
 import { useProjectStore, selectOpenProject } from '../project-store';
+import {
+  useStoryboardStore,
+  selectHydratedCells,
+  selectHasRealCells,
+  selectHydratedProject,
+  toDisplayCell,
+} from '../storyboard-store';
 import { SafeZoneBands } from '../media-controls';
 import type { AspectRatio } from '../mcp-types';
 import type { Rung } from '../mcp-types';
@@ -41,7 +48,8 @@ import {
   type CellColor,
   type MockCell,
 } from '../__mocks__/cells';
-import { clipAtMs } from '../__mocks__/composition';
+import { COMPOSITION_TIMELINE } from '../__mocks__/composition';
+import { buildTimelineModel, clipAt } from '../lib/composition-model';
 import { EmptyState } from '../components/EmptyState';
 
 // @ikenga/contract/canvas ships `ItemId` as an opaque branded string but
@@ -60,11 +68,17 @@ const CELL_W = 176; // ~w-44 in the design
 const CELL_H = 132; // 96 thumb + ~36 footer
 
 // Bias each beat to its own column so the storyboard reads left→right per
-// rung. Done here rather than in the cells themselves so the column-walk
-// stays a property of the canvas placement, not the entity.
-const COLUMN_BY_BEAT: Record<string, number> = {
-  hook: 0, problem: 1, agitate: 2, solution: 3, proof: 4, cta: 5,
-};
+// rung. Derived from the cell list at render time (distinct beat in first-seen
+// order) rather than a hardcoded map, so REAL project beats — whose ids differ
+// from the mock's hook/problem/… — still spread across columns instead of
+// stacking. Done at the placement layer so the column-walk stays a property of
+// the canvas, not the entity.
+function columnsByBeat(cells: MockCell[]): Record<string, number> {
+  const map: Record<string, number> = {};
+  let col = 0;
+  for (const c of cells) if (!(c.beat in map)) map[c.beat] = col++;
+  return map;
+}
 
 // ─── Rung labels — also canvas items so they pan with the cells ─────────
 
@@ -132,44 +146,65 @@ export function CanvasView() {
   const aspect: AspectRatio = project?.aspect_ratio ?? '16:9';
   const isPortrait = aspect === '9:16';
 
-  // Cross-linking §12 — "Composition scrub → playheadMs → Canvas active-cell
-  // highlight". Derived, not stored (activeCellAtPlayhead stays a selector,
-  // per shared-state.ts's deferred-selector note); shares clipAtMs with
-  // Composition so both views agree on the same [start,start+duration) window.
-  const activeAtPlayheadUid = clipAtMs(playheadMs)?.uid ?? null;
-
   const [viewport, setViewport] = useState<Viewport>({ x: 80, y: 30, scale: 0.9 });
   const [editMode, setEditMode] = useState(false);
 
-  // Items + layout are derived from MOCK_CELLS for now; the layout map is
-  // local state so dragging in edit mode mutates it (and commit 12's MCP
-  // wiring can swap it for a controlled-from-store layout later).
+  // Cell source: REAL cells hydrated from disk (storyboard.read) when a real
+  // project is open, else the __mocks__/cells.ts fixture for standalone-dev /
+  // mock mode. `toDisplayCell` maps the schema Cell onto the presentation
+  // MockCell shape the canvas item renderer was written against.
+  const hydratedCells = useStoryboardStore(selectHydratedCells);
+  const hasRealCells = useStoryboardStore(selectHasRealCells);
+  const projectDoc = useStoryboardStore(selectHydratedProject);
+  const refetchStoryboard = useStoryboardStore((s) => s.refetch);
+  const displayCells = useMemo<MockCell[]>(
+    () => (hasRealCells ? hydratedCells.map(toDisplayCell) : MOCK_CELLS),
+    [hasRealCells, hydratedCells],
+  );
+
+  // Cross-linking §12 — "Composition scrub → playheadMs → Canvas active-cell
+  // highlight". Derived, not stored (activeCellAtPlayhead stays a selector, per
+  // shared-state.ts's deferred-selector note). Uses the SAME timeline windows
+  // Composition builds — the real hydrated model when a real project is open,
+  // else the mock timeline — so both views agree on the same
+  // [start,start+duration) cell for a given playhead. (Status is irrelevant to
+  // the window lookup, so an empty status map is fine here.)
+  const scrubClips = useMemo(
+    () => (hasRealCells ? buildTimelineModel(hydratedCells, projectDoc, {}).clips : COMPOSITION_TIMELINE),
+    [hasRealCells, hydratedCells, projectDoc],
+  );
+  const activeAtPlayheadUid = clipAt(scrubClips, playheadMs)?.uid ?? null;
+
+  // Refetch on view (re)mount — the on-demand poll stand-in for the
+  // cells/changed event the shell can't relay (a future relay would splice the
+  // changed uids instead). No-op until a project is hydrated.
+  useEffect(() => { void refetchStoryboard(); }, [refetchStoryboard]);
 
   const items = useMemo<Item[]>(() => {
-    const cells: Item[] = MOCK_CELLS.map((c) => ({ ...c, kind: 'cell' as const }));
+    const cells: Item[] = displayCells.map((c) => ({ ...c, kind: 'cell' as const }));
     return [...RUNG_LABELS, ...cells];
-  }, []);
+  }, [displayCells]);
 
-  const [layout, setLayout] = useState<Record<ItemId, Placement>>(() => {
+  // Layout map is local state so dragging in edit mode mutates it; reset it
+  // whenever the cell set changes (e.g. hydration completes after mount) so
+  // real cells get placed instead of leaving the mock layout behind.
+  const [layout, setLayout] = useState<Record<ItemId, Placement>>({});
+  useEffect(() => {
+    const colByBeat = columnsByBeat(displayCells);
     const map: Record<ItemId, Placement> = {};
-    for (const c of MOCK_CELLS) {
+    for (const c of displayCells) {
       map[asItemId(c.uid)] = {
-        x: COLUMN_X(COLUMN_BY_BEAT[c.beat] ?? 0),
+        x: COLUMN_X(colByBeat[c.beat] ?? 0),
         y: ROW_Y[c.rung],
         w: CELL_W,
         h: CELL_H,
       };
     }
     for (const l of RUNG_LABELS) {
-      map[asItemId(l.id)] = {
-        x: -70,
-        y: ROW_Y[l.rung] + 60,
-        w: 60,
-        h: 14,
-      };
+      map[asItemId(l.id)] = { x: -70, y: ROW_Y[l.rung] + 60, w: 60, h: 14 };
     }
-    return map;
-  });
+    setLayout(map);
+  }, [displayCells]);
 
   const canvasRef = useRef<CanvasHandle | null>(null);
   const selectedId: ItemId | null =
@@ -177,7 +212,9 @@ export function CanvasView() {
 
   // Empty-project state (contract §8 commit-13, states-empty.html §1): before
   // any cells materialize from an archetype chain the beat×rung grid is empty.
-  if (MOCK_CELLS.length === 0) {
+  // A freshly-created real project (project.create scaffolds no cells) lands
+  // here until an archetype is instantiated into it.
+  if (displayCells.length === 0) {
     return (
       <EmptyState
         glyph="▦"
@@ -198,13 +235,13 @@ export function CanvasView() {
           Marked .ikenga-canvas-bar so the canvas stub excludes it from gestures. */}
       <div className="ikenga-canvas-bar flex items-center justify-between gap-2 border-b border-soft bg-sunken px-3 py-1.5 text-[11px]">
         <div className="flex items-center gap-2 text-fg-muted">
-          <span className="font-mono">~/Projects/retention-explainer/</span>
+          <span className="font-mono">{project?.name ? `~/${project.name}/` : '~/Projects/'}</span>
           <span className="rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-[var(--achievement)] ring-1 ring-inset ring-[color-mix(in_oklab,var(--achievement)_40%,transparent)]">
             studio
           </span>
           <span className="text-fg-faint">·</span>
           <span className="text-fg-faint">archetype</span>
-          <span className="font-mono text-fg">explainer</span>
+          <span className="font-mono text-fg">{project?.archetype_id ?? '—'}</span>
         </div>
         <div className="flex items-center gap-1">
           <button

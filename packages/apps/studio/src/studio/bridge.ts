@@ -252,6 +252,28 @@ async function callHostTool(name: string, args: Record<string, unknown> = {}): P
   return (await _app.callServerTool({ name, arguments: args })) as HostCallResult;
 }
 
+/** Invoke one of the pkg's OWN MCP-server tools (e.g. 'archetype.list',
+ *  'storyboard.read', 'render.enqueue'). Same `callServerTool` wire as
+ *  `callHostTool`, but the name does NOT start with `host.` — so the shell's
+ *  `oncalltool` router falls through to `pkg_mcp_call`, which forwards the
+ *  call to this pkg's long-lived `studio` MCP server (mcp/dist/index.js).
+ *  Returns the raw MCP `CallToolResult`; the real MCP client (mcp-client.ts)
+ *  parses `content[0].text` and reshapes it to the UI types. Throws in
+ *  standalone/pre-connect (no `_app`) — the real client is only selected
+ *  when a shell bridge is present, so that never fires in practice. */
+export function callPkgTool(name: string, args: Record<string, unknown> = {}): Promise<HostCallResult> {
+  return callHostTool(name, args);
+}
+
+/** True once the MCP App handshake has completed and the pkg can reach its
+ *  own MCP server via `callPkgTool`. Distinct from `isStandalone()` (which is
+ *  a synchronous window-parent probe): this is only true AFTER connectBridge()
+ *  resolved in shell mode. The MCP-client factory uses it to decide real vs
+ *  mock at call time. */
+export function isBridgeConnected(): boolean {
+  return _app !== null && _connection?.mode === 'shell';
+}
+
 /** Cross-pkg or in-pkg sub-route navigation. The shell routes this through
  *  pane-store + TanStack Router. */
 export function hostNavigate(path: string): Promise<HostCallResult> {
