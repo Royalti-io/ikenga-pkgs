@@ -19,7 +19,7 @@ import { create } from 'zustand';
 
 import { getMcpClient, storyboardApi, renderApi } from './mcp-client';
 import { foldRenderStatus } from './lib/composition-model';
-import type { Beat, Cell, Project, RenderStatus } from './mcp-types';
+import type { Beat, Cell, Project, RenderStatus, RenderRecord } from './mcp-types';
 
 // ─── display projection ──────────────────────────────────────────────────
 //
@@ -82,6 +82,17 @@ export interface StoryboardStoreState {
    *  their fixture's baked-in statuses). Drives the Composition clip treatment
    *  and the now-rendering beacon. */
   renderStatus: Record<string, RenderStatus>;
+  /** The raw render.list records (latest poll). Composition reads these for the
+   *  per-cell records table (engine / finished / output path) and to resolve a
+   *  cell's done-render id for byte-based playback. */
+  renderRecords: RenderRecord[];
+  /** Wall-clock ms of the last successful render.list poll — drives the C-C
+   *  "Synced Ns ago" freshness stamp. null until the first poll lands. */
+  lastSyncedAt: number | null;
+  /** Force fast-polling until this wall-clock ms even when nothing is currently
+   *  queued/running yet — set right after an enqueue so a freshly-submitted
+   *  render is picked up before it flips the status map. */
+  activeUntil: number;
   source: 'real' | 'mock' | 'empty';
   loading: boolean;
   error: string | null;
@@ -99,6 +110,9 @@ export interface StoryboardStoreActions {
    *  Finding); App.tsx polls this while a real project is open. No-op in
    *  mock/standalone mode. */
   refreshRenders: () => Promise<void>;
+  /** Bump the fast-poll window (call right after enqueuing a render/export) so
+   *  the adaptive poll re-arms even before the status map shows work in-flight. */
+  bumpActivePoll: (ms?: number) => void;
   /** Clear on project close so the launcher/mocks take over again. */
   clear: () => void;
   /** Look up the display projection of one cell by uid (Cell view). */
@@ -113,6 +127,9 @@ export const useStoryboardStore = create<StoryboardStore>((set, get) => ({
   beats: [],
   projectDoc: null,
   renderStatus: {},
+  renderRecords: [],
+  lastSyncedAt: null,
+  activeUntil: 0,
   source: 'empty',
   loading: false,
   error: null,
@@ -150,14 +167,20 @@ export const useStoryboardStore = create<StoryboardStore>((set, get) => ({
       const client = await getMcpClient();
       if (client.mode !== 'real') return;
       const { records } = await renderApi.list(client);
-      set({ renderStatus: foldRenderStatus(records ?? []) });
+      set({
+        renderStatus: foldRenderStatus(records ?? []),
+        renderRecords: records ?? [],
+        lastSyncedAt: Date.now(),
+      });
     } catch {
       // render.list unavailable / transient — keep the prior statuses rather
       // than blanking the timeline treatment.
     }
   },
 
-  clear: () => set({ projectId: null, cells: [], beats: [], projectDoc: null, renderStatus: {}, source: 'empty', loading: false, error: null }),
+  bumpActivePoll: (ms = 8_000) => set({ activeUntil: Date.now() + ms }),
+
+  clear: () => set({ projectId: null, cells: [], beats: [], projectDoc: null, renderStatus: {}, renderRecords: [], lastSyncedAt: null, activeUntil: 0, source: 'empty', loading: false, error: null }),
 
   displayCell: (uid) => {
     if (!uid) return null;
@@ -171,7 +194,12 @@ export const useStoryboardStore = create<StoryboardStore>((set, get) => ({
 export const selectHydratedCells = (s: StoryboardStoreState) => s.cells;
 export const selectHydratedProject = (s: StoryboardStoreState) => s.projectDoc;
 export const selectRenderStatus = (s: StoryboardStoreState) => s.renderStatus;
+export const selectRenderRecords = (s: StoryboardStoreState) => s.renderRecords;
+export const selectLastSyncedAt = (s: StoryboardStoreState) => s.lastSyncedAt;
 export const selectStoryboardSource = (s: StoryboardStoreState) => s.source;
+/** True while any cell is queued or running — the adaptive poll's fast-mode gate. */
+export const selectHasActiveRenders = (s: StoryboardStoreState) =>
+  Object.values(s.renderStatus).some((v) => v === 'queued' || v === 'running');
 /** True when real cells are loaded — the signal views use to prefer hydrated
  *  data over their static mock fixture. */
 export const selectHasRealCells = (s: StoryboardStoreState) =>

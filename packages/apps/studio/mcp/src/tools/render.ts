@@ -58,5 +58,17 @@ export function renderTools(sidecar: SidecarClient): ToolDef[] {
       handler: (args) =>
         callSidecar(sidecar, 'render.list', { projectId: args.projectId, status: args.status }),
     },
+    {
+      name: 'render.read_bytes',
+      description:
+        "Read a finished render's MP4 off disk, base64-encoded, so a UI can preview it as a blob: URL in-pane (file:// is unloadable from a sandboxed srcdoc pane). Returns { ok:true, base64, mime, sizeBytes, path }. Keyed on the render record id.",
+      inputSchema: {
+        type: 'object',
+        properties: { recordId: { type: 'string' } },
+        required: ['recordId'],
+        additionalProperties: false,
+      },
+      handler: (args) => callSidecar(sidecar, 'render.read_bytes', { recordId: args.recordId }),
+    },
   ];
 }

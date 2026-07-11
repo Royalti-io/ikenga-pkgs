@@ -80,16 +80,31 @@ async function raw(name: string, args: Record<string, unknown>): Promise<Record<
 
 // ─── result-shape mappers ────────────────────────────────────────────────
 
-/** SQLite render_queue row (snake_case) → UI RenderRecord (schema shape). */
+/** epoch-ms number (or numeric string) → ISO-8601, else undefined. The sidecar
+ *  stores render/export timestamps as `Date.now()` integers; the schema wants
+ *  ISO strings, and the records table formats them relative-to-now. */
+function toIso(v: unknown): string | undefined {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v ? Number(v) : NaN;
+  return Number.isFinite(n) && n > 0 ? new Date(n).toISOString() : undefined;
+}
+
+/** SQLite render_queue row (snake_case) → UI RenderRecord (schema shape).
+ *  Carries the started_at/finished_at timestamps (the C-C records table needs
+ *  "finished" per cell) which the older mapper dropped. */
 function toRenderRecord(row: Record<string, unknown>): RenderRecord {
   const outputPath = (row.output_path ?? row.outputPath) as string | undefined;
+  const startedAt = toIso(row.started_at ?? row.startedAt);
+  const finishedAt = toIso(row.finished_at ?? row.finishedAt);
   return {
     id: (row.record_id ?? row.recordId ?? row.id ?? '') as string,
     cell_uid: (row.cell_id ?? row.cellId ?? row.cell_uid ?? '') as string,
     engine: (row.engine ?? 'hf') as string,
     variant: (row.variant ?? 'default') as string,
     status: (row.status ?? 'queued') as RenderRecord['status'],
-    output: outputPath ? { uri: outputPath } : { uri: '' },
+    ...(outputPath ? { output: { uri: outputPath } } : {}),
+    ...(startedAt ? { started_at: startedAt } : {}),
+    ...(finishedAt ? { finished_at: finishedAt } : {}),
+    error: (row.error as string | undefined) ?? undefined,
     metadata: (row.metadata as Record<string, unknown>) ?? {},
   };
 }
@@ -318,6 +333,15 @@ export function createRealMcpClient(): McpClient {
         if (args.cell_uid) records = records.filter((r) => r.cell_uid === args.cell_uid);
         return { records };
       }
+      case 'render.read_bytes': {
+        const body = await raw('render.read_bytes', { recordId: args.record_id });
+        return {
+          base64: (body.base64 as string) ?? '',
+          mime: (body.mime as string) ?? 'video/mp4',
+          sizeBytes: (body.sizeBytes as number) ?? 0,
+          path: (body.path as string) ?? '',
+        };
+      }
 
       // ─── export ───────────────────────────────────────────────────────
       case 'export.compose': {
@@ -350,6 +374,25 @@ export function createRealMcpClient(): McpClient {
       case 'export.list': {
         const body = await raw('export.list', { projectId: active?.projectId });
         return { exports: (body.exports as unknown[]) ?? [] };
+      }
+      case 'export.read_bytes': {
+        const body = await raw('export.read_bytes', { exportId: args.export_id });
+        return {
+          base64: (body.base64 as string) ?? '',
+          mime: (body.mime as string) ?? 'video/mp4',
+          sizeBytes: (body.sizeBytes as number) ?? 0,
+          path: (body.path as string) ?? '',
+        };
+      }
+      case 'export.check_bed': {
+        const projectId = (args.project_id as string) ?? requireActive('export.check_bed').projectId;
+        const body = await raw('export.check_bed', { projectId, music_preset: args.music_preset });
+        return {
+          has_bed: Boolean(body.hasBed ?? body.has_bed),
+          will_be_silent: body.willBeSilent === undefined ? !(body.hasBed ?? body.has_bed) : Boolean(body.willBeSilent),
+          by_design: Boolean(body.byDesign ?? body.by_design),
+          path: (body.path as string | undefined) ?? undefined,
+        };
       }
 
       // ─── archetype ────────────────────────────────────────────────────

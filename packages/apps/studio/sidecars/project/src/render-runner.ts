@@ -16,7 +16,7 @@
  * it finishes each job.
  */
 
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
@@ -32,6 +32,7 @@ import {
   listQueue,
   markDone,
   markStarted,
+  mimeForPath,
 } from './queue.js';
 import type { RenderQueueRow } from './db.js';
 import {
@@ -210,6 +211,38 @@ export class RenderRunner {
     let rows = listQueue(this.db, filter.projectId);
     if (filter.status) rows = rows.filter((r) => r.status === filter.status);
     return { ok: true, records: rows };
+  }
+
+  /**
+   * Read a finished render's MP4 off disk and return it base64-encoded so the
+   * UI iframe can preview it as a `blob:` URL. A `file://` path is unloadable
+   * from a null-origin srcdoc pane (WebKitGTK) and the pkg-content HTTP route
+   * only serves `dist/`, so bytes-over-the-bridge → Blob is the one seam that
+   * plays real pixels+audio in-pane (playback-seam probe, Wave-2). Keyed on
+   * the render record id (not an arbitrary path) so it can't read outside the
+   * queue's own outputs.
+   */
+  readBytes(recordId: string):
+    | { ok: true; base64: string; mime: string; sizeBytes: number; path: string }
+    | { ok: false; error: string; message?: string } {
+    const row = this.db
+      .prepare(`SELECT * FROM render_queue WHERE record_id = ?`)
+      .get(recordId) as RenderQueueRow | undefined;
+    if (!row) return { ok: false, error: 'render-record-not-found', message: recordId };
+    if (!row.output_path) return { ok: false, error: 'render-not-done', message: 'no output on disk yet' };
+    if (!existsSync(row.output_path)) return { ok: false, error: 'render-output-missing', message: row.output_path };
+    try {
+      const buf = readFileSync(row.output_path);
+      return {
+        ok: true,
+        base64: buf.toString('base64'),
+        mime: mimeForPath(row.output_path),
+        sizeBytes: buf.length,
+        path: row.output_path,
+      };
+    } catch (e) {
+      return { ok: false, error: 'render-read-failed', message: (e as Error).message };
+    }
   }
 
   /** Kick the drain loop (idempotent). */

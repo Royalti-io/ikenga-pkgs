@@ -427,6 +427,20 @@ function callMockTool(
       };
     }
     case 'export.list': return { exports: [] };
+    case 'export.read_bytes':
+      // No real mp4 on disk in mock mode → empty bytes; the viewer falls back
+      // to the poster/status preview.
+      return { base64: '', mime: 'video/mp4', sizeBytes: 0, path: 'mock://exports/latest.mp4' };
+    case 'export.check_bed': {
+      const preset = (args.music_preset as string) ?? 'none';
+      const byDesign = preset === 'none' || preset === 'silent';
+      // No bundled beds in the fixture — ambient/upbeat report silent honestly.
+      return { has_bed: false, will_be_silent: true, by_design: byDesign };
+    }
+
+    // ─── render bytes (no real mp4 in mock) ────────────────────────
+    case 'render.read_bytes':
+      return { base64: '', mime: 'video/mp4', sizeBytes: 0, path: 'mock://renders/latest.mp4' };
 
     default:
       throw new Error(`[studio:mock] unimplemented MCP method: ${name}`);

@@ -1,22 +1,17 @@
-// com.ikenga.studio · Composition view
+// com.ikenga.studio · Composition view — broadcast cockpit v2 (Wave-2 rebuild)
 //
-// The whole-video preview: proportional clip segments on a timeline, a
-// transport that drives the engine imperatively, click-to-jump + drag-scrub,
-// narration word-highlight, transition markers, a synthetic waveform, and the
-// HF/Remotion engine toggle (Remotion visually locked to P2).
+// Locked concept: composition-a-cockpit.html (C-A) with grafts —
+//   • render-records truth surface + "Synced Ns ago" + Refresh  (C-C)
+//   • export pre-flight dialog (focus trap + Esc) + explicit Empty preview  (C-B)
+//   • real per-cell filmstrip titles                                        (C-B)
 //
-// Design bar: plans/studio/designs/composition.html +
-// plans/studio-design-system/designs/composition-broadcast-dense.html (D-01,
-// broadcast-dense editor's cockpit). Contract: 13-wp07-resume-contract.md §8
-// row 8 (§2/§3/§4/§5).
-//
-// Engine seam (§4): the transport calls playerRef.play/pause/seekTo; the play
-// loop advances playheadMs by subscribing the player's `frameupdate` (NOT a
-// setInterval). The scrubber is the SINGLE SEEK AUTHORITY — it writes via
-// seekTo(msToFrames(snapMsToFrame(ms))); the play loop is the only other
-// writer, through the same frameupdate channel. In P1 the player is a
-// rAF-driven mock (lib/player); the HF <hyperframes-player> implements the same
-// PlayerHandle in P2 and this code is unchanged.
+// Real playback (closes `composition-no-real-playback-ever`): the transport's
+// rAF mock clock stays the TIMELINE authority (it sequences all N cells for the
+// scrubber/ruler/filmstrip), while real pixels come from bytes-over-the-bridge —
+// CellVideo previews the active done cell's mp4 (per-cell), and ComposedVideo
+// plays the export mp4 (composed). Both degrade to the poster/status when bytes
+// aren't available, never to a fake player. See views/composition/* + the
+// playback-seam probe verdict for why file:// / loopback don't work in the pane.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
@@ -30,12 +25,7 @@ import {
   type PreviewAspect,
 } from '../media-controls';
 import { createMockPlayer, type PlayerHandle } from '../lib/player';
-import {
-  DEFAULT_FPS,
-  framesToMs,
-  msToFrames,
-  snapMsToFrame,
-} from '../lib/time';
+import { DEFAULT_FPS, framesToMs, msToFrames, snapMsToFrame } from '../lib/time';
 import {
   COMPOSITION_META,
   COMPOSITION_NARRATION,
@@ -45,11 +35,7 @@ import {
   WAVEFORM_BAR_COUNT,
   type TimelineClip,
 } from '../__mocks__/composition';
-import {
-  buildTimelineModel,
-  clipAt,
-  type TimelineModel,
-} from '../lib/composition-model';
+import { buildTimelineModel, clipAt, type TimelineModel } from '../lib/composition-model';
 import {
   selectCellUid,
   selectEngineMode,
@@ -64,46 +50,49 @@ import {
   selectHasRealCells,
   selectHydratedProject,
   selectRenderStatus,
+  selectRenderRecords,
+  selectLastSyncedAt,
 } from '../storyboard-store';
 import { getMcpClient, compositionApi, exportApi } from '../mcp-client';
+import type { BedCheck } from '../mcp-client';
+import type { Cell } from '../mcp-types';
 import { pollRenderUntilDone, pollExportUntilDone } from '../lib/render-poll';
+import { CellVideo, type CellVideoAvailability } from './composition/CellVideo';
+import { ComposedVideo } from './composition/ComposedVideo';
+import { ExportCard, type ExportUiState } from './composition/ExportCard';
+import { ExportPreflightDialog } from './composition/ExportPreflightDialog';
+import { RecordsPanel } from './composition/RecordsPanel';
+import {
+  fmtClock,
+  fmtSeconds,
+  fidelityLabel,
+  recordByUid,
+} from './composition/format';
 
 const FPS = DEFAULT_FPS;
 const SEED_MS = 8_400; // mock design-fixture snapshot — c02 problem active
 
-// The mock timeline wrapped in the real model's shape, so standalone / mock
-// mode flows through the exact same { clips, totalMs, meta, narration } seam the
-// hydrated builder produces (resume-contract: keep the mock for standalone).
 const MOCK_MODEL: TimelineModel = {
   clips: COMPOSITION_TIMELINE,
   totalMs: COMPOSITION_TOTAL_MS,
-  // COMPOSITION_META.aspect is a plain string literal in the mock; the model
-  // meta wants the AspectRatio union. Values are valid — narrow via the cast.
   meta: COMPOSITION_META as TimelineModel['meta'],
   narration: COMPOSITION_NARRATION,
 };
 
-// Project.aspect_ratio ('16:9'|'9:16'|'1:1', colon form — the schema/launcher
-// convention) → PreviewSurface's `data-aspect` attribute (dash form, per F4
-// aspect-safe-area / preview-surface.md's locked class API).
+// Real music presets (sidecar MUSIC_PRESETS). none/silent are silent by design;
+// ambient/upbeat need assets/music/<preset>.mp3 on disk (F7).
+const MUSIC_PRESETS: Array<{ value: string; label: string }> = [
+  { value: 'upbeat', label: 'Upbeat' },
+  { value: 'ambient', label: 'Ambient' },
+  { value: 'silent', label: 'Silent' },
+  { value: 'none', label: 'No music' },
+];
+
 function aspectAttr(aspect: string): PreviewAspect {
   if (aspect === '9:16') return '9-16';
   if (aspect === '1:1') return '1-1';
   return '16-9';
 }
-
-// ─── Inline icons for the transport right slot ───────────────────────────
-
-const IconWand = () => (
-  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16M16 21h5v-5" />
-  </svg>
-);
-const IconExport = () => (
-  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />
-  </svg>
-);
 
 export function CompositionView() {
   const playheadMs = useSharedStore(selectPlayheadMs);
@@ -120,67 +109,60 @@ export function CompositionView() {
   const hydratedCells = useStoryboardStore(selectHydratedCells);
   const projectDoc = useStoryboardStore(selectHydratedProject);
   const renderStatus = useStoryboardStore(selectRenderStatus);
+  const renderRecords = useStoryboardStore(selectRenderRecords);
+  const lastSyncedAt = useStoryboardStore(selectLastSyncedAt);
   const refreshRenders = useStoryboardStore((s) => s.refreshRenders);
+  const bumpActivePoll = useStoryboardStore((s) => s.bumpActivePoll);
 
-  // The whole timeline surface. Real mode builds it from the hydrated cells +
-  // storyboard.json doc + the live render-status map (the timeline shows REAL
-  // clips, not the 6 mock ones); standalone/mock falls back to MOCK_MODEL — the
-  // same seam Canvas/Cell use (selectHasRealCells). Everything below reads these
-  // locals, never the COMPOSITION_* constants directly.
   const model = useMemo<TimelineModel>(
     () => (hasRealCells ? buildTimelineModel(hydratedCells, projectDoc, renderStatus) : MOCK_MODEL),
     [hasRealCells, hydratedCells, projectDoc, renderStatus],
   );
   const { clips, totalMs, meta, narration } = model;
 
+  // Per-cell render record (latest done wins) + per-cell rung — used for the
+  // records table, byte-playback, and the per-clip fidelity label (fixes the
+  // stale global-rung finding).
+  const recByUid = useMemo(() => (hasRealCells ? recordByUid(renderRecords) : {}), [hasRealCells, renderRecords]);
+  const cellByUid = useMemo(() => {
+    const m: Record<string, Cell> = {};
+    for (const c of hydratedCells) m[c.uid] = c;
+    return m;
+  }, [hydratedCells]);
+
   const [playing, setPlaying] = useState(false);
   const [loop, setLoop] = useState(false);
-  const [musicPreset, setMusicPreset] = useState('upbeat-tech');
+  const [muted, setMuted] = useState(false);
+  const [musicPreset, setMusicPreset] = useState('upbeat');
+  const [bedCheck, setBedCheck] = useState<BedCheck | null>(null);
 
-  // Render-all lifecycle. 'running' while the batched composition.render calls
-  // are in flight (mock emits render/done per cell); flips to 'done' briefly
-  // when every cell's done event has arrived, then settles back to idle.
   const [rerenderState, setRerenderState] = useState<'idle' | 'running' | 'done'>('idle');
+  const [refreshing, setRefreshing] = useState(false);
 
-  // Export lifecycle: export.compose → export.status, with the resulting path
-  // surfaced on the button (done treatment) before settling back to idle.
-  const [exportState, setExportState] = useState<'idle' | 'running' | 'done'>('idle');
+  // Export state machine.
+  const [exportState, setExportState] = useState<ExportUiState>('idle');
   const [exportPath, setExportPath] = useState<string | null>(null);
+  const [exportId, setExportId] = useState<string | null>(null);
+  const [exportSilent, setExportSilent] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  const [preflightOpen, setPreflightOpen] = useState(false);
+  const [composedMode, setComposedMode] = useState(false);
+  const exportAbortRef = useRef<{ aborted: boolean }>({ aborted: false });
 
-  // Mirror of `loop` so a fresh player (StrictMode remount) inherits it.
+  // Per-cell video availability → drives whether we show the video or the poster.
+  const [videoState, setVideoState] = useState<CellVideoAvailability>('unavailable');
+
   const loopRef = useRef(loop);
   loopRef.current = loop;
 
-  // ── Engine player seam ──────────────────────────────────────────────────
-  // The HF <hyperframes-player> would replace createMockPlayer in P2 behind the
-  // same PlayerHandle. Subscriptions are the ONLY writers of playheadMs.
-  //
-  // The player is created INSIDE the effect (not the render body) so React
-  // StrictMode's mount→unmount→mount cycle — which the dev shell runs — rebuilds
-  // a fresh, subscribed player on every remount instead of leaving a destroyed
-  // one behind.
+  // ── Engine player seam (transport clock) ────────────────────────────────
   const playerRef = useRef<PlayerHandle | null>(null);
-
-  // Rebuilds when `totalMs` changes — the real total arrives asynchronously
-  // after hydration (the pane mounts against the mock total first), so the
-  // player's totalFrames must re-bind or the scrubber/loop would clamp to the
-  // stale 60s mock length. `hasRealCells` in the deps re-seeds on the mock→real
-  // flip. StrictMode's mount→unmount→mount still rebuilds a fresh, subscribed
-  // player each cycle (the original invariant holds).
   useEffect(() => {
-    const player = createMockPlayer({
-      totalFrames: msToFrames(totalMs, FPS),
-      fps: FPS,
-    });
+    const player = createMockPlayer({ totalFrames: msToFrames(totalMs, FPS), fps: FPS });
     playerRef.current = player;
     player.setLoop(loopRef.current);
-    const offFrame = player.onFrameUpdate((frame) => {
-      setPlayheadMs(framesToMs(frame, FPS));
-    });
+    const offFrame = player.onFrameUpdate((frame) => setPlayheadMs(framesToMs(frame, FPS)));
     const offPlay = player.onPlayStateChange(setPlaying);
-    // Real timelines seed at 0 (the mock's 8.4s design snapshot is fixture-only
-    // and must not bleed onto a real project); the mock keeps its snapshot, or
-    // re-syncs to wherever the shared playhead already is.
     const startMs = hasRealCells ? 0 : (useSharedStore.getState().playheadMs || SEED_MS);
     player.seekTo(msToFrames(snapMsToFrame(startMs, FPS), FPS));
     return () => {
@@ -192,6 +174,39 @@ export function CompositionView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [totalMs, hasRealCells]);
 
+  // ── Bed check for the silent-bed warning (F7) ───────────────────────────
+  // The precise seam is export.check_bed (existsSync on assets/music/<preset>.mp3);
+  // when it's unavailable (mock, or a running MCP server that predates the tool)
+  // we fall back to the sidecar's own contract — none/silent are silent by
+  // design, and ambient/upbeat need a bed file that isn't bundled → silent —
+  // so the honest warning still shows, then upgrades to the exact disk-check.
+  const contractBed = (preset: string): BedCheck => {
+    const byDesign = preset === 'none' || preset === 'silent';
+    return { has_bed: false, will_be_silent: true, by_design: byDesign };
+  };
+  useEffect(() => {
+    if (!hasRealCells) {
+      setBedCheck(contractBed(musicPreset));
+      return;
+    }
+    let cancelled = false;
+    const projectId = project?.project_id;
+    if (!projectId) return;
+    (async () => {
+      try {
+        const client = await getMcpClient();
+        const res = await exportApi.check_bed(client, { project_id: projectId, music_preset: musicPreset });
+        if (!cancelled) setBedCheck(res);
+      } catch {
+        if (!cancelled) setBedCheck(contractBed(musicPreset));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [musicPreset, hasRealCells, project?.project_id]);
+
   // ── Seek authority + transport handlers ─────────────────────────────────
   const seekMs = (ms: number) => {
     const p = playerRef.current;
@@ -202,12 +217,6 @@ export function CompositionView() {
     const clip = clipAt(clips, ms);
     if (clip) setCellUid(clip.uid);
   };
-  // The scrubber overlay (.scrubber, z-index 10) sits on top of the entire
-  // timeline-rail, so real pointer hover never reaches the underlying
-  // .clip-segment elements' onMouseEnter/onMouseLeave (contract-review
-  // finding — verified via elementFromPoint). Re-derive hoverBeat from the
-  // scrubber's own position-in-ms pass-through instead, using the same
-  // clipAtMs lookup the click-to-select path already relies on.
   const onHoverMs = (ms: number | null) => {
     setHoverBeat(ms !== null ? (clipAt(clips, ms)?.uid ?? null) : null);
   };
@@ -230,11 +239,7 @@ export function CompositionView() {
     seekMs(clip.start_ms);
   };
 
-  // ── Render / retry over MCP (mock today, WP-06 real in Wave 3) ───────────
-  // Re-render all: fire composition.render per cell at the composition's rung.
-  // The mock emits a render/done per cell; count them to drive the button
-  // lifecycle. Retry re-renders a single failed clip through the same seam
-  // (Wave 3 swaps this to render.retry(clip.uid)).
+  // ── Render / retry over MCP ──────────────────────────────────────────────
   const rerenderAll = async () => {
     if (rerenderState === 'running') return;
     const projectId = project?.project_id;
@@ -242,16 +247,7 @@ export function CompositionView() {
     setRerenderState('running');
     try {
       const client = await getMcpClient();
-      // Enqueue a render for every clip on the RESOLVED timeline — real cell
-      // uids in real mode, the mock clips in standalone (uids come straight off
-      // the model so this is one code path). No rung arg: the real server
-      // renders each cell at its own rung (matches Cell.tsx), the mock ignores
-      // it — so the excalidraw lo-fi cell renders alongside the hi-fi ones.
       const cellUids = clips.map((c) => c.uid);
-      // Enqueue each cell, then POLL each record to completion. This replaces
-      // the old subscribe('render/done') counter — the shell can't relay those
-      // events to the iframe (Round-13 Finding), so we poll render.status. A
-      // future event relay would restore the subscribe path with no other change.
       const recordIds = (
         await Promise.all(
           cellUids.map((uid) =>
@@ -262,9 +258,7 @@ export function CompositionView() {
           ),
         )
       ).filter((r): r is string => Boolean(r));
-      // Flip the clips to queued/running right away (don't wait for App's 2.5s
-      // poll), then keep polling each record for the button lifecycle. A final
-      // refresh settles the clips to ✓ done the instant the batch resolves.
+      bumpActivePoll();
       void refreshRenders();
       await Promise.all(recordIds.map((rid) => pollRenderUntilDone(client, rid)));
       void refreshRenders();
@@ -277,47 +271,14 @@ export function CompositionView() {
     }
   };
 
-  const exportComposition = async () => {
-    if (exportState === 'running') return;
-    const projectId = project?.project_id;
-    if (!projectId) return;
-    setExportState('running');
-    try {
-      const client = await getMcpClient();
-      // Real mode omits rung so the sidecar composes ALL cells in order (a rung
-      // filter would drop the excalidraw lo-fi cell and yield <3 clips); mock
-      // keeps its fixture rung.
-      const { export_id, export_path } = await exportApi.compose(client, {
-        project_id: projectId,
-        rung: hasRealCells ? undefined : meta.rung,
-        music_preset: musicPreset,
-      });
-      // Poll export.status to completion (mock resolves 'done' immediately; the
-      // real sidecar runs ffmpeg serially — the poll is the event stand-in).
-      // Surface whichever output path we get back.
-      const rec = await pollExportUntilDone(client, export_id);
-      setExportPath(rec?.output_uri ?? export_path);
-      setExportState('done');
-      window.setTimeout(() => setExportState('idle'), 2600);
-    } catch (err) {
-      setExportState('idle');
-      // eslint-disable-next-line no-console
-      console.error('[studio] export failed', err);
-    }
-  };
-
   const retryClip = async (uid: string) => {
     const projectId = project?.project_id;
     if (!projectId) return;
     try {
       const client = await getMcpClient();
       setCellUid(uid);
-      // Re-render the single failed cell at its own rung (no rung arg — same as
-      // rerenderAll); refresh so the clip flips back to running immediately.
-      await compositionApi.render(client, {
-        project_id: projectId,
-        cell_uid: uid,
-      });
+      await compositionApi.render(client, { project_id: projectId, cell_uid: uid });
+      bumpActivePoll();
       void refreshRenders();
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -325,60 +286,116 @@ export function CompositionView() {
     }
   };
 
+  const onRefreshRecords = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      await refreshRenders();
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // ── Export flow: pre-flight → compose → running → done | error ──────────
+  const runExport = async () => {
+    const projectId = project?.project_id;
+    if (!projectId) return;
+    setComposedMode(false);
+    setExportState('running');
+    setExportError(null);
+    exportAbortRef.current = { aborted: false };
+    const signal = exportAbortRef.current;
+    try {
+      const client = await getMcpClient();
+      const { export_id, export_path } = await exportApi.compose(client, {
+        project_id: projectId,
+        rung: hasRealCells ? undefined : meta.rung,
+        music_preset: musicPreset,
+      });
+      setExportId(export_id);
+      bumpActivePoll();
+      const rec = await pollExportUntilDone(client, export_id, { signal });
+      if (signal.aborted) return;
+      if (rec && rec.status === 'failed') {
+        setExportError('The export failed before finishing. Nothing was written to disk.');
+        setExportState('error');
+        return;
+      }
+      setExportPath(rec?.output_uri ?? export_path);
+      // Honest silent-flag: a bed that isn't on disk means the export went out
+      // video-only (F7). Intentional silence (preset none/silent, by_design)
+      // is not a warning — same rule as the pre-flight's showSilentNotice.
+      setExportSilent(Boolean(bedCheck?.will_be_silent && !bedCheck?.by_design));
+      setExportState('done');
+    } catch (err) {
+      if (signal.aborted) return;
+      setExportError((err as Error).message);
+      setExportState('error');
+    }
+  };
+
+  const cancelExport = () => {
+    exportAbortRef.current.aborted = true;
+    setExportState('idle');
+  };
+
   // ── Derived state ───────────────────────────────────────────────────────
   const activeClip = clipAt(clips, playheadMs);
-  const activeWord = narration?.words.find(
-    (w) => playheadMs >= w.start_ms && playheadMs < w.end_ms,
-  );
-  const renderedCount = clips.filter((c) => c.status === 'done').length;
-  const playheadPct = Math.min(100, Math.max(0, (playheadMs / totalMs) * 100));
+  const activeRecord = activeClip ? recByUid[activeClip.uid] : undefined;
+  const activeRecordId = activeRecord && activeRecord.status === 'done' ? activeRecord.id : null;
+  const activeCell = activeClip ? cellByUid[activeClip.uid] : undefined;
+  const activeRung = activeCell?.rung ?? (hasRealCells ? undefined : meta.rung);
 
-  // All 6 RenderStatus values (contract §6 — no 'idle', that's UI-local to
-  // the Cell editor only) get a distinct clip-segment treatment; `undefined`
-  // (no render record yet) is the 7th, UI-local "pending" state.
+  const activeWord = narration?.words.find((w) => playheadMs >= w.start_ms && playheadMs < w.end_ms);
+  const renderedCount = clips.filter((c) => (recByUid[c.uid]?.status ?? c.status) === 'done').length;
+  const fullyRendered = clips.length > 0 && renderedCount === clips.length;
+  const playheadPct = Math.min(100, Math.max(0, (playheadMs / totalMs) * 100));
+  const clipIndex = activeClip ? clips.findIndex((c) => c.uid === activeClip.uid) : -1;
+
+  // Silent warning: preset expects a bed but none is on disk (NOT the intentional
+  // none/silent case).
+  const showSilentNotice = Boolean(bedCheck && bedCheck.will_be_silent && !bedCheck.by_design);
+  const presetLabel = MUSIC_PRESETS.find((p) => p.value === musicPreset)?.label ?? musicPreset;
+
   const clipStateClass = (c: TimelineClip): string => {
-    if (c.status === 'running') return ' is-rendering';
-    if (c.status === 'queued') return ' is-queued';
-    if (c.status === 'done') return ' is-done';
-    if (c.status === 'failed') return ' is-failed';
-    if (c.status === 'cancelled') return ' is-cancelled';
-    if (c.status === undefined) return ' is-pending';
+    const st = recByUid[c.uid]?.status ?? c.status;
+    if (st === 'running') return ' is-rendering';
+    if (st === 'queued') return ' is-queued';
+    if (st === 'done') return ' is-done';
+    if (st === 'failed') return ' is-failed';
+    if (st === 'cancelled') return ' is-cancelled';
+    if (st === undefined) return ' is-pending';
     return '';
   };
   const clipGlyph = (c: TimelineClip): string | null => {
-    if (c.status === 'running') return '◐';
-    if (c.status === 'queued' || c.status === undefined) return '○';
-    if (c.status === 'done') return '✓';
-    if (c.status === 'failed') return '⚠';
-    if (c.status === 'cancelled') return '✕';
+    const st = recByUid[c.uid]?.status ?? c.status;
+    if (st === 'running') return '◐';
+    if (st === 'queued' || st === undefined) return '○';
+    if (st === 'done') return '✓';
+    if (st === 'failed') return '⚠';
+    if (st === 'cancelled') return '✕';
     return null;
   };
 
-  // Words that belong to the active clip's time window (for the preview). Empty
-  // when the real project has no narration — the preview then falls to the beat
-  // label, never mock words over real cells.
   const previewWords = useMemo(() => {
     if (!activeClip || !narration) return [];
     return narration.words.filter(
-      (w) =>
-        w.start_ms >= activeClip.start_ms &&
-        w.end_ms <= activeClip.start_ms + activeClip.duration_ms,
+      (w) => w.start_ms >= activeClip.start_ms && w.end_ms <= activeClip.start_ms + activeClip.duration_ms,
     );
   }, [activeClip, narration]);
 
+  // ── Right-slot: music + re-render (kept from the transport family) ───────
   const rightSlot = (
     <>
-      <select
-        className="input"
-        style={{ height: 24, fontSize: 'var(--text-micro)', width: 'auto', padding: '0 var(--space-2)' }}
-        aria-label="Music preset"
-        value={musicPreset}
-        onChange={(e) => setMusicPreset(e.target.value)}
+      <button
+        type="button"
+        className={`transport-btn${muted ? '' : ' is-on'}`}
+        aria-label={muted ? 'Unmute audio' : 'Mute audio'}
+        aria-pressed={!muted}
+        onClick={() => setMuted((m) => !m)}
       >
-        <option value="upbeat-tech">music: upbeat-tech</option>
-        <option value="calm-narrative">music: calm-narrative</option>
-        <option value="none">music: none</option>
-      </select>
+        {muted ? '🔇' : '🔊'}
+      </button>
       <button
         type="button"
         className="btn btn-sm btn-ghost"
@@ -387,49 +404,12 @@ export function CompositionView() {
         disabled={rerenderState === 'running'}
         aria-busy={rerenderState === 'running'}
       >
-        <IconWand />
-        {rerenderState === 'running'
-          ? 'Rendering…'
-          : rerenderState === 'done'
-            ? 'Rendered ✓'
-            : 'Re-render all'}
-      </button>
-      <button
-        type="button"
-        className="btn btn-sm"
-        aria-label="Export composition"
-        onClick={exportComposition}
-        disabled={exportState === 'running'}
-        aria-busy={exportState === 'running'}
-        title={exportPath ?? 'Export composition'}
-        style={
-          exportState === 'done'
-            ? {
-                background: 'var(--beat-accent-emerald-soft)',
-                borderColor: 'var(--beat-accent-emerald-border)',
-                color: 'var(--beat-accent-emerald)',
-              }
-            : {
-                background: 'var(--beat-accent-amber-soft)',
-                borderColor: 'var(--beat-accent-amber-border)',
-                color: 'var(--beat-accent-amber)',
-              }
-        }
-      >
-        <IconExport />
-        {exportState === 'running'
-          ? 'Exporting…'
-          : exportState === 'done'
-            ? 'Exported ✓'
-            : 'Export'}
+        {rerenderState === 'running' ? 'Rendering…' : rerenderState === 'done' ? 'Rendered ✓' : '↻ Re-render all'}
       </button>
     </>
   );
 
-  // Empty edge state (contract §8 commit-13, states-empty.html parity): no
-  // cells have materialized on the timeline yet (pre archetype.instantiate,
-  // or a freshly-created project). Matches Script.tsx's existing empty-state
-  // convention for visual consistency across sub-views.
+  // ── Empty edge state: no cells on the timeline yet ──────────────────────
   if (clips.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 bg-base p-8 text-center">
@@ -441,21 +421,10 @@ export function CompositionView() {
     );
   }
 
-  // Pane-chrome keyboard map beyond the base scrubber (contract §8 commit-15,
-  // a11y-keyboard.html §"Composition / playback"). Space play/pauses; Left/
-  // Right scrub by a whole beat (playheadMs jumps to the adjacent clip's
-  // start_ms) — distinct from the scrubber's OWN Left/Right (±1 frame),
-  // which fires only when the slider itself has focus, so this handler
-  // steps aside whenever the event originated inside `.scrubber` or a form
-  // control (text input / select) to avoid double-handling the same key.
-  // Full 1/2/3/4 view-switcher + V-split focus-trap are App-shell (commit 5)
-  // concerns and stay out of scope per the "do NOT retrofit commits 1-7"
-  // invariant — this handler only covers what Composition itself owns.
   const onViewKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
     const target = e.target as HTMLElement;
-    if (['INPUT', 'SELECT', 'TEXTAREA'].includes(target.tagName)) return;
+    if (['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(target.tagName)) return;
     if (target.closest('.scrubber')) return;
-
     if (e.key === ' ') {
       e.preventDefault();
       playToggle();
@@ -464,16 +433,16 @@ export function CompositionView() {
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       e.preventDefault();
       const dir = e.key === 'ArrowLeft' ? -1 : 1;
-      const idx = activeClip
-        ? clips.findIndex((c) => c.uid === activeClip.uid)
-        : -1;
-      const targetIdx =
-        idx === -1 ? (dir > 0 ? 0 : clips.length - 1) : idx + dir;
+      const targetIdx = clipIndex === -1 ? (dir > 0 ? 0 : clips.length - 1) : clipIndex + dir;
       const clamped = Math.max(0, Math.min(clips.length - 1, targetIdx));
       const clip = clips[clamped];
       if (clip) seekMs(clip.start_ms);
     }
   };
+
+  const archetypeName = project?.archetype_id
+    ? project.archetype_id.charAt(0).toUpperCase() + project.archetype_id.slice(1)
+    : 'Explainer';
 
   return (
     <div
@@ -481,7 +450,31 @@ export function CompositionView() {
       data-workspace="studio"
       onKeyDown={onViewKeyDown}
     >
-      <div className="composition-frame m-2">
+      <div className="composition-frame comp-cockpit m-2">
+        {/* Header */}
+        <header className="comp-header">
+          <div className="comp-header__title">
+            <h1>{meta.name}</h1>
+            <div className="comp-header__meta">
+              <span className="kicker">Composition</span>
+              <span className="comp-dot">·</span>
+              <span>{archetypeName}</span>
+              <span className="comp-dot">·</span>
+              <span>{meta.aspect} · {meta.resolution.w}×{meta.resolution.h}</span>
+              <span className="comp-dot">·</span>
+              <span>{fmtSeconds(totalMs)} · {clips.length} cells</span>
+            </div>
+          </div>
+          <div className="comp-header__right">
+            <span className="comp-pill" title="Rendering engine">
+              ⚡ HyperFrames · <b>{fidelityLabel(activeRung ?? meta.rung)}</b>
+            </span>
+            <span className={`comp-pill${fullyRendered ? ' is-ok' : ''}`} title="Cells with a finished render on disk">
+              {fullyRendered ? '✓ ' : ''}{renderedCount} / {clips.length} rendered
+            </span>
+          </div>
+        </header>
+
         {/* Engine sub-tabs */}
         <div className="engine-tabs-row">
           <div className="seg" role="tablist" aria-label="Engine view">
@@ -505,20 +498,16 @@ export function CompositionView() {
               Remotion Studio <span className="engine-badge">P2</span>
             </button>
           </div>
-          <div
-            style={{
-              fontFamily: 'var(--font-mono)',
-              fontSize: 'var(--text-micro)',
-              color: 'var(--fg-faint)',
-              letterSpacing: '.04em',
-            }}
-          >
-            {meta.name} · {meta.aspect} · {meta.resolution.w}×
-            {meta.resolution.h}
+          <div className="comp-nowclip">
+            {activeClip ? (
+              <>Now: <b>{activeClip.beat}</b> · {fmtClock(activeClip.start_ms)}–{fmtClock(activeClip.start_ms + activeClip.duration_ms)}</>
+            ) : (
+              <>End of composition</>
+            )}
           </div>
         </div>
 
-        {/* Transport bar */}
+        {/* Transport */}
         <TransportBar
           playing={playing}
           onPlayToggle={playToggle}
@@ -533,97 +522,134 @@ export function CompositionView() {
           rightSlot={rightSlot}
         />
 
-        {/* Preview surface — frames the engine black box */}
+        {/* Preview surface */}
         <PreviewSurface
           aspect={aspectAttr(meta.aspect)}
           safeZoneOn
           status={
-            !activeClip
+            composedMode
               ? 'ready'
-              : activeClip.status === 'done'
+              : !activeClip
                 ? 'ready'
-                : activeClip.status === 'running'
-                  ? 'rendering'
-                  : activeClip.status === 'queued'
-                    ? 'queued'
-                    : activeClip.status === 'failed'
-                      ? 'failed'
-                      : activeClip.status === 'cancelled'
-                        ? 'cancelled'
-                        : 'pending'
+                : (activeRecord?.status ?? activeClip.status) === 'done'
+                  ? 'ready'
+                  : (activeRecord?.status ?? activeClip.status) === 'running'
+                    ? 'rendering'
+                    : (activeRecord?.status ?? activeClip.status) === 'queued'
+                      ? 'queued'
+                      : (activeRecord?.status ?? activeClip.status) === 'failed'
+                        ? 'failed'
+                        : (activeRecord?.status ?? activeClip.status) === 'cancelled'
+                          ? 'cancelled'
+                          : 'pending'
           }
           ariaLabel={
-            activeClip
-              ? `Composition preview — cell ${activeClip.uid} ${activeClip.beat}`
-              : 'Composition preview — end of composition'
+            composedMode
+              ? 'Composed export playback'
+              : activeClip
+                ? `Composition preview — cell ${activeClip.uid} ${activeClip.beat}`
+                : 'Composition preview — end of composition'
           }
         >
-          {!activeClip ? (
+          {composedMode && exportId ? (
+            <ComposedVideo exportId={exportId} muted={muted} onExit={() => setComposedMode(false)} />
+          ) : !activeClip ? (
             <div className="preview-status">
               <span className="preview-status-text">— end of composition —</span>
             </div>
-          ) : activeClip.status === 'done' ? (
-            <div style={{ textAlign: 'center' }}>
-              <div
-                className="preview-cell-label"
-                style={{ color: `var(--beat-accent-${activeClip.accent})` }}
-                aria-hidden="true"
+          ) : (activeRecord?.status ?? activeClip.status) === 'done' ? (
+            <div className="comp-viewer-stage">
+              {/* Real per-cell pixels overlay; poster + caption behind it. */}
+              <CellVideo
+                recordId={activeRecordId}
+                playing={playing}
+                muted={muted}
+                playheadMs={playheadMs}
+                clipStartMs={activeClip.start_ms}
+                onAvailability={setVideoState}
+              />
+              <div className={`comp-poster${videoState === 'ready' ? ' is-hidden' : ''}`} aria-hidden={videoState === 'ready'}>
+                <div
+                  className="preview-cell-label"
+                  style={{ color: `var(--beat-accent-${activeClip.accent})` }}
+                >
+                  {activeClip.beat}
+                </div>
+                <div className="preview-narration">
+                  {previewWords.length > 0 ? (
+                    previewWords.map((w) => {
+                      const isActive = activeWord?.word === w.word && activeWord?.start_ms === w.start_ms;
+                      const isPast = playheadMs >= w.end_ms;
+                      return (
+                        <span
+                          key={`${w.word}-${w.start_ms}`}
+                          className={'preview-word' + (isActive ? ' is-active' : isPast ? ' is-past' : '')}
+                        >
+                          {w.word}
+                        </span>
+                      );
+                    })
+                  ) : (
+                    <span className="preview-word is-active">{activeClip.beat}</span>
+                  )}
+                </div>
+                <div className="preview-engine-note">
+                  HyperFrames · {fidelityLabel(activeRung ?? meta.rung)}
+                  {videoState === 'unavailable' && ' · rendered — preview unavailable, try Refresh'}
+                </div>
+              </div>
+              {/* Clip badge + play overlay */}
+              <div className="comp-clip-badge" aria-hidden="true">
+                <span className="comp-clip-badge__dot" style={{ background: `var(--beat-accent-${activeClip.accent})` }} />
+                {activeClip.uid} · {fmtClock(activeClip.start_ms)}–{fmtClock(activeClip.start_ms + activeClip.duration_ms)}
+              </div>
+              <button
+                type="button"
+                className={`comp-play-overlay${playing ? ' is-playing' : ''}`}
+                aria-label={playing ? 'Pause composition' : 'Play composition'}
+                onClick={playToggle}
               >
-                {activeClip.uid} · {activeClip.beat}
+                <span aria-hidden="true">{playing ? '❚❚' : '▶'}</span>
+              </button>
+            </div>
+          ) : (activeRecord?.status ?? activeClip.status) === undefined ? (
+            // Explicit EMPTY preview (C-B graft): nothing rendered for this cell.
+            <div className="comp-empty-preview">
+              <div className="preview-cell-label" style={{ color: `var(--beat-accent-${activeClip.accent})` }}>
+                {activeClip.beat}
               </div>
-              <div className="preview-narration">
-                {previewWords.length > 0 ? (
-                  previewWords.map((w, i) => {
-                    const isActive = activeWord?.word === w.word && activeWord?.start_ms === w.start_ms;
-                    const isPast = playheadMs >= w.end_ms;
-                    return (
-                      <span
-                        key={`${w.word}-${w.start_ms}`}
-                        className={
-                          'preview-word' + (isActive ? ' is-active' : isPast ? ' is-past' : '')
-                        }
-                      >
-                        {w.word}
-                      </span>
-                    );
-                  })
-                ) : (
-                  <span className="preview-word is-active">{activeClip.beat}</span>
-                )}
-              </div>
-              <div className="preview-engine-note">
-                &lt;hyperframes-player&gt; · {activeClip.uid}.content.html · HF rung{' '}
-                {meta.rung}
-              </div>
+              <span className="preview-status-text">Not rendered yet</span>
+              <button
+                type="button"
+                className="btn btn-sm comp-btn-primary"
+                onClick={() => retryClip(activeClip.uid)}
+                aria-label={`Render ${activeClip.beat} cell`}
+              >
+                ⚡ Render this cell
+              </button>
             </div>
           ) : (
             <div style={{ textAlign: 'center' }}>
-              <div
-                className="preview-cell-label"
-                style={{ color: `var(--beat-accent-${activeClip.accent})` }}
-                aria-hidden="true"
-              >
-                {activeClip.uid} · {activeClip.beat}
+              <div className="preview-cell-label" style={{ color: `var(--beat-accent-${activeClip.accent})` }}>
+                {activeClip.beat}
               </div>
               <PreviewStatus
                 glyph={
-                  activeClip.status === 'running'
+                  (activeRecord?.status ?? activeClip.status) === 'running'
                     ? '◐'
-                    : activeClip.status === 'failed'
+                    : (activeRecord?.status ?? activeClip.status) === 'failed'
                       ? '⚠'
-                      : activeClip.status === 'cancelled'
+                      : (activeRecord?.status ?? activeClip.status) === 'cancelled'
                         ? '✕'
                         : '○'
                 }
-                text={activeClip.status ?? 'pending'}
+                text={(activeRecord?.status ?? activeClip.status) ?? 'pending'}
                 action={
-                  activeClip.status === 'failed' ? (
-                    // Re-renders the failed clip through composition.render
-                    // (mock today); Wave 3 swaps this to render.retry(uid).
+                  (activeRecord?.status ?? activeClip.status) === 'failed' ? (
                     <button
                       type="button"
                       className="btn btn-sm btn-ghost"
-                      aria-label={`Retry render for ${activeClip.uid}`}
+                      aria-label={`Retry render for ${activeClip.beat}`}
                       onClick={() => retryClip(activeClip.uid)}
                     >
                       ↺ Retry
@@ -635,11 +661,9 @@ export function CompositionView() {
           )}
         </PreviewSurface>
 
-        {/* Timeline section */}
+        {/* Timeline section — ruler + filmstrip + scrubber */}
         <div className="timeline-section">
           <TimeRuler totalMs={totalMs} fps={FPS} />
-
-          {/* Timeline rail — proportional clip segments + scrubber overlay */}
           <div
             className={`timeline-rail${playing ? ' is-playing' : ''}`}
             style={{ ['--total-ms' as string]: String(totalMs) }}
@@ -649,13 +673,10 @@ export function CompositionView() {
               const flexBasis = `${(c.duration_ms / totalMs) * 100}%`;
               const prev = i > 0 ? clips[i - 1] : null;
               const showMarker = c.transition && c.transition !== 'cut' && prev;
-              const selected =
-                c.uid === cellUid || c.uid === activeClip?.uid ? ' is-selected' : '';
-              // Cross-linking §12 — hoverBeat carries the hovered cell's uid
-              // (same value-space cellUid uses); hovering this clip in Canvas
-              // or Script pulses the matching segment here, and vice versa.
+              const selected = c.uid === cellUid || c.uid === activeClip?.uid ? ' is-selected' : '';
               const hoverLinked = hoverBeat === c.uid ? ' is-hover-link' : '';
               const glyph = clipGlyph(c);
+              const st = recByUid[c.uid]?.status ?? c.status;
               return (
                 <div
                   key={c.uid}
@@ -663,14 +684,9 @@ export function CompositionView() {
                   data-accent={c.accent}
                   role="button"
                   tabIndex={0}
-                  aria-label={`${c.beat} cell, ${c.status ?? 'pending'}, ${Math.round(c.duration_ms / 1000)} seconds`}
+                  aria-label={`${c.beat} cell, ${st ?? 'pending'}, ${Math.round(c.duration_ms / 1000)} seconds`}
                   style={{ flexBasis }}
                   onClick={() => onClipClick(c)}
-                  // Real pointer hover is driven by the scrubber overlay's
-                  // onHoverMs pass-through above (the overlay sits on top of
-                  // this element and would otherwise swallow mouse events —
-                  // see onHoverMs). onFocus/onBlur keep the same hover-link
-                  // pulse working for keyboard users tabbing onto the clip.
                   onFocus={() => setHoverBeat(c.uid)}
                   onBlur={() => setHoverBeat(null)}
                   onKeyDown={(e) => {
@@ -684,23 +700,15 @@ export function CompositionView() {
                     <div
                       className="transition-marker"
                       data-transition={c.transition}
-                      style={{
-                        background: `linear-gradient(to right, var(--beat-accent-${prev!.accent}-soft) 0%, transparent 70%)`,
-                      }}
+                      style={{ background: `linear-gradient(to right, var(--beat-accent-${prev!.accent}-soft) 0%, transparent 70%)` }}
                       aria-hidden="true"
                     />
                   )}
                   <span className="clip-segment__label">{c.beat}</span>
-                  {glyph && (
-                    <span className="clip-segment__glyph" aria-hidden="true">
-                      {glyph}
-                    </span>
-                  )}
+                  {glyph && <span className="clip-segment__glyph" aria-hidden="true">{glyph}</span>}
                 </div>
               );
             })}
-
-            {/* Scrubber / playhead — single seek authority */}
             <ScrubberPlayhead
               currentMs={playheadMs}
               totalMs={totalMs}
@@ -711,10 +719,7 @@ export function CompositionView() {
             />
           </div>
 
-          {/* Narration waveform + word strip. A real project with no narration
-              gets the empty/none treatment (states-empty parity) — never the
-              mock waveform/words over real cells. Real peaks arrive with
-              Project.audio_analysis (P2). */}
+          {/* Narration waveform / empty treatment */}
           {narration ? (
             <>
               <div
@@ -723,9 +728,7 @@ export function CompositionView() {
                 aria-label={`Narration waveform — ${narration.audio.uri}`}
                 style={{ ['--bar-count' as string]: String(WAVEFORM_BAR_COUNT) }}
               >
-                <span className="waveform-strip__label" aria-hidden="true">
-                  {narration.audio.uri}
-                </span>
+                <span className="waveform-strip__label" aria-hidden="true">{narration.audio.uri}</span>
                 {WAVEFORM_BARS.map((h, i) => {
                   const barStart = (i / WAVEFORM_BAR_COUNT) * totalMs;
                   const played = barStart < playheadMs;
@@ -742,7 +745,6 @@ export function CompositionView() {
                 })}
                 <PlayheadEcho leftPct={playheadPct} />
               </div>
-
               <div className="word-strip" aria-hidden="true">
                 {narration.words.map((w) => {
                   const isActive = activeWord?.word === w.word && activeWord?.start_ms === w.start_ms;
@@ -750,9 +752,7 @@ export function CompositionView() {
                   return (
                     <span
                       key={`${w.word}-${w.start_ms}`}
-                      className={
-                        'word-strip-word' + (isActive ? ' is-active' : isPast ? ' is-past' : '')
-                      }
+                      className={'word-strip-word' + (isActive ? ' is-active' : isPast ? ' is-past' : '')}
                     >
                       {w.word}
                     </span>
@@ -766,14 +766,131 @@ export function CompositionView() {
               role="img"
               aria-label="No narration yet — waveform appears after narration is generated"
             >
-              <span className="waveform-empty-note">
-                no narration · waveform appears once narration is generated
-              </span>
+              <span className="waveform-empty-note">no narration · generate it to see the waveform</span>
               <PlayheadEcho leftPct={playheadPct} />
             </div>
           )}
         </div>
+
+        {/* Rail cards */}
+        <div className="comp-rail">
+          {/* Active cell inspector */}
+          <div className="comp-card">
+            <header className="comp-card__head"><span className="kicker">Active cell</span></header>
+            <div className="comp-card__body">
+              {activeClip ? (
+                <>
+                  <div className="comp-insp-title">
+                    <span className="comp-swatch" data-accent={activeClip.accent} aria-hidden="true" />
+                    <h3>{activeClip.beat}</h3>
+                  </div>
+                  <dl className="comp-kv">
+                    <dt>In / Out</dt>
+                    <dd>{fmtClock(activeClip.start_ms)} – {fmtClock(activeClip.start_ms + activeClip.duration_ms)}</dd>
+                    <dt>Duration</dt>
+                    <dd>{fmtSeconds(activeClip.duration_ms)}</dd>
+                    <dt>Fidelity</dt>
+                    <dd>
+                      {fidelityLabel(activeRung ?? meta.rung)}
+                      {(activeRecord?.status ?? activeClip.status) === 'done' ? ' · rendered' : ''}
+                    </dd>
+                    <dt>Engine</dt>
+                    <dd>HyperFrames</dd>
+                  </dl>
+                </>
+              ) : (
+                <p className="comp-dim">Scrub the timeline to inspect a cell.</p>
+              )}
+            </div>
+          </div>
+
+          {/* Audio bed */}
+          <div className="comp-card">
+            <header className="comp-card__head"><span className="kicker">Audio bed</span></header>
+            <div className="comp-card__body">
+              <div className="comp-fieldrow">
+                <label htmlFor="comp-music">Music</label>
+                <select
+                  id="comp-music"
+                  className="input comp-input"
+                  aria-label="Music preset"
+                  value={musicPreset}
+                  onChange={(e) => setMusicPreset(e.target.value)}
+                >
+                  {MUSIC_PRESETS.map((p) => (
+                    <option key={p.value} value={p.value}>{p.label}</option>
+                  ))}
+                </select>
+              </div>
+
+              {showSilentNotice && (
+                <div className="comp-notice" role="status">
+                  <span aria-hidden="true">⚠</span>
+                  <span>
+                    <b>No track on disk.</b> This preset has no audio file yet — the export
+                    will be video-only (silent) until one is added.
+                  </span>
+                </div>
+              )}
+
+              {!narration && (
+                <div className="comp-narr-empty">
+                  <span className="comp-dim">No narration yet — the waveform appears once it’s generated.</span>
+                  <details className="comp-narr-how">
+                    <summary>How do I add narration?</summary>
+                    Ask your Chi in the chat dock to generate narration for this project — it
+                    writes the narration track and word timings the waveform reads.
+                  </details>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Export */}
+          <ExportCard
+            state={exportState}
+            exportPath={exportPath}
+            wasSilent={exportSilent}
+            errorMessage={exportError}
+            metaLine={`${meta.resolution.w}×${meta.resolution.h} · ${fmtSeconds(totalMs)} · H.264`}
+            composedAvailable={Boolean(exportId)}
+            onExportClick={() => setPreflightOpen(true)}
+            onCancel={cancelExport}
+            onExportAgain={() => setExportState('idle')}
+            onRetry={() => void runExport()}
+            onPlayComposed={() => setComposedMode(true)}
+          />
+        </div>
+
+        {/* Render records truth surface (C-C) */}
+        <RecordsPanel
+          clips={clips}
+          recordByUid={recByUid}
+          lastSyncedAt={hasRealCells ? lastSyncedAt : null}
+          fps={FPS}
+          refreshing={refreshing}
+          onRefresh={onRefreshRecords}
+        />
       </div>
+
+      {/* Export pre-flight dialog (C-B) */}
+      <ExportPreflightDialog
+        open={preflightOpen}
+        spec={{
+          format: 'MP4 · H.264',
+          resolution: `${meta.resolution.w} × ${meta.resolution.h}`,
+          duration: `${fmtSeconds(totalMs)} · ${FPS} fps`,
+          coverage: `${renderedCount} of ${clips.length} rendered`,
+          fullyRendered,
+        }}
+        presetLabel={presetLabel}
+        willBeSilent={showSilentNotice}
+        onCancel={() => setPreflightOpen(false)}
+        onConfirm={() => {
+          setPreflightOpen(false);
+          void runExport();
+        }}
+      />
     </div>
   );
 }

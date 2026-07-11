@@ -170,6 +170,24 @@ export const compositionApi = {
     c.callTool<{ valid: boolean; diagnostics: Array<{ severity: 'error' | 'warn'; message: string }> }>('composition.validate', args),
 };
 
+/** Bytes-over-bridge preview payload (render/export → base64 → blob:). The
+ *  `base64` may be empty in mock/standalone mode (no real mp4 on disk) — the
+ *  caller falls back to the poster/status preview when so. */
+export interface MediaBytes {
+  base64: string;
+  mime: string;
+  sizeBytes: number;
+  path: string;
+}
+
+/** Pre-flight audio-bed check (F7 silent-bed honesty). */
+export interface BedCheck {
+  has_bed: boolean;
+  will_be_silent: boolean;
+  by_design: boolean;
+  path?: string;
+}
+
 export const renderApi = {
   list_engines: (c: McpClient) =>
     c.callTool<{ engines: EngineCapability[] }>('render.list_engines'),
@@ -179,6 +197,8 @@ export const renderApi = {
     c.callTool<{ cancelled: boolean }>('render.cancel', { record_id }),
   list:         (c: McpClient, args?: { cell_uid?: string; status?: string }) =>
     c.callTool<{ records: RenderRecord[] }>('render.list', args ?? {}),
+  read_bytes:   (c: McpClient, record_id: string) =>
+    c.callTool<MediaBytes>('render.read_bytes', { record_id }),
 };
 
 export const blockApi = {
@@ -208,4 +228,8 @@ export const exportApi = {
     c.callTool<ExportRecord>('export.status', { export_id }),
   list:    (c: McpClient) =>
     c.callTool<{ exports: ExportRecord[] }>('export.list'),
+  read_bytes: (c: McpClient, export_id: string) =>
+    c.callTool<MediaBytes>('export.read_bytes', { export_id }),
+  check_bed:  (c: McpClient, args: { project_id: string; music_preset?: string }) =>
+    c.callTool<BedCheck>('export.check_bed', args),
 };

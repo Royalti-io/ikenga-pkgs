@@ -82,5 +82,36 @@ export function exportTools(sidecar: SidecarClient): ToolDef[] {
       },
       handler: (args) => callSidecar(sidecar, 'export.list', { projectId: args.projectId }),
     },
+    {
+      name: 'export.read_bytes',
+      description:
+        "Read a finished export's MP4 off disk, base64-encoded, for in-pane composed playback as a blob: URL. Returns { ok:true, base64, mime, sizeBytes, path }. Keyed on the export id.",
+      inputSchema: {
+        type: 'object',
+        properties: { exportId: { type: 'string' } },
+        required: ['exportId'],
+        additionalProperties: false,
+      },
+      handler: (args) => callSidecar(sidecar, 'export.read_bytes', { exportId: args.exportId }),
+    },
+    {
+      name: 'export.check_bed',
+      description:
+        'Pre-flight audio-bed check: does a real music-bed file exist on disk for the chosen preset? Returns { ok:true, hasBed, willBeSilent, byDesign, path? }. none/silent are silent by design; ambient/upbeat need assets/music/<preset>.mp3.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          projectId: { type: 'string' },
+          music_preset: { type: 'string', enum: ['none', 'silent', 'ambient', 'upbeat'] },
+        },
+        required: ['projectId'],
+        additionalProperties: false,
+      },
+      handler: (args) =>
+        callSidecar(sidecar, 'export.check_bed', {
+          projectId: args.projectId,
+          music_preset: args.music_preset,
+        }),
+    },
   ];
 }

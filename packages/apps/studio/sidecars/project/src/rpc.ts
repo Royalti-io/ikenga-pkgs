@@ -149,9 +149,12 @@ const EXTENDED_METHODS = new Set<string>([
   'render.cancel',
   'render.list',
   'render.list_engines',
+  'render.read_bytes',
   'export.compose',
   'export.status',
   'export.list',
+  'export.read_bytes',
+  'export.check_bed',
 ]);
 
 export function startRpcLoop(handlers: RpcHandlers): { close(): void } {
