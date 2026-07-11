@@ -21,6 +21,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { homedir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -131,6 +132,12 @@ function readProjectFromDisk(projectRoot: string): Project {
 }
 
 function ensureAbsolute(p: string): string {
+  // Expand a leading `~` to the home dir. UI callers (the iframe) have no
+  // access to $HOME and can only emit `~/…` paths — e.g. the launcher's
+  // `~/Projects/<name>` — so the sidecar, which does run in node, resolves it.
+  if (p === '~' || p.startsWith('~/')) {
+    return join(homedir(), p.slice(1));
+  }
   return isAbsolute(p) ? p : resolve(process.cwd(), p);
 }
 
