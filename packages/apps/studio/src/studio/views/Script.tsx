@@ -13,35 +13,46 @@
 // scrub) gets an amber left accent, matching script.md's "Script follows
 // composition scrub" contract.
 //
-// What's NOT real yet (commit 12 — cross-link + real MCP):
-// - `project.script` is read from __mocks__/script.ts, not storyboard.json.
-// - No live subscription to `cells/changed` — the list is static per mount.
-// - Read-only in P1: VO/action edits go via chat / MCP `storyboard.write_cell`
-//   (script.md §"Don't build a custom VO text editor in P1").
+// Real-project hydration (Wave-3, closes `script-wrong-project-shown`):
+// when a real project is open the rows come from the SAME source of truth the
+// Composition timeline model uses — `storyboard-store.projectDoc.script.beats`
+// + the hydrated cells (via `buildScriptModel`), NOT __mocks__/script.ts. The
+// mock is kept ONLY for standalone/mock mode (`hasRealCells === false`), matching
+// every other data-driven view post-Wave-1/2. Row clicks publish the REAL cell
+// uid (resolved beat_id → uid in the model) so Canvas selects the right cell.
+//
+// Still deferred (no seam):
+// - VO/action editing is read-only — writes go via chat / MCP
+//   `storyboard.write_cell` (there is no in-pane script-write seam in P1;
+//   Wave-3/4 scope alongside Cell save). Surfaced as an inline read-only hint.
+// - Fountain-mode CONTENT for a real narrative project reads
+//   `<project>/script.fountain`, which is not exposed over the MCP surface yet.
+//   The toggle now keys off the REAL archetype, but real fountain text is not
+//   rendered (would be faking) — an honest note stands in until the seam lands.
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { parseFountain, type FountainScene } from '../lib/fountain';
 import { fmtClock } from '../lib/time';
-import {
-  FOUNTAIN_SAMPLE,
-  SCRIPT_BEATS,
-  SCRIPT_META,
-  type MockScriptBeat,
-} from '../__mocks__/script';
+import { buildScriptModel, mockScriptRows, type ScriptRowModel } from '../lib/script-model';
+import { FOUNTAIN_SAMPLE, SCRIPT_BEATS, SCRIPT_META } from '../__mocks__/script';
 import {
   selectCellUid,
   selectPlayheadMs,
   useSharedStore,
 } from '../shared-state';
+import {
+  useStoryboardStore,
+  selectHasRealCells,
+  selectHydratedCells,
+  selectHydratedProject,
+} from '../storyboard-store';
 import { EmptyState } from '../components/EmptyState';
 
 type ScriptMode = 'script' | 'fountain';
 
-function beatAtMs(ms: number): MockScriptBeat | null {
-  return (
-    SCRIPT_BEATS.find((b) => ms >= b.start_ms && ms < b.start_ms + b.duration_ms) ?? null
-  );
+function beatAtMs(rows: ScriptRowModel[], ms: number): ScriptRowModel | null {
+  return rows.find((b) => ms >= b.start_ms && ms < b.start_ms + b.duration_ms) ?? null;
 }
 
 // ─── Chip helpers (beat-accent tokens — §5, no raw hex) ──────────────────
@@ -84,7 +95,7 @@ function ScriptRow({
   onHover,
   onHoverEnd,
 }: {
-  beat: MockScriptBeat;
+  beat: ScriptRowModel;
   isSelected: boolean;
   isActive: boolean;
   onFocus: () => void;
@@ -100,7 +111,7 @@ function ScriptRow({
       role="button"
       aria-current={isActive ? 'true' : undefined}
       aria-label={
-        `${beat.uid} ${beat.beat} — ${Math.round(beat.duration_ms / 1000)}s`
+        `${beat.beatId} — ${Math.round(beat.duration_ms / 1000)}s`
         + (bodyText ? ` — ${bodyText}` : '')
       }
       onMouseEnter={onHover}
@@ -124,7 +135,7 @@ function ScriptRow({
     >
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-1.5">
-          <Chip style={accentChipStyle(beat.accent)}>{beat.beat}</Chip>
+          <Chip style={accentChipStyle(beat.accent)}>{beat.beatId}</Chip>
           {beat.transition && <Chip style={accentChipStyle('violet')}>{beat.transition}</Chip>}
           {beat.sfx.slice(0, 2).map((s) => (
             <Chip key={s} ariaLabel={`SFX: ${s}`}>{s}</Chip>
@@ -197,29 +208,59 @@ export function ScriptView() {
   const setPlayheadMs = useSharedStore((s) => s.setPlayheadMs);
   const setHoverBeat = useSharedStore((s) => s.setHoverBeat);
 
+  // Real source of truth — the SAME store Canvas/Composition hydrate from.
+  const hasRealCells = useStoryboardStore(selectHasRealCells);
+  const hydratedCells = useStoryboardStore(selectHydratedCells);
+  const projectDoc = useStoryboardStore(selectHydratedProject);
+  const refetchStoryboard = useStoryboardStore((s) => s.refetch);
+
   const [mode, setMode] = useState<ScriptMode>('script');
-  const isNarrative = SCRIPT_META.archetype === 'narrative';
-  const activeBeat = beatAtMs(playheadMs);
+
+  // Re-read on mount/focus (POLL-on-demand stand-in for cells/changed — same
+  // pattern Canvas/Cell use). No-op until a real project is hydrated.
+  useEffect(() => { void refetchStoryboard(); }, [refetchStoryboard]);
+
+  const rows = useMemo(
+    () => (hasRealCells ? buildScriptModel(projectDoc?.script, hydratedCells) : mockScriptRows(SCRIPT_BEATS)),
+    [hasRealCells, projectDoc, hydratedCells],
+  );
+
+  // Header + toggle metadata off the REAL script block when hydrated, else mock.
+  const title = hasRealCells ? (projectDoc?.script?.title ?? projectDoc?.title ?? 'script') : SCRIPT_META.title;
+  const archetype = hasRealCells ? (projectDoc?.script?.archetype ?? projectDoc?.archetype_id ?? '') : SCRIPT_META.archetype;
+  const isNarrative = archetype === 'narrative';
+
+  const activeBeat = beatAtMs(rows, playheadMs);
 
   const scenes = useMemo(() => parseFountain(FOUNTAIN_SAMPLE), []);
 
-  if (SCRIPT_BEATS.length === 0) {
+  if (rows.length === 0) {
     return (
       <EmptyState
         glyph="✍"
         title="No script yet"
-        hint="ask the agent to write a beat list"
-      />
+        hint="the beat list is written for you, not by hand"
+      >
+        <p className="mt-1 max-w-xs text-[11px] leading-relaxed text-fg-faint">
+          Ask your Chi in the chat dock to draft the script — try{' '}
+          <span className="font-mono text-fg-muted">"storyboard a 30s explainer"</span>.
+          It writes the beats straight into this project.
+        </p>
+      </EmptyState>
     );
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-base text-fg">
       <div className="flex items-center justify-between gap-2 border-b border-soft bg-sunken px-3 py-1.5 text-[11px]">
-        <div className="flex items-center gap-2 text-fg-muted">
-          <span className="font-mono">{SCRIPT_META.title}</span>
-          <span className="text-fg-faint">·</span>
-          <span className="font-mono text-fg-faint">{SCRIPT_META.archetype}</span>
+        <div className="flex min-w-0 items-center gap-2 text-fg-muted">
+          <span className="truncate font-mono">{title}</span>
+          {archetype && (
+            <>
+              <span className="text-fg-faint">·</span>
+              <span className="font-mono text-fg-faint">{archetype}</span>
+            </>
+          )}
         </div>
         {isNarrative && (
           <div className="seg" role="tablist" aria-label="Script mode">
@@ -245,26 +286,44 @@ export function ScriptView() {
         )}
       </div>
 
+      {/* Read-only intent (closes the "why can't I type here" gap): edits round-
+          trip through chat / MCP storyboard.write_cell, not inline typing. */}
+      <div className="border-b border-soft bg-base px-3 py-1 font-mono text-[10px] uppercase tracking-wider text-fg-faint">
+        read-only · ask your Chi in chat to rewrite a beat
+      </div>
+
       <div className="min-h-0 flex-1 overflow-auto">
         {mode === 'fountain' && isNarrative ? (
-          <div className="space-y-3 p-3">
-            {scenes.map((scene) => (
-              <FountainSceneCard key={scene.id} scene={scene} />
-            ))}
-          </div>
+          hasRealCells ? (
+            // Real narrative: script.fountain has no MCP read seam yet — show an
+            // honest deferral instead of the mock screenplay (would be faking).
+            <div className="p-3">
+              <p className="max-w-md text-[11px] leading-relaxed text-fg-muted">
+                Fountain preview reads{' '}
+                <span className="font-mono text-fg-faint">{'<project>/script.fountain'}</span>{' '}
+                directly — not yet wired into this pane. The parsed beats are on the Script tab.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-3 p-3">
+              {scenes.map((scene) => (
+                <FountainSceneCard key={scene.id} scene={scene} />
+              ))}
+            </div>
+          )
         ) : (
           <ul role="list" className="divide-y divide-[var(--border-soft)]">
-            {SCRIPT_BEATS.map((beat) => (
-              <li key={beat.uid} role="listitem">
+            {rows.map((beat) => (
+              <li key={beat.beatId} role="listitem">
                 <ScriptRow
                   beat={beat}
-                  isSelected={beat.uid === cellUid}
-                  isActive={beat.uid === activeBeat?.uid}
+                  isSelected={beat.cellUid != null && beat.cellUid === cellUid}
+                  isActive={beat.beatId === activeBeat?.beatId}
                   onFocus={() => {
-                    setCellUid(beat.uid);
+                    if (beat.cellUid) setCellUid(beat.cellUid);
                     setPlayheadMs(beat.start_ms);
                   }}
-                  onHover={() => setHoverBeat(beat.uid)}
+                  onHover={() => { if (beat.cellUid) setHoverBeat(beat.cellUid); }}
                   onHoverEnd={() => setHoverBeat(null)}
                 />
               </li>
