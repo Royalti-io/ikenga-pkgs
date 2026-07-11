@@ -72,9 +72,12 @@ export async function getMcpClient(): Promise<McpClient> {
     return _client;
   }
 
-  // Wave 3 (post-WP-06): probe for the real server and route callTool through
-  // bridge.app.callServerTool. Not wired in P1.
-  throw new Error('[studio] real MCP client not wired (WP-06 / Wave 3)');
+  // Wave 3: route every callTool through the pkg's real MCP server via the
+  // shell bridge (bridge.callPkgTool → pkg_mcp_call → mcp/dist/index.js) and
+  // reshape responses to the UI types. See real-mcp.ts.
+  const { createRealMcpClient } = await import('./real-mcp.js');
+  _client = createRealMcpClient();
+  return _client;
 }
 
 /** TEST/DEV ONLY. Drops the cached client so the next getMcpClient() call

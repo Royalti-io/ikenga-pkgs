@@ -18,7 +18,7 @@ import { useEffect, useState } from 'react';
 import { archetypeApi, projectApi, getMcpClient } from '../mcp-client';
 import { openFolder } from '../bridge';
 import { useProjectStore } from '../project-store';
-import { ARCHETYPE_PRESENTATION, RECENT, type RecentProject } from '../__mocks__/launcher';
+import { presentationFor, RECENT, type RecentProject } from '../__mocks__/launcher';
 import type { AspectRatio, Archetype } from '../mcp-types';
 
 // ─── Inline icons (lucide subset — no icon dependency) ──────────────────
@@ -79,8 +79,10 @@ function ArchetypeCard({
   selected: boolean;
   onPick: () => void;
 }) {
-  const pres = ARCHETYPE_PRESENTATION[archetype.id];
-  if (!pres) return null;
+  // Every archetype gets a card — presentationFor() falls back to a generic
+  // decoration for ids the map doesn't enumerate (real catalog ids), so a
+  // real `ai_short` / `music_video` never silently drops out of the gallery.
+  const pres = presentationFor(archetype.id);
   return (
     <button
       type="button"
@@ -124,10 +126,10 @@ function CreatePanel({
   onClose: () => void;
   onCreate: (name: string, aspect: AspectRatio) => void;
 }) {
-  const pres = ARCHETYPE_PRESENTATION[archetype.id];
+  const pres = presentationFor(archetype.id);
   const [name, setName] = useState('');
   const [aspect, setAspect] = useState<AspectRatio>('16:9');
-  const placeholder = archetype.id === 'musicvideo' ? 'label-anthem' : archetype.id === 'product' ? 'q2-launch' : `my-${archetype.id}`;
+  const placeholder = archetype.id.includes('music') ? 'label-anthem' : archetype.id === 'product' ? 'q2-launch' : `my-${archetype.id.replace(/_/g, '-')}`;
 
   return (
     <div className="sticky top-4 flex flex-col gap-4 rounded-xl border border-soft bg-surface p-4">
@@ -298,7 +300,7 @@ export function LauncherView() {
             </div>
             <div className="divide-y divide-[var(--border-soft)] overflow-hidden rounded-xl border border-soft">
               {RECENT.map((r) => {
-                const pres = ARCHETYPE_PRESENTATION[r.archetype_id];
+                const pres = presentationFor(r.archetype_id);
                 return (
                   <button
                     key={r.slug}
@@ -312,7 +314,7 @@ export function LauncherView() {
                     <div className="min-w-0 flex-1">
                       <div className="truncate font-mono text-sm text-fg">{r.slug}</div>
                       <div className="text-[11px] text-fg-faint">
-                        {ARCHETYPE_PRESENTATION[r.archetype_id] ? r.archetype_id : r.archetype_id} · {r.cells} cells · {r.aspect}
+                        {r.archetype_id} · {r.cells} cells · {r.aspect}
                       </div>
                     </div>
                     <span className="whitespace-nowrap text-[11px] text-fg-faint">{r.ago}</span>
