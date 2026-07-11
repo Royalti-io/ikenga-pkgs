@@ -572,6 +572,19 @@
 @media (prefers-reduced-motion: no-preference) {
   .waveform-bar { transition: background var(--motion-fast) var(--ease-calm); }
 }
+/* No-narration / empty treatment (states-empty parity): a real project with no
+ * narration block renders this in place of the bars — never mock waveform. */
+.waveform-strip.is-empty {
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+.waveform-empty-note {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: .04em;
+  color: var(--fg-faint);
+}
 
 /* ═══ Composition chrome · engine tabs + word strip ═══════════════════════ */
 .engine-tabs-row {

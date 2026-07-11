@@ -37,7 +37,6 @@ import {
   snapMsToFrame,
 } from '../lib/time';
 import {
-  clipAtMs,
   COMPOSITION_META,
   COMPOSITION_NARRATION,
   COMPOSITION_TIMELINE,
@@ -47,6 +46,11 @@ import {
   type TimelineClip,
 } from '../__mocks__/composition';
 import {
+  buildTimelineModel,
+  clipAt,
+  type TimelineModel,
+} from '../lib/composition-model';
+import {
   selectCellUid,
   selectEngineMode,
   selectHoverBeat,
@@ -54,13 +58,30 @@ import {
   useSharedStore,
 } from '../shared-state';
 import { useProjectStore, selectOpenProject } from '../project-store';
-import { useStoryboardStore, selectHydratedCells, selectHasRealCells } from '../storyboard-store';
+import {
+  useStoryboardStore,
+  selectHydratedCells,
+  selectHasRealCells,
+  selectHydratedProject,
+  selectRenderStatus,
+} from '../storyboard-store';
 import { getMcpClient, compositionApi, exportApi } from '../mcp-client';
 import { pollRenderUntilDone, pollExportUntilDone } from '../lib/render-poll';
 
 const FPS = DEFAULT_FPS;
-const TOTAL_MS = COMPOSITION_TOTAL_MS;
-const SEED_MS = 8_400; // design fixture snapshot — c02 problem active
+const SEED_MS = 8_400; // mock design-fixture snapshot — c02 problem active
+
+// The mock timeline wrapped in the real model's shape, so standalone / mock
+// mode flows through the exact same { clips, totalMs, meta, narration } seam the
+// hydrated builder produces (resume-contract: keep the mock for standalone).
+const MOCK_MODEL: TimelineModel = {
+  clips: COMPOSITION_TIMELINE,
+  totalMs: COMPOSITION_TOTAL_MS,
+  // COMPOSITION_META.aspect is a plain string literal in the mock; the model
+  // meta wants the AspectRatio union. Values are valid — narrow via the cast.
+  meta: COMPOSITION_META as TimelineModel['meta'],
+  narration: COMPOSITION_NARRATION,
+};
 
 // Project.aspect_ratio ('16:9'|'9:16'|'1:1', colon form — the schema/launcher
 // convention) → PreviewSurface's `data-aspect` attribute (dash form, per F4
@@ -97,6 +118,20 @@ export function CompositionView() {
   const project = useProjectStore(selectOpenProject);
   const hasRealCells = useStoryboardStore(selectHasRealCells);
   const hydratedCells = useStoryboardStore(selectHydratedCells);
+  const projectDoc = useStoryboardStore(selectHydratedProject);
+  const renderStatus = useStoryboardStore(selectRenderStatus);
+  const refreshRenders = useStoryboardStore((s) => s.refreshRenders);
+
+  // The whole timeline surface. Real mode builds it from the hydrated cells +
+  // storyboard.json doc + the live render-status map (the timeline shows REAL
+  // clips, not the 6 mock ones); standalone/mock falls back to MOCK_MODEL — the
+  // same seam Canvas/Cell use (selectHasRealCells). Everything below reads these
+  // locals, never the COMPOSITION_* constants directly.
+  const model = useMemo<TimelineModel>(
+    () => (hasRealCells ? buildTimelineModel(hydratedCells, projectDoc, renderStatus) : MOCK_MODEL),
+    [hasRealCells, hydratedCells, projectDoc, renderStatus],
+  );
+  const { clips, totalMs, meta, narration } = model;
 
   const [playing, setPlaying] = useState(false);
   const [loop, setLoop] = useState(false);
@@ -126,9 +161,15 @@ export function CompositionView() {
   // one behind.
   const playerRef = useRef<PlayerHandle | null>(null);
 
+  // Rebuilds when `totalMs` changes — the real total arrives asynchronously
+  // after hydration (the pane mounts against the mock total first), so the
+  // player's totalFrames must re-bind or the scrubber/loop would clamp to the
+  // stale 60s mock length. `hasRealCells` in the deps re-seeds on the mock→real
+  // flip. StrictMode's mount→unmount→mount still rebuilds a fresh, subscribed
+  // player each cycle (the original invariant holds).
   useEffect(() => {
     const player = createMockPlayer({
-      totalFrames: msToFrames(TOTAL_MS, FPS),
+      totalFrames: msToFrames(totalMs, FPS),
       fps: FPS,
     });
     playerRef.current = player;
@@ -137,9 +178,10 @@ export function CompositionView() {
       setPlayheadMs(framesToMs(frame, FPS));
     });
     const offPlay = player.onPlayStateChange(setPlaying);
-    // Seed to the design snapshot on a fresh timeline; otherwise re-sync the
-    // fresh player to wherever the shared playhead already is.
-    const startMs = useSharedStore.getState().playheadMs || SEED_MS;
+    // Real timelines seed at 0 (the mock's 8.4s design snapshot is fixture-only
+    // and must not bleed onto a real project); the mock keeps its snapshot, or
+    // re-syncs to wherever the shared playhead already is.
+    const startMs = hasRealCells ? 0 : (useSharedStore.getState().playheadMs || SEED_MS);
     player.seekTo(msToFrames(snapMsToFrame(startMs, FPS), FPS));
     return () => {
       offFrame();
@@ -148,7 +190,7 @@ export function CompositionView() {
       playerRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [totalMs, hasRealCells]);
 
   // ── Seek authority + transport handlers ─────────────────────────────────
   const seekMs = (ms: number) => {
@@ -157,7 +199,7 @@ export function CompositionView() {
     p.seekTo(msToFrames(snapMsToFrame(ms, FPS), FPS));
   };
   const onSelectMs = (ms: number) => {
-    const clip = clipAtMs(ms);
+    const clip = clipAt(clips, ms);
     if (clip) setCellUid(clip.uid);
   };
   // The scrubber overlay (.scrubber, z-index 10) sits on top of the entire
@@ -167,7 +209,7 @@ export function CompositionView() {
   // scrubber's own position-in-ms pass-through instead, using the same
   // clipAtMs lookup the click-to-select path already relies on.
   const onHoverMs = (ms: number | null) => {
-    setHoverBeat(ms !== null ? (clipAtMs(ms)?.uid ?? null) : null);
+    setHoverBeat(ms !== null ? (clipAt(clips, ms)?.uid ?? null) : null);
   };
   const playToggle = () => {
     const p = playerRef.current;
@@ -200,11 +242,12 @@ export function CompositionView() {
     setRerenderState('running');
     try {
       const client = await getMcpClient();
-      // Render every REAL cell when a project is hydrated; fall back to the mock
-      // timeline's clips in mock/standalone mode.
-      const cellUids = hasRealCells
-        ? hydratedCells.map((c) => c.uid)
-        : COMPOSITION_TIMELINE.map((c) => c.uid);
+      // Enqueue a render for every clip on the RESOLVED timeline — real cell
+      // uids in real mode, the mock clips in standalone (uids come straight off
+      // the model so this is one code path). No rung arg: the real server
+      // renders each cell at its own rung (matches Cell.tsx), the mock ignores
+      // it — so the excalidraw lo-fi cell renders alongside the hi-fi ones.
+      const cellUids = clips.map((c) => c.uid);
       // Enqueue each cell, then POLL each record to completion. This replaces
       // the old subscribe('render/done') counter — the shell can't relay those
       // events to the iframe (Round-13 Finding), so we poll render.status. A
@@ -213,13 +256,18 @@ export function CompositionView() {
         await Promise.all(
           cellUids.map((uid) =>
             compositionApi
-              .render(client, { project_id: projectId, cell_uid: uid, rung: COMPOSITION_META.rung })
+              .render(client, { project_id: projectId, cell_uid: uid })
               .then((r) => r.record_id)
               .catch(() => null),
           ),
         )
       ).filter((r): r is string => Boolean(r));
+      // Flip the clips to queued/running right away (don't wait for App's 2.5s
+      // poll), then keep polling each record for the button lifecycle. A final
+      // refresh settles the clips to ✓ done the instant the batch resolves.
+      void refreshRenders();
       await Promise.all(recordIds.map((rid) => pollRenderUntilDone(client, rid)));
+      void refreshRenders();
       setRerenderState('done');
       window.setTimeout(() => setRerenderState('idle'), 1600);
     } catch (err) {
@@ -236,9 +284,12 @@ export function CompositionView() {
     setExportState('running');
     try {
       const client = await getMcpClient();
+      // Real mode omits rung so the sidecar composes ALL cells in order (a rung
+      // filter would drop the excalidraw lo-fi cell and yield <3 clips); mock
+      // keeps its fixture rung.
       const { export_id, export_path } = await exportApi.compose(client, {
         project_id: projectId,
-        rung: COMPOSITION_META.rung,
+        rung: hasRealCells ? undefined : meta.rung,
         music_preset: musicPreset,
       });
       // Poll export.status to completion (mock resolves 'done' immediately; the
@@ -261,11 +312,13 @@ export function CompositionView() {
     try {
       const client = await getMcpClient();
       setCellUid(uid);
+      // Re-render the single failed cell at its own rung (no rung arg — same as
+      // rerenderAll); refresh so the clip flips back to running immediately.
       await compositionApi.render(client, {
         project_id: projectId,
         cell_uid: uid,
-        rung: COMPOSITION_META.rung,
       });
+      void refreshRenders();
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('[studio] retry render failed', err);
@@ -273,12 +326,12 @@ export function CompositionView() {
   };
 
   // ── Derived state ───────────────────────────────────────────────────────
-  const activeClip = clipAtMs(playheadMs);
-  const activeWord = COMPOSITION_NARRATION.words.find(
+  const activeClip = clipAt(clips, playheadMs);
+  const activeWord = narration?.words.find(
     (w) => playheadMs >= w.start_ms && playheadMs < w.end_ms,
   );
-  const renderedCount = COMPOSITION_TIMELINE.filter((c) => c.status === 'done').length;
-  const playheadPct = Math.min(100, Math.max(0, (playheadMs / TOTAL_MS) * 100));
+  const renderedCount = clips.filter((c) => c.status === 'done').length;
+  const playheadPct = Math.min(100, Math.max(0, (playheadMs / totalMs) * 100));
 
   // All 6 RenderStatus values (contract §6 — no 'idle', that's UI-local to
   // the Cell editor only) get a distinct clip-segment treatment; `undefined`
@@ -301,15 +354,17 @@ export function CompositionView() {
     return null;
   };
 
-  // Words that belong to the active clip's time window (for the preview).
+  // Words that belong to the active clip's time window (for the preview). Empty
+  // when the real project has no narration — the preview then falls to the beat
+  // label, never mock words over real cells.
   const previewWords = useMemo(() => {
-    if (!activeClip) return [];
-    return COMPOSITION_NARRATION.words.filter(
+    if (!activeClip || !narration) return [];
+    return narration.words.filter(
       (w) =>
         w.start_ms >= activeClip.start_ms &&
         w.end_ms <= activeClip.start_ms + activeClip.duration_ms,
     );
-  }, [activeClip]);
+  }, [activeClip, narration]);
 
   const rightSlot = (
     <>
@@ -375,7 +430,7 @@ export function CompositionView() {
   // cells have materialized on the timeline yet (pre archetype.instantiate,
   // or a freshly-created project). Matches Script.tsx's existing empty-state
   // convention for visual consistency across sub-views.
-  if (COMPOSITION_TIMELINE.length === 0) {
+  if (clips.length === 0) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 bg-base p-8 text-center">
         <span className="font-display text-sm text-fg-muted">Nothing to play yet</span>
@@ -410,12 +465,12 @@ export function CompositionView() {
       e.preventDefault();
       const dir = e.key === 'ArrowLeft' ? -1 : 1;
       const idx = activeClip
-        ? COMPOSITION_TIMELINE.findIndex((c) => c.uid === activeClip.uid)
+        ? clips.findIndex((c) => c.uid === activeClip.uid)
         : -1;
       const targetIdx =
-        idx === -1 ? (dir > 0 ? 0 : COMPOSITION_TIMELINE.length - 1) : idx + dir;
-      const clamped = Math.max(0, Math.min(COMPOSITION_TIMELINE.length - 1, targetIdx));
-      const clip = COMPOSITION_TIMELINE[clamped];
+        idx === -1 ? (dir > 0 ? 0 : clips.length - 1) : idx + dir;
+      const clamped = Math.max(0, Math.min(clips.length - 1, targetIdx));
+      const clip = clips[clamped];
       if (clip) seekMs(clip.start_ms);
     }
   };
@@ -458,8 +513,8 @@ export function CompositionView() {
               letterSpacing: '.04em',
             }}
           >
-            {COMPOSITION_META.name} · {COMPOSITION_META.aspect} · {COMPOSITION_META.resolution.w}×
-            {COMPOSITION_META.resolution.h}
+            {meta.name} · {meta.aspect} · {meta.resolution.w}×
+            {meta.resolution.h}
           </div>
         </div>
 
@@ -472,15 +527,15 @@ export function CompositionView() {
           loop={loop}
           onLoopToggle={loopToggle}
           currentMs={playheadMs}
-          totalMs={TOTAL_MS}
+          totalMs={totalMs}
           fps={FPS}
-          counterLabel={`${renderedCount}/${COMPOSITION_TIMELINE.length} cells rendered`}
+          counterLabel={`${renderedCount}/${clips.length} cells rendered`}
           rightSlot={rightSlot}
         />
 
         {/* Preview surface — frames the engine black box */}
         <PreviewSurface
-          aspect={aspectAttr(COMPOSITION_META.aspect)}
+          aspect={aspectAttr(meta.aspect)}
           safeZoneOn
           status={
             !activeClip
@@ -538,7 +593,7 @@ export function CompositionView() {
               </div>
               <div className="preview-engine-note">
                 &lt;hyperframes-player&gt; · {activeClip.uid}.content.html · HF rung{' '}
-                {COMPOSITION_META.rung}
+                {meta.rung}
               </div>
             </div>
           ) : (
@@ -582,17 +637,17 @@ export function CompositionView() {
 
         {/* Timeline section */}
         <div className="timeline-section">
-          <TimeRuler totalMs={TOTAL_MS} fps={FPS} />
+          <TimeRuler totalMs={totalMs} fps={FPS} />
 
           {/* Timeline rail — proportional clip segments + scrubber overlay */}
           <div
             className={`timeline-rail${playing ? ' is-playing' : ''}`}
-            style={{ ['--total-ms' as string]: String(TOTAL_MS) }}
+            style={{ ['--total-ms' as string]: String(totalMs) }}
             role="presentation"
           >
-            {COMPOSITION_TIMELINE.map((c, i) => {
-              const flexBasis = `${(c.duration_ms / TOTAL_MS) * 100}%`;
-              const prev = i > 0 ? COMPOSITION_TIMELINE[i - 1] : null;
+            {clips.map((c, i) => {
+              const flexBasis = `${(c.duration_ms / totalMs) * 100}%`;
+              const prev = i > 0 ? clips[i - 1] : null;
               const showMarker = c.transition && c.transition !== 'cut' && prev;
               const selected =
                 c.uid === cellUid || c.uid === activeClip?.uid ? ' is-selected' : '';
@@ -648,7 +703,7 @@ export function CompositionView() {
             {/* Scrubber / playhead — single seek authority */}
             <ScrubberPlayhead
               currentMs={playheadMs}
-              totalMs={TOTAL_MS}
+              totalMs={totalMs}
               fps={FPS}
               onSeekMs={seekMs}
               onSelectMs={onSelectMs}
@@ -656,52 +711,67 @@ export function CompositionView() {
             />
           </div>
 
-          {/* Narration waveform + playhead echo */}
-          <div
-            className={`waveform-strip${playing ? ' is-playing' : ''}`}
-            role="img"
-            aria-label={`Narration waveform — ${COMPOSITION_NARRATION.audio.uri}`}
-            style={{ ['--bar-count' as string]: String(WAVEFORM_BAR_COUNT) }}
-          >
-            <span className="waveform-strip__label" aria-hidden="true">
-              {COMPOSITION_NARRATION.audio.uri}
-            </span>
-            {WAVEFORM_BARS.map((h, i) => {
-              const barMid = ((i + 0.5) / WAVEFORM_BAR_COUNT) * TOTAL_MS;
-              const barStart = (i / WAVEFORM_BAR_COUNT) * TOTAL_MS;
-              const played = barStart < playheadMs;
-              const active =
-                playheadMs >= (i / WAVEFORM_BAR_COUNT) * TOTAL_MS &&
-                playheadMs < ((i + 1) / WAVEFORM_BAR_COUNT) * TOTAL_MS;
-              void barMid;
-              return (
-                <div
-                  key={i}
-                  className={`waveform-bar${active ? ' is-active' : played ? ' is-played' : ''}`}
-                  style={{ ['--bar-h' as string]: `${h}%` }}
-                />
-              );
-            })}
-            <PlayheadEcho leftPct={playheadPct} />
-          </div>
-
-          {/* Word strip */}
-          <div className="word-strip" aria-hidden="true">
-            {COMPOSITION_NARRATION.words.map((w) => {
-              const isActive = activeWord?.word === w.word && activeWord?.start_ms === w.start_ms;
-              const isPast = playheadMs >= w.end_ms;
-              return (
-                <span
-                  key={`${w.word}-${w.start_ms}`}
-                  className={
-                    'word-strip-word' + (isActive ? ' is-active' : isPast ? ' is-past' : '')
-                  }
-                >
-                  {w.word}
+          {/* Narration waveform + word strip. A real project with no narration
+              gets the empty/none treatment (states-empty parity) — never the
+              mock waveform/words over real cells. Real peaks arrive with
+              Project.audio_analysis (P2). */}
+          {narration ? (
+            <>
+              <div
+                className={`waveform-strip${playing ? ' is-playing' : ''}`}
+                role="img"
+                aria-label={`Narration waveform — ${narration.audio.uri}`}
+                style={{ ['--bar-count' as string]: String(WAVEFORM_BAR_COUNT) }}
+              >
+                <span className="waveform-strip__label" aria-hidden="true">
+                  {narration.audio.uri}
                 </span>
-              );
-            })}
-          </div>
+                {WAVEFORM_BARS.map((h, i) => {
+                  const barStart = (i / WAVEFORM_BAR_COUNT) * totalMs;
+                  const played = barStart < playheadMs;
+                  const active =
+                    playheadMs >= (i / WAVEFORM_BAR_COUNT) * totalMs &&
+                    playheadMs < ((i + 1) / WAVEFORM_BAR_COUNT) * totalMs;
+                  return (
+                    <div
+                      key={i}
+                      className={`waveform-bar${active ? ' is-active' : played ? ' is-played' : ''}`}
+                      style={{ ['--bar-h' as string]: `${h}%` }}
+                    />
+                  );
+                })}
+                <PlayheadEcho leftPct={playheadPct} />
+              </div>
+
+              <div className="word-strip" aria-hidden="true">
+                {narration.words.map((w) => {
+                  const isActive = activeWord?.word === w.word && activeWord?.start_ms === w.start_ms;
+                  const isPast = playheadMs >= w.end_ms;
+                  return (
+                    <span
+                      key={`${w.word}-${w.start_ms}`}
+                      className={
+                        'word-strip-word' + (isActive ? ' is-active' : isPast ? ' is-past' : '')
+                      }
+                    >
+                      {w.word}
+                    </span>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <div
+              className="waveform-strip is-empty"
+              role="img"
+              aria-label="No narration yet — waveform appears after narration is generated"
+            >
+              <span className="waveform-empty-note">
+                no narration · waveform appears once narration is generated
+              </span>
+              <PlayheadEcho leftPct={playheadPct} />
+            </div>
+          )}
         </div>
       </div>
     </div>
