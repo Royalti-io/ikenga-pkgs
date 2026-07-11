@@ -19,6 +19,7 @@ import { useStoryboardStore } from './storyboard-store';
 import { useRenderPoll } from './lib/use-render-poll';
 import type { PaneIndex, ViewComponentRegistry } from './routes';
 import { LayoutSwitcher } from './components/LayoutSwitcher';
+import { Split } from './components/Split';
 import { ViewSwitcher } from './components/ViewSwitcher';
 import { PanePlaceholder } from './components/PanePlaceholder';
 import { CanvasView } from './views/Canvas';
@@ -82,6 +83,9 @@ function Pane({ index }: { index: PaneIndex }) {
 
 function PaneRegion() {
   const layout = useLayoutStore((s) => s.layout);
+  const ratios = useLayoutStore((s) => s.ratios);
+  const setRatio = useLayoutStore((s) => s.setRatio);
+  const resetRatio = useLayoutStore((s) => s.resetRatio);
 
   if (layout === 'single') {
     return (
@@ -93,30 +97,60 @@ function PaneRegion() {
 
   if (layout === 'vsplit') {
     return (
-      <div className="flex min-h-0 flex-1 gap-1.5 p-1.5">
-        <Pane index={0} />
-        <Pane index={1} />
+      <div className="min-h-0 flex-1 p-1.5">
+        <Split
+          axis="x"
+          label="Resize left/right panes"
+          ratio={ratios.vsplit[0]}
+          onRatio={(v) => setRatio('vsplit', 0, v)}
+          onReset={() => resetRatio('vsplit', 0)}
+          first={<Pane index={0} />}
+          second={<Pane index={1} />}
+        />
       </div>
     );
   }
 
   if (layout === 'hsplit') {
     return (
-      <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-1.5">
-        <Pane index={0} />
-        <Pane index={1} />
+      <div className="min-h-0 flex-1 p-1.5">
+        <Split
+          axis="y"
+          label="Resize top/bottom panes"
+          ratio={ratios.hsplit[0]}
+          onRatio={(v) => setRatio('hsplit', 0, v)}
+          onReset={() => resetRatio('hsplit', 0)}
+          first={<Pane index={0} />}
+          second={<Pane index={1} />}
+        />
       </div>
     );
   }
 
   // tripane: two on top, one full-width below — matches the design glyph.
+  // Outer split (axis y, divider index 1) sizes the top row vs pane 3; the
+  // inner split (axis x, divider index 0) sizes pane 1 vs pane 2 within the row.
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-1.5">
-      <div className="flex min-h-0 flex-1 gap-1.5">
-        <Pane index={0} />
-        <Pane index={1} />
-      </div>
-      <Pane index={2} />
+    <div className="min-h-0 flex-1 p-1.5">
+      <Split
+        axis="y"
+        label="Resize top row and bottom pane"
+        ratio={ratios.tripane[1]}
+        onRatio={(v) => setRatio('tripane', 1, v)}
+        onReset={() => resetRatio('tripane', 1)}
+        first={
+          <Split
+            axis="x"
+            label="Resize top-left and top-right panes"
+            ratio={ratios.tripane[0]}
+            onRatio={(v) => setRatio('tripane', 0, v)}
+            onReset={() => resetRatio('tripane', 0)}
+            first={<Pane index={0} />}
+            second={<Pane index={1} />}
+          />
+        }
+        second={<Pane index={2} />}
+      />
     </div>
   );
 }

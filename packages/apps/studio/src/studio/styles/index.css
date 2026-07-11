@@ -248,3 +248,73 @@ html, body, #root {
     border-color: var(--border-soft);
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * Draggable pane dividers (components/Split.tsx).
+ *
+ * The divider element fills the 8px GUTTER grid track (the hit target); the
+ * visible line is a 1px ::before hairline centered inside it. Hover / active
+ * thickens the hairline to 2px and warms it to --border-strong. Cursor is
+ * col-resize (axis x) / row-resize (axis y). Token-only colours; the
+ * focus-visible ring uses --info to match the pane focus ring.
+ *
+ * `.pane-drag-overlay` is mounted only while dragging: a fixed full-viewport
+ * layer that keeps the resize cursor global and stops pane content (or any
+ * nested iframe) from eating the pointer or flashing hover states mid-drag.
+ * ------------------------------------------------------------------------- */
+
+.pane-divider {
+  position: relative;
+  align-self: stretch;
+  justify-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  z-index: 5;
+  touch-action: none;
+}
+.pane-divider[data-axis='x'] { cursor: col-resize; }
+.pane-divider[data-axis='y'] { cursor: row-resize; }
+
+.pane-divider::before {
+  content: '';
+  display: block;
+  background: var(--border-soft);
+  border-radius: 1px;
+  transition: background var(--motion-fast, 120ms) var(--ease-calm, ease),
+    width var(--motion-fast, 120ms) var(--ease-calm, ease),
+    height var(--motion-fast, 120ms) var(--ease-calm, ease);
+}
+.pane-divider[data-axis='x']::before { width: 1px; height: 100%; }
+.pane-divider[data-axis='y']::before { width: 100%; height: 1px; }
+
+.pane-divider:hover::before,
+.pane-divider[data-dragging]::before {
+  background: var(--border-strong, var(--border));
+}
+.pane-divider[data-axis='x']:hover::before,
+.pane-divider[data-axis='x'][data-dragging]::before { width: 2px; }
+.pane-divider[data-axis='y']:hover::before,
+.pane-divider[data-axis='y'][data-dragging]::before { height: 2px; }
+
+.pane-divider:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: -2px;
+  border-radius: 2px;
+}
+
+.pane-drag-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  user-select: none;
+}
+.pane-drag-overlay[data-axis='x'] { cursor: col-resize; }
+.pane-drag-overlay[data-axis='y'] { cursor: row-resize; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pane-divider::before { transition: none; }
+}

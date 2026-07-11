@@ -52,6 +52,39 @@ export const LAYOUTS: Record<LayoutId, LayoutMeta> = {
 
 export const LAYOUT_ORDER: LayoutId[] = [...LAYOUT_IDS];
 
+// ─── Pane-split ratios (draggable dividers) ─────────────────────────────────
+//
+// Each multi-pane preset exposes one or more draggable dividers. A ratio is the
+// fraction (0–1) of the flexible space the FIRST side of that divider takes; the
+// second side gets the remainder. Indexing per preset:
+//   vsplit  → [0]  vertical divider, pane0|pane1 width split
+//   hsplit  → [0]  horizontal divider, pane0/pane1 height split
+//   tripane → [0]  vertical divider, pane0|pane1 width split (top row)
+//             [1]  horizontal divider, top-row/pane2 height split
+// `single` has no dividers. Defaults are an even 50/50 for every divider; a
+// double-click on a divider snaps it back to these. Ratios persist per preset
+// (layout-store + layout-persistence), so switching presets restores each one's
+// last arrangement.
+
+/** Number of draggable dividers each preset exposes. */
+export const DIVIDER_COUNT: Record<LayoutId, number> = {
+  single: 0,
+  vsplit: 1,
+  hsplit: 1,
+  tripane: 2,
+};
+
+/** Default first-side fraction for each divider, per preset. */
+export const DEFAULT_RATIOS: Record<LayoutId, number[]> = {
+  single: [],
+  vsplit: [0.5],
+  hsplit: [0.5],
+  tripane: [0.5, 0.5],
+};
+
+/** Minimum pane extent (px) enforced while dragging + on keyboard clamp. */
+export const MIN_PANE_PX = 240;
+
 // ─── Per-pane assignment ───────────────────────────────────────────────────
 //
 // Each pane slot holds one ViewId. Defaults follow 10-wp07-iframe.md §"View-
