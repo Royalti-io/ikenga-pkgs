@@ -54,7 +54,7 @@ import {
   useSharedStore,
 } from '../shared-state';
 import { useProjectStore, selectOpenProject } from '../project-store';
-import { getMcpClient, compositionApi } from '../mcp-client';
+import { getMcpClient, compositionApi, exportApi } from '../mcp-client';
 
 const FPS = DEFAULT_FPS;
 const TOTAL_MS = COMPOSITION_TOTAL_MS;
@@ -102,6 +102,11 @@ export function CompositionView() {
   // are in flight (mock emits render/done per cell); flips to 'done' briefly
   // when every cell's done event has arrived, then settles back to idle.
   const [rerenderState, setRerenderState] = useState<'idle' | 'running' | 'done'>('idle');
+
+  // Export lifecycle: export.compose → export.status, with the resulting path
+  // surfaced on the button (done treatment) before settling back to idle.
+  const [exportState, setExportState] = useState<'idle' | 'running' | 'done'>('idle');
+  const [exportPath, setExportPath] = useState<string | null>(null);
 
   // Mirror of `loop` so a fresh player (StrictMode remount) inherits it.
   const loopRef = useRef(loop);
@@ -218,6 +223,31 @@ export function CompositionView() {
     }
   };
 
+  const exportComposition = async () => {
+    if (exportState === 'running') return;
+    const projectId = project?.project_id;
+    if (!projectId) return;
+    setExportState('running');
+    try {
+      const client = await getMcpClient();
+      const { export_id, export_path } = await exportApi.compose(client, {
+        project_id: projectId,
+        rung: COMPOSITION_META.rung,
+        music_preset: musicPreset,
+      });
+      // Poll status once (mock resolves 'done' immediately; the real server
+      // streams progress). Surface whichever output path we get back.
+      const rec = await exportApi.status(client, export_id);
+      setExportPath(rec.output_uri ?? export_path);
+      setExportState('done');
+      window.setTimeout(() => setExportState('idle'), 2600);
+    } catch (err) {
+      setExportState('idle');
+      // eslint-disable-next-line no-console
+      console.error('[studio] export failed', err);
+    }
+  };
+
   const retryClip = async (uid: string) => {
     const projectId = project?.project_id;
     if (!projectId) return;
@@ -306,14 +336,30 @@ export function CompositionView() {
         type="button"
         className="btn btn-sm"
         aria-label="Export composition"
-        style={{
-          background: 'var(--beat-accent-amber-soft)',
-          borderColor: 'var(--beat-accent-amber-border)',
-          color: 'var(--beat-accent-amber)',
-        }}
+        onClick={exportComposition}
+        disabled={exportState === 'running'}
+        aria-busy={exportState === 'running'}
+        title={exportPath ?? 'Export composition'}
+        style={
+          exportState === 'done'
+            ? {
+                background: 'var(--beat-accent-emerald-soft)',
+                borderColor: 'var(--beat-accent-emerald-border)',
+                color: 'var(--beat-accent-emerald)',
+              }
+            : {
+                background: 'var(--beat-accent-amber-soft)',
+                borderColor: 'var(--beat-accent-amber-border)',
+                color: 'var(--beat-accent-amber)',
+              }
+        }
       >
         <IconExport />
-        Export
+        {exportState === 'running'
+          ? 'Exporting…'
+          : exportState === 'done'
+            ? 'Exported ✓'
+            : 'Export'}
       </button>
     </>
   );
