@@ -95,8 +95,23 @@ const SAMPLE_HTML_BY_UID: Record<string, string> = {
 `,
 };
 
+// Edited-cell HTML write-back cache. In P1 the cell editor has no real disk
+// to write to, so a save-on-blur persist (Cell.tsx → storyboard.write_cell)
+// stashes the edited HTML here; getCellHtml consults it first so switching
+// cells and back shows the edit instead of silently reverting to the seed.
+// This mirrors what WP-03's sidecar will do on disk — the override map is the
+// P1 stand-in and gets deleted with the rest of these mocks when it lands.
+const HTML_OVERRIDES = new Map<string, string>();
+
+/** Record an edited cell's HTML so getCellHtml returns it on the next read. */
+export function setCellHtmlOverride(uid: string, html: string): void {
+  HTML_OVERRIDES.set(uid, html);
+}
+
 export function getCellHtml(uid: string | null): string {
   if (!uid) return FALLBACK_HTML;
+  const edited = HTML_OVERRIDES.get(uid);
+  if (edited !== undefined) return edited;
   return SAMPLE_HTML_BY_UID[uid] ?? FALLBACK_HTML.replace('$BEAT', uid);
 }
 

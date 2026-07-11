@@ -31,12 +31,14 @@ import {
   getCellByUid,
   getCellHtml,
   getNarrationExcerpt,
+  setCellHtmlOverride,
   MOCK_ANCHORS,
   type CellColor,
   type MockCell,
 } from '../__mocks__/cells';
 import { selectCellUid, useSharedStore } from '../shared-state';
 import { useProjectStore, selectOpenProject } from '../project-store';
+import { getMcpClient, storyboardApi } from '../mcp-client';
 import type { Rung, AspectRatio } from '../mcp-types';
 import { EmptyState } from '../components/EmptyState';
 import { SafeZoneBands } from '../media-controls';
@@ -150,6 +152,36 @@ export function CellView() {
   const initialHtml = useMemo(() => getCellHtml(cellUid), [cellUid]);
   const [value, setValue] = useState(initialHtml);
   useEffect(() => setValue(initialHtml), [initialHtml]);
+
+  // Last-persisted HTML for the active cell — tracks the seed on cell switch so
+  // the blur handler skips no-op writes.
+  const savedRef = useRef(initialHtml);
+  useEffect(() => { savedRef.current = initialHtml; }, [initialHtml]);
+
+  // Save-on-blur: persist the edited HTML through the storyboard.write_cell MCP
+  // seam (mock today, real sidecar in Wave 2) so edits are no longer discarded
+  // when switching cells. The override cache is the P1 stand-in for the sidecar
+  // writing content.html back to disk, so the edit round-trips in the editor.
+  const persistCell = (html: string) => {
+    if (!cellUid || html === savedRef.current) return;
+    savedRef.current = html;
+    setCellHtmlOverride(cellUid, html);
+    void (async () => {
+      try {
+        const client = await getMcpClient();
+        await storyboardApi.write_cell(client, cellUid, {
+          last_edited: new Date().toISOString(),
+        });
+      } catch (err) {
+        // P1 mock keys storyboard cells by schema uid, not the presentation
+        // uids the canvas surfaces, so a mock "not found" here is expected —
+        // the seam is what matters. Log at debug so Wave-2 real failures still
+        // surface without spamming the P1 console.
+        // eslint-disable-next-line no-console
+        console.debug('[studio] write_cell (mock) skipped', err);
+      }
+    })();
+  };
 
   const [anchorDrawerOpen, setAnchorDrawerOpen] = useState(false);
   const editorRef = useRef<CodeEditorHandle>(null);
@@ -297,6 +329,7 @@ export function CellView() {
             ref={editorRef}
             value={value}
             onChange={setValue}
+            onBlur={persistCell}
             language="html"
             ariaLabel={`Cell ${cell.uid} HTML editor`}
             className="h-full min-h-0 flex-1"
