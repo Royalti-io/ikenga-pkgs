@@ -15,8 +15,9 @@
 // - The Render button simulates the queued→running→done lifecycle locally;
 //   commit 12 swaps that to `composition.render` over the MCP mock then real
 //   MCP at Wave 2.
-// - The narration scrubber's `activeWordIdx` is static per cell; commit 12
-//   subscribes to `playheadMs` and drives the highlight via word timing.
+// - The narration scrubber's `activeWordIdx` is static per cell by default;
+//   the toolbar's Narration toggle subscribes to `playheadMs` and drives the
+//   highlight from the shared playhead (real per-word timing is Wave-2).
 // - The preview pane renders a hand-coded mock of the HF output, not an
 //   actual @hyperframes/player iframe. P2 work.
 //
@@ -39,7 +40,7 @@ import {
   type CellColor,
   type MockCell,
 } from '../__mocks__/cells';
-import { selectCellUid, useSharedStore } from '../shared-state';
+import { selectCellUid, selectPlayheadMs, useSharedStore } from '../shared-state';
 import { useProjectStore, selectOpenProject } from '../project-store';
 import { getMcpClient, storyboardApi } from '../mcp-client';
 import type { Rung, AspectRatio } from '../mcp-types';
@@ -147,10 +148,20 @@ function useRenderLifecycle(cellUid: string | null) {
 
 // ─── View ───────────────────────────────────────────────────────────────
 
+// Nominal narration window for the cell excerpt (the preview header shows a
+// 1.2s→3.2s span). Used to map the shared playhead onto the excerpt words when
+// narration-sync is on — the P1 stand-in for real per-word timing.
+const NARRATION_WINDOW_MS = 3200;
+
 export function CellView() {
   const cellUid = useSharedStore(selectCellUid);
+  const playheadMs = useSharedStore(selectPlayheadMs);
   const project = useProjectStore(selectOpenProject);
   const cell = useMemo(() => getCellByUid(cellUid), [cellUid]);
+
+  // Narration toolbar toggle: when on, the excerpt highlight follows the shared
+  // composition playhead instead of the static per-cell index.
+  const [narrationSync, setNarrationSync] = useState(false);
 
   const initialHtml = useMemo(() => getCellHtml(cellUid), [cellUid]);
   const [value, setValue] = useState(initialHtml);
@@ -213,6 +224,16 @@ export function CellView() {
   }
 
   const narration = getNarrationExcerpt(cellUid);
+  // When narration-sync is on, derive the highlighted word from the shared
+  // playhead across the nominal excerpt window; otherwise use the static index.
+  const narrationActiveIdx = (() => {
+    if (!narration) return 0;
+    if (!narrationSync) return narration.activeWordIdx;
+    const wordCount = narration.text.trim().split(/\s+/).length;
+    if (wordCount === 0) return 0;
+    const phase = ((playheadMs % NARRATION_WINDOW_MS) + NARRATION_WINDOW_MS) % NARRATION_WINDOW_MS;
+    return Math.min(wordCount - 1, Math.floor((phase / NARRATION_WINDOW_MS) * wordCount));
+  })();
   const path = cellPath(cell);
   const aspect: AspectRatio = project?.aspect_ratio ?? '16:9';
   const isPortrait = aspect === '9:16';
@@ -253,8 +274,21 @@ export function CellView() {
           </button>
           <button
             type="button"
-            className="flex items-center gap-1.5 rounded px-2 py-1 text-fg-muted hover:bg-raised hover:text-fg"
-            title="Narration (stub — wired in commit 12)"
+            onClick={() => setNarrationSync((s) => !s)}
+            disabled={!narration}
+            aria-pressed={narrationSync}
+            className={
+              'flex items-center gap-1.5 rounded px-2 py-1 '
+              + (narrationSync
+                ? 'bg-raised text-fg'
+                : 'text-fg-muted hover:bg-raised hover:text-fg')
+              + (!narration ? ' cursor-not-allowed opacity-40' : '')
+            }
+            title={
+              narration
+                ? 'Sync the narration highlight to the composition playhead'
+                : 'No narration on this cell'
+            }
           >
             <span>▸ Narration</span>
           </button>
@@ -397,7 +431,7 @@ export function CellView() {
                   const wordIdx = narration.text
                     .slice(0, narration.text.indexOf(tok) + tok.length)
                     .split(/\s+/).length - 1;
-                  const active = wordIdx === narration.activeWordIdx;
+                  const active = wordIdx === narrationActiveIdx;
                   return (
                     <span
                       key={`${i}-${tok}`}
