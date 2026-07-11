@@ -517,8 +517,9 @@ export function LauncherView() {
             )}
           </div>
 
-          {/* Rail */}
-          <aside className="flex flex-col gap-4" aria-label="Desk sidebar">
+          {/* Rail — sticky below the sticky app header (top-0 + py-2.5 ≈ 3.5rem)
+              so the desk cards stay in view while recents/gallery scroll. */}
+          <aside className="sticky top-14 flex flex-col gap-4 self-start" aria-label="Desk sidebar">
             <div className="rounded-lg border border-soft bg-surface p-4">
               <h3 className="mb-2.5 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.07em] text-fg-muted">
                 <Icon name="command" size={13} /> Jump back in
