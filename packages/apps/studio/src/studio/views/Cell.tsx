@@ -42,7 +42,14 @@ import {
 } from '../__mocks__/cells';
 import { selectCellUid, selectPlayheadMs, useSharedStore } from '../shared-state';
 import { useProjectStore, selectOpenProject } from '../project-store';
-import { getMcpClient, storyboardApi } from '../mcp-client';
+import {
+  useStoryboardStore,
+  selectHydratedCells,
+  selectHasRealCells,
+  toDisplayCell,
+} from '../storyboard-store';
+import { getMcpClient, storyboardApi, compositionApi } from '../mcp-client';
+import { pollRenderUntilDone } from '../lib/render-poll';
 import type { Rung, AspectRatio } from '../mcp-types';
 import { EmptyState } from '../components/EmptyState';
 import { SafeZoneBands } from '../media-controls';
@@ -98,30 +105,74 @@ function previewFrameStyle(aspect: AspectRatio): React.CSSProperties {
   return { width: '100%', height: '100%' };
 }
 
-// ─── Render lifecycle (local simulation) ────────────────────────────────
+// ─── Render lifecycle ───────────────────────────────────────────────────
 //
-// Wired to the toolbar's Render button until commit 12 swaps to
-// `composition.render` over the MCP. Cancels cleanly on unmount + on
-// cellUid change (so switching cells mid-render doesn't leak the timer).
+// Two paths behind one { state, progress, trigger } surface:
+//   • REAL (a real project is open) — enqueue a render via composition.render,
+//     then POLL render.status (render-poll.ts) to reflect queued→running→done
+//     live. This is the shell's real HF/excalidraw render, not a simulation.
+//     The poll is the stand-in for the render/progress events the shell can't
+//     relay to the iframe (Round-13 Finding); a future relay drops in here.
+//   • MOCK / standalone — the original local timer simulation, so the button
+//     still animates without a backend.
+// Cancels cleanly on unmount + on cellUid change (switching cells mid-render
+// aborts the poll / clears the timers).
 
 type RenderState = 'idle' | 'queued' | 'running' | 'done' | 'failed';
 
-function useRenderLifecycle(cellUid: string | null) {
+function useRenderLifecycle(
+  cellUid: string | null,
+  real: { isReal: boolean; projectId: string | null },
+) {
   const [state, setState] = useState<RenderState>('idle');
   const [progress, setProgress] = useState(0);
   const timersRef = useRef<{ kick?: ReturnType<typeof setTimeout>; tick?: ReturnType<typeof setInterval> }>({});
+  const abortRef = useRef<{ aborted: boolean }>({ aborted: false });
 
   function cancel() {
     if (timersRef.current.kick) clearTimeout(timersRef.current.kick);
     if (timersRef.current.tick) clearInterval(timersRef.current.tick);
     timersRef.current = {};
+    abortRef.current.aborted = true;
   }
 
-  function trigger() {
+  async function trigger() {
     if (state === 'queued' || state === 'running') return;
     cancel();
+    abortRef.current = { aborted: false };
     setState('queued');
     setProgress(0);
+
+    // Real render: enqueue + poll the sidecar render_queue.
+    if (real.isReal && real.projectId && cellUid) {
+      try {
+        const client = await getMcpClient();
+        const { record_id } = await compositionApi.render(client, {
+          project_id: real.projectId,
+          cell_uid: cellUid,
+        });
+        const rec = await pollRenderUntilDone(client, record_id, {
+          signal: abortRef.current,
+          onTick: (r) => {
+            if (abortRef.current.aborted) return;
+            if (r.status === 'running') { setState('running'); setProgress((p) => Math.max(p, 0.5)); }
+            else if (r.status === 'queued') { setState('queued'); }
+            else if (r.status === 'done') { setState('done'); setProgress(1); }
+            else if (r.status === 'failed' || r.status === 'cancelled') setState('failed');
+          },
+        });
+        if (abortRef.current.aborted) return;
+        if (rec?.status === 'done') { setState('done'); setProgress(1); }
+        else if (rec) setState('failed'); // failed / cancelled / poll timeout
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error('[studio] cell render failed', err);
+        setState('failed');
+      }
+      return;
+    }
+
+    // Mock / standalone: local timer simulation.
     timersRef.current.kick = setTimeout(() => setState('running'), 400);
     timersRef.current.tick = setInterval(() => {
       setProgress((p) => {
@@ -157,7 +208,20 @@ export function CellView() {
   const cellUid = useSharedStore(selectCellUid);
   const playheadMs = useSharedStore(selectPlayheadMs);
   const project = useProjectStore(selectOpenProject);
-  const cell = useMemo(() => getCellByUid(cellUid), [cellUid]);
+
+  // Selected cell: prefer the REAL hydrated cell (storyboard.read) when a real
+  // project is open, else the mock fixture. toDisplayCell maps the schema Cell
+  // onto the MockCell shape this view's chrome was written against.
+  const hasRealCells = useStoryboardStore(selectHasRealCells);
+  const hydratedCells = useStoryboardStore(selectHydratedCells);
+  const refetchStoryboard = useStoryboardStore((s) => s.refetch);
+  const cell = useMemo<MockCell | null>(() => {
+    if (hasRealCells) {
+      const c = hydratedCells.find((x) => x.uid === cellUid);
+      return c ? toDisplayCell(c) : null;
+    }
+    return getCellByUid(cellUid);
+  }, [hasRealCells, hydratedCells, cellUid]);
 
   // Narration toolbar toggle: when on, the excerpt highlight follows the shared
   // composition playhead instead of the static per-cell index.
@@ -186,13 +250,16 @@ export function CellView() {
         await storyboardApi.write_cell(client, cellUid, {
           last_edited: new Date().toISOString(),
         });
+        // Real mode: re-read so Canvas + this view reflect the persisted edit
+        // (the on-demand poll stand-in for a cells/changed event relay).
+        if (client.mode === 'real') await refetchStoryboard();
       } catch (err) {
-        // P1 mock keys storyboard cells by schema uid, not the presentation
-        // uids the canvas surfaces, so a mock "not found" here is expected —
-        // the seam is what matters. Log at debug so Wave-2 real failures still
-        // surface without spamming the P1 console.
+        // In mock mode the mock keys storyboard cells by schema uid, not the
+        // presentation uids the canvas surfaces, so a "not found" here is
+        // expected — the seam is what matters. In real mode a genuine write
+        // failure surfaces at debug rather than crashing the editor.
         // eslint-disable-next-line no-console
-        console.debug('[studio] write_cell (mock) skipped', err);
+        console.debug('[studio] write_cell skipped', err);
       }
     })();
   };
@@ -211,7 +278,7 @@ export function CellView() {
     insertAnchor(anchorId)(view);
   };
   const { state: renderState, progress: renderProgress, trigger: triggerRender } =
-    useRenderLifecycle(cellUid);
+    useRenderLifecycle(cellUid, { isReal: hasRealCells, projectId: project?.project_id ?? null });
 
   if (!cell) {
     return (

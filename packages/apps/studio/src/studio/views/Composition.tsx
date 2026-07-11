@@ -54,7 +54,9 @@ import {
   useSharedStore,
 } from '../shared-state';
 import { useProjectStore, selectOpenProject } from '../project-store';
+import { useStoryboardStore, selectHydratedCells, selectHasRealCells } from '../storyboard-store';
 import { getMcpClient, compositionApi, exportApi } from '../mcp-client';
+import { pollRenderUntilDone, pollExportUntilDone } from '../lib/render-poll';
 
 const FPS = DEFAULT_FPS;
 const TOTAL_MS = COMPOSITION_TOTAL_MS;
@@ -93,6 +95,8 @@ export function CompositionView() {
   const setEngineMode = useSharedStore((s) => s.setEngineMode);
 
   const project = useProjectStore(selectOpenProject);
+  const hasRealCells = useStoryboardStore(selectHasRealCells);
+  const hydratedCells = useStoryboardStore(selectHydratedCells);
 
   const [playing, setPlaying] = useState(false);
   const [loop, setLoop] = useState(false);
@@ -194,29 +198,31 @@ export function CompositionView() {
     const projectId = project?.project_id;
     if (!projectId) return;
     setRerenderState('running');
-    const client = await getMcpClient();
-    const clips = COMPOSITION_TIMELINE;
-    let remaining = clips.length;
-    const off = client.subscribe('render/done', () => {
-      remaining -= 1;
-      if (remaining <= 0) {
-        off();
-        setRerenderState('done');
-        window.setTimeout(() => setRerenderState('idle'), 1600);
-      }
-    });
     try {
-      await Promise.all(
-        clips.map((c) =>
-          compositionApi.render(client, {
-            project_id: projectId,
-            cell_uid: c.uid,
-            rung: COMPOSITION_META.rung,
-          }),
-        ),
-      );
+      const client = await getMcpClient();
+      // Render every REAL cell when a project is hydrated; fall back to the mock
+      // timeline's clips in mock/standalone mode.
+      const cellUids = hasRealCells
+        ? hydratedCells.map((c) => c.uid)
+        : COMPOSITION_TIMELINE.map((c) => c.uid);
+      // Enqueue each cell, then POLL each record to completion. This replaces
+      // the old subscribe('render/done') counter — the shell can't relay those
+      // events to the iframe (Round-13 Finding), so we poll render.status. A
+      // future event relay would restore the subscribe path with no other change.
+      const recordIds = (
+        await Promise.all(
+          cellUids.map((uid) =>
+            compositionApi
+              .render(client, { project_id: projectId, cell_uid: uid, rung: COMPOSITION_META.rung })
+              .then((r) => r.record_id)
+              .catch(() => null),
+          ),
+        )
+      ).filter((r): r is string => Boolean(r));
+      await Promise.all(recordIds.map((rid) => pollRenderUntilDone(client, rid)));
+      setRerenderState('done');
+      window.setTimeout(() => setRerenderState('idle'), 1600);
     } catch (err) {
-      off();
       setRerenderState('idle');
       // eslint-disable-next-line no-console
       console.error('[studio] re-render all failed', err);
@@ -235,10 +241,11 @@ export function CompositionView() {
         rung: COMPOSITION_META.rung,
         music_preset: musicPreset,
       });
-      // Poll status once (mock resolves 'done' immediately; the real server
-      // streams progress). Surface whichever output path we get back.
-      const rec = await exportApi.status(client, export_id);
-      setExportPath(rec.output_uri ?? export_path);
+      // Poll export.status to completion (mock resolves 'done' immediately; the
+      // real sidecar runs ffmpeg serially — the poll is the event stand-in).
+      // Surface whichever output path we get back.
+      const rec = await pollExportUntilDone(client, export_id);
+      setExportPath(rec?.output_uri ?? export_path);
       setExportState('done');
       window.setTimeout(() => setExportState('idle'), 2600);
     } catch (err) {

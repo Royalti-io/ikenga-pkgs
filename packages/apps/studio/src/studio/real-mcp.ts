@@ -115,6 +115,17 @@ function toArchetype(entry: Record<string, unknown>): Archetype {
   };
 }
 
+/** UI Rung ('0_beat_sheet'|'1_lofi'|'2_hifi') or a raw number → the numeric
+ *  rung (0|1|2) the sidecar's export.compose expects. undefined passes through
+ *  as "no rung filter". */
+function rungToNumber(rung: unknown): number | undefined {
+  if (typeof rung === 'number') return rung;
+  if (rung === '0_beat_sheet') return 0;
+  if (rung === '1_lofi') return 1;
+  if (rung === '2_hifi') return 2;
+  return undefined;
+}
+
 /** Derive a minimal beat rail from a project's cells (distinct beat_id in
  *  first-seen order). The real storyboard has no top-level beats[] the way the
  *  mock does; the views that need a rail can group cells themselves, but
@@ -299,9 +310,13 @@ export function createRealMcpClient(): McpClient {
       // ─── export ───────────────────────────────────────────────────────
       case 'export.compose': {
         const projectId = (args.project_id as string) ?? requireActive('export.compose').projectId;
+        // The UI passes rung as a Rung string ('2_hifi'); the real tool wants a
+        // number (0|1|2). Convert, and omit when absent so the sidecar composes
+        // all cells in beat order.
+        const rungNum = rungToNumber(args.rung);
         const body = await raw('export.compose', {
           projectId,
-          rung: args.rung,
+          ...(rungNum !== undefined ? { rung: rungNum } : {}),
           music_preset: args.music_preset,
           outputPath: args.output_path,
         });

@@ -15,6 +15,7 @@ import { useEffect } from 'react';
 
 import { useLayoutStore } from './layout-store';
 import { useProjectStore, selectIsProjectOpen, selectOpenProject } from './project-store';
+import { useStoryboardStore } from './storyboard-store';
 import type { PaneIndex, ViewComponentRegistry } from './routes';
 import { LayoutSwitcher } from './components/LayoutSwitcher';
 import { ViewSwitcher } from './components/ViewSwitcher';
@@ -141,6 +142,17 @@ export function App() {
     if (projectId) bindPersistence(projectId);
     else unbindPersistence();
   }, [openProjectSummary?.project_id, bindPersistence, unbindPersistence]);
+
+  // Storyboard hydration: read the open project's cells from disk (via
+  // storyboard.read) so Canvas/Cell render REAL cells. In mock/standalone mode
+  // this loads the mock's storyboard and the views fall back to their fixture.
+  const hydrateStoryboard = useStoryboardStore((s) => s.hydrate);
+  const clearStoryboard = useStoryboardStore((s) => s.clear);
+  useEffect(() => {
+    const projectId = openProjectSummary?.project_id;
+    if (projectId) void hydrateStoryboard(projectId);
+    else clearStoryboard();
+  }, [openProjectSummary?.project_id, hydrateStoryboard, clearStoryboard]);
 
   // The launcher pre-empts the pane layout entirely — it isn't a sub-view
   // and doesn't share the layout/view-switcher chrome (launcher.md §"Chrome
