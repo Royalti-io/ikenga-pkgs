@@ -2,9 +2,27 @@
  * Block + archetype catalog loader.
  *
  * Walks (silently — missing dirs return empty lists, NOT errors):
- *   <pkgRoot>/skills/* /blocks/** /block.json     — built-in blocks (WP-09/WP-10)
- *   <pkgRoot>/skills/archetype-* /archetype.json  — built-in archetypes (WP-09)
- *   <projectRoot>/blocks/custom/** /block.json    — project-scoped custom blocks
+ *   <skillsRoot>/* /blocks/** /block.json     — built-in blocks (WP-09/WP-10)
+ *   <skillsRoot>/archetype-* /archetype.json  — built-in archetypes (WP-09)
+ *   <projectRoot>/blocks/custom/** /block.json — project-scoped custom blocks
+ *
+ * ── Where the built-in skills live (precedence order) ──────────────────────
+ * WP-17B/WP-22 extracted the 7 archetype.json + 36 block.json OUT of the
+ * studio pkg into the standalone `@ikenga/studio-archetypes` package
+ * (packages/skills/studio-archetypes), consumed at install time via the
+ * manifest `requires: [{ name: 'studio-archetypes' }]`. So the loader can no
+ * longer assume the content sits under `<pkgRoot>/skills`. It now resolves a
+ * LIST of candidate skills roots, in this precedence (first match per id
+ * wins — de-duped by archetype_id/block_id in the loaders below):
+ *
+ *   1. <pkgRoot>/skills                         — PACKAGED / requires-materialized
+ *      case. When the pkg is installed and its `requires` bundles have been
+ *      materialized INTO the pkg dir (or in the pre-WP-17B monorepo layout),
+ *      the content lives here. A materialized copy shadows the workspace source.
+ *   2. @ikenga/studio-archetypes package skills/ — DEV / workspace case. In a
+ *      dev checkout the MCP runs from packages/apps/studio/mcp/dist and must
+ *      reach its sibling package. Resolved via (a) node module resolution then
+ *      (b) a workspace-relative walk (../../skills/studio-archetypes/skills).
  *
  * <pkgRoot> resolves to the studio package root (packages/apps/studio/) via
  * `import.meta.url` walked up from the MCP's dist/src/index.js location.
@@ -13,6 +31,7 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync, rmSync } from 'node:fs';
 import { dirname, join, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 export interface BlockEntry {
   block_id: string;
@@ -45,6 +64,43 @@ export function studioPkgRoot(): string {
   const here = dirname(fileURLToPath(import.meta.url));
   // Walk two levels up regardless (works for both src/ and dist/).
   return resolvePath(here, '..', '..');
+}
+
+/**
+ * Resolve the `@ikenga/studio-archetypes` package's `skills/` dir via node
+ * module resolution. The package.json `files` array ships `manifest.json` +
+ * `skills` and declares no `exports` map, so a deep path to a shipped file
+ * resolves against the package root. Returns null when not installed
+ * (standalone pkg with `requires` not yet materialized, etc.).
+ */
+function resolveArchetypesPkgSkills(): string | null {
+  try {
+    const req = createRequire(import.meta.url);
+    const manifest = req.resolve('@ikenga/studio-archetypes/manifest.json');
+    return join(dirname(manifest), 'skills');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The ordered list of existing directories that may hold built-in
+ * archetype/block skills. See the file header for the precedence rationale.
+ * Only existing dirs are returned; callers walk each and de-dupe by id so the
+ * earlier (higher-precedence) root shadows a later one.
+ */
+export function archetypeSkillRoots(pkgRoot: string = studioPkgRoot()): string[] {
+  const roots: string[] = [];
+  const push = (dir: string | null | undefined): void => {
+    if (dir && existsSync(dir) && !roots.includes(dir)) roots.push(dir);
+  };
+  // 1. Packaged / materialized-into-pkg (highest precedence).
+  push(join(pkgRoot, 'skills'));
+  // 2a. Node resolution of the extracted @ikenga/studio-archetypes package.
+  push(resolveArchetypesPkgSkills());
+  // 2b. Workspace-relative fallback: packages/apps/studio → packages/skills/studio-archetypes.
+  push(resolvePath(pkgRoot, '..', '..', 'skills', 'studio-archetypes', 'skills'));
+  return roots;
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -87,55 +143,62 @@ function safeParseJson(path: string): Record<string, unknown> | null {
 // ─────────────────────────────────────────────────────────────────────────
 
 export function loadBuiltinBlocks(pkgRoot: string = studioPkgRoot()): BlockEntry[] {
-  // skills/*/blocks/**/block.json
-  const skillsDir = join(pkgRoot, 'skills');
-  if (!existsSync(skillsDir)) return [];
+  // Walk skills/*/blocks/**/block.json across every resolvable skills root,
+  // in precedence order (earlier root shadows a later one for the same id).
   const entries: BlockEntry[] = [];
-  let skillNames: string[];
-  try { skillNames = readdirSync(skillsDir); } catch { return []; }
-  for (const skill of skillNames) {
-    const blocksDir = join(skillsDir, skill, 'blocks');
-    if (!existsSync(blocksDir)) continue;
-    for (const file of walkForFiles(blocksDir, 'block.json')) {
-      const body = safeParseJson(file);
-      if (!body) continue;
-      const block_id = (body.block_id ?? body.id) as string | undefined;
-      if (!block_id) continue;
-      entries.push({
-        block_id,
-        kind: body.kind as string | undefined,
-        name: body.name as string | undefined,
-        tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
-        source: 'builtin',
-        path: file,
-        body,
-      });
+  const seen = new Set<string>();
+  for (const skillsDir of archetypeSkillRoots(pkgRoot)) {
+    let skillNames: string[];
+    try { skillNames = readdirSync(skillsDir); } catch { continue; }
+    for (const skill of skillNames) {
+      const blocksDir = join(skillsDir, skill, 'blocks');
+      if (!existsSync(blocksDir)) continue;
+      for (const file of walkForFiles(blocksDir, 'block.json')) {
+        const body = safeParseJson(file);
+        if (!body) continue;
+        const block_id = (body.block_id ?? body.id) as string | undefined;
+        if (!block_id || seen.has(block_id)) continue;
+        seen.add(block_id);
+        entries.push({
+          block_id,
+          kind: body.kind as string | undefined,
+          name: body.name as string | undefined,
+          tags: Array.isArray(body.tags) ? (body.tags as string[]) : undefined,
+          source: 'builtin',
+          path: file,
+          body,
+        });
+      }
     }
   }
   return entries;
 }
 
 export function loadBuiltinArchetypes(pkgRoot: string = studioPkgRoot()): ArchetypeEntry[] {
-  const skillsDir = join(pkgRoot, 'skills');
-  if (!existsSync(skillsDir)) return [];
+  // Walk skills/archetype-*/archetype.json across every resolvable skills
+  // root, in precedence order (earlier root shadows a later one per id).
   const entries: ArchetypeEntry[] = [];
-  let skillNames: string[];
-  try { skillNames = readdirSync(skillsDir); } catch { return []; }
-  for (const skill of skillNames) {
-    if (!skill.startsWith('archetype-')) continue;
-    const file = join(skillsDir, skill, 'archetype.json');
-    if (!existsSync(file)) continue;
-    const body = safeParseJson(file);
-    if (!body) continue;
-    const archetype_id = (body.archetype_id ?? body.id) as string | undefined;
-    if (!archetype_id) continue;
-    entries.push({
-      archetype_id,
-      name: body.name as string | undefined,
-      source: 'builtin',
-      path: file,
-      body,
-    });
+  const seen = new Set<string>();
+  for (const skillsDir of archetypeSkillRoots(pkgRoot)) {
+    let skillNames: string[];
+    try { skillNames = readdirSync(skillsDir); } catch { continue; }
+    for (const skill of skillNames) {
+      if (!skill.startsWith('archetype-')) continue;
+      const file = join(skillsDir, skill, 'archetype.json');
+      if (!existsSync(file)) continue;
+      const body = safeParseJson(file);
+      if (!body) continue;
+      const archetype_id = (body.archetype_id ?? body.id) as string | undefined;
+      if (!archetype_id || seen.has(archetype_id)) continue;
+      seen.add(archetype_id);
+      entries.push({
+        archetype_id,
+        name: body.name as string | undefined,
+        source: 'builtin',
+        path: file,
+        body,
+      });
+    }
   }
   return entries;
 }
