@@ -194,8 +194,20 @@ export function createRealMcpClient(): McpClient {
         return { closed: true };
       }
       case 'project.list': {
+        // The sidecar returns `ProjectSummary[]` (camelCase: projectId / name /
+        // path / lastOpened), NOT the full Project schema — it has no archetype
+        // / aspect / cell-count for a project that isn't open. Normalize to the
+        // snake shape the Launcher consumes and pass through ONLY what's real.
         const body = await raw('project.list', {});
-        return { projects: (body.projects as Project[]) ?? [] };
+        const rows = (body.projects as Array<Record<string, unknown>>) ?? [];
+        return {
+          projects: rows.map((r) => ({
+            project_id: (r.projectId ?? r.project_id ?? r.slug ?? '') as string,
+            name: (r.name ?? r.title ?? '') as string,
+            path: (r.path ?? '') as string,
+            lastOpened: (r.lastOpened ?? r.last_opened) as number | undefined,
+          })),
+        };
       }
       case 'project.info': {
         const body = await raw('project.info', { projectId: args.project_id });

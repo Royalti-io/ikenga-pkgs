@@ -105,6 +105,43 @@ html, body, #root {
   font-family: var(--font-display);
 }
 
+/* Token-driven modal scrim (Launcher rebuild — fixes launcher-nontoken-black-
+ * overlay). Derived from the sunken surface so it follows the active theme /
+ * mode instead of the raw bg-black/60 the old trust modal used. */
+:root {
+  --overlay: color-mix(in srgb, var(--bg-sunken) 78%, transparent);
+}
+
+/* faint warm desk grain — texture, not a hero gradient (concept L-A). */
+.launcher-desk {
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    hsl(36 30% 90% / 0.018) 1px,
+    transparent 0
+  );
+  background-size: 7px 7px;
+}
+
+/* recents skeleton shimmer (aria-busy loading state). */
+@keyframes launcher-shimmer {
+  from { background-position: 180% 0; }
+  to { background-position: -40% 0; }
+}
+.launcher-sk {
+  background: linear-gradient(
+    100deg,
+    var(--bg-raised) 20%,
+    color-mix(in srgb, var(--primary-soft) 50%, var(--bg-raised)) 40%,
+    var(--bg-raised) 60%
+  );
+  background-size: 220% 100%;
+  border-radius: var(--radius-sm, 4px);
+  animation: launcher-shimmer 1.4s ease infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .launcher-sk { animation: none; }
+}
+
 #root {
   position: relative;
   isolation: isolate;

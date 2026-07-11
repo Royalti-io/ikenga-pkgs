@@ -100,13 +100,45 @@ import type {
   Archetype, ExportRecord, AspectRatio, Rung,
 } from './mcp-types';
 
+/** What `project.list` ACTUALLY returns, tolerant of the two real runtime
+ *  shapes it resolves to (the "honesty rule" — this boundary genuinely drifts):
+ *
+ *   • real (in-shell): the sidecar's `ProjectSummary` — `projectId` / `name` /
+ *     `path` / `lastOpened` (epoch ms), camelCase, ONE row per previously-opened
+ *     project, most-recent first. It carries NO archetype / aspect / cell-count /
+ *     render-coverage — those are NOT cheaply reachable for a project that isn't
+ *     open (render.list is projectId-scoped to the open project).
+ *   • mock (standalone): a full `Project` schema object (snake_case `slug` /
+ *     `title` / `archetype_id` / `aspect_ratio` / `cells[]` / `updated_at`).
+ *
+ *  All fields are optional so the Launcher's `normalizeRecent()` can read
+ *  whichever the active client emitted and degrade honestly (drop the coverage
+ *  meter + exported/draft pill for real rows that don't carry them). */
+export interface RawRecentProject {
+  // real ProjectSummary (camelCase)
+  projectId?: string;
+  lastOpened?: number;
+  // full Project / mock (snake_case + schema)
+  project_id?: string;
+  slug?: string;
+  title?: string;
+  updated_at?: string;
+  created_at?: string;
+  archetype_id?: string;
+  aspect_ratio?: AspectRatio;
+  cells?: unknown[];
+  // shared
+  name?: string;
+  path?: string;
+}
+
 export const projectApi = {
   open:   (c: McpClient, path: string) =>
     c.callTool<{ project_id: string }>('project.open', { path }),
   close:  (c: McpClient, project_id: string) =>
     c.callTool<{ closed: boolean }>('project.close', { project_id }),
   list:   (c: McpClient) =>
-    c.callTool<{ projects: Project[] }>('project.list'),
+    c.callTool<{ projects: RawRecentProject[] }>('project.list'),
   create: (c: McpClient, args: { archetype_id: string; path: string; name: string; aspect_ratio?: AspectRatio }) =>
     c.callTool<{ project_id: string }>('project.create', args),
   info:   (c: McpClient, project_id: string) =>

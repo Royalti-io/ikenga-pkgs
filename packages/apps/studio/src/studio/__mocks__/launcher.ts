@@ -4,12 +4,14 @@
 // string/engine/duration/blurb) — same rule as every other __mocks__ file:
 // the MCP `archetype.list()` response (__mocks__/mcp.ts MOCK_ARCHETYPES) only
 // carries { id, name, description, chain, builtin? }; everything below is
-// what the Launcher decorates it with, keyed by the same `id`. Mirrors
-// designs/launcher.html's ARCHETYPES + RECENT fixtures.
+// what the Launcher decorates it with, keyed by the same `id`.
 //
-// `RECENT` is a Launcher-local static fixture — there's no MCP tool for
-// "recent projects" yet (project.list() returns just the one mock project);
-// recents come from local SQLite in the real shell (launcher.md §"Gaps").
+// NOTE (Wave 1 launcher rebuild): the old `RECENT` static fixture was DELETED.
+// Recent projects now come from the real `project.list()` seam (a
+// SQLite-backed most-recent-first list — `ProjectSummary` rows carrying
+// project_id / name / path / last_opened). This file keeps ONLY the
+// presentation decoration (`presentationFor`) the gallery keys off archetype
+// id — the "honesty rule": render only data that has a real seam.
 
 import type { BeatAccent } from './archetype-builder';
 
@@ -97,17 +99,3 @@ export function presentationFor(id: string): ArchetypePresentation {
   }
   return GENERIC_PRESENTATION;
 }
-
-export interface RecentProject {
-  slug: string;
-  archetype_id: string;
-  ago: string;
-  cells: number;
-  aspect: '16:9' | '9:16' | '1:1';
-}
-
-export const RECENT: RecentProject[] = [
-  { slug: 'retention-explainer', archetype_id: 'explainer',  ago: '2d ago', cells: 6,  aspect: '16:9' },
-  { slug: 'q2-product-launch',   archetype_id: 'product',    ago: '5d ago', cells: 9,  aspect: '9:16' },
-  { slug: 'label-anthem-mv',     archetype_id: 'musicvideo', ago: '1w ago', cells: 12, aspect: '9:16' },
-];
