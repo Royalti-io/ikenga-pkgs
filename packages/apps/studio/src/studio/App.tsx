@@ -14,7 +14,7 @@
 import { useEffect } from 'react';
 
 import { useLayoutStore } from './layout-store';
-import { useProjectStore, selectIsProjectOpen } from './project-store';
+import { useProjectStore, selectIsProjectOpen, selectOpenProject } from './project-store';
 import type { PaneIndex, ViewComponentRegistry } from './routes';
 import { LayoutSwitcher } from './components/LayoutSwitcher';
 import { ViewSwitcher } from './components/ViewSwitcher';
@@ -121,6 +121,9 @@ function PaneRegion() {
 
 export function App() {
   const isProjectOpen = useProjectStore(selectIsProjectOpen);
+  const openProjectSummary = useProjectStore(selectOpenProject);
+  const bindPersistence = useLayoutStore((s) => s.bindPersistence);
+  const unbindPersistence = useLayoutStore((s) => s.unbindPersistence);
 
   // App-level keyboard map + V-split focus trap (commit 15). Registered
   // unconditionally; its handlers no-op until a pane region exists.
@@ -129,6 +132,15 @@ export function App() {
   // Sidebar menu: publish on mount, republish on project open/close, route
   // menu clicks (activeFeature) onto the focused pane.
   useEffect(() => initStudioMenu(), []);
+
+  // Per-folder layout persistence: rehydrate + arm the layout store when a
+  // project opens; stop persisting when it closes. Keyed by project id so each
+  // folder restores its own pane arrangement across remounts (layout-store.ts).
+  useEffect(() => {
+    const projectId = openProjectSummary?.project_id;
+    if (projectId) bindPersistence(projectId);
+    else unbindPersistence();
+  }, [openProjectSummary?.project_id, bindPersistence, unbindPersistence]);
 
   // The launcher pre-empts the pane layout entirely — it isn't a sub-view
   // and doesn't share the layout/view-switcher chrome (launcher.md §"Chrome
