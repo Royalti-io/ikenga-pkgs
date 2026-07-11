@@ -121,7 +121,10 @@ export const storyboardApi = {
 };
 
 export const compositionApi = {
-  render: (c: McpClient, args: { project_id: string; engine?: string; aspect_ratio?: AspectRatio; rung?: Rung }) =>
+  // `cell_uid` scopes a render to a single cell (per-cell re-render / retry).
+  // Omitting it renders the whole composition. The mock already keys off
+  // `cell_uid`; the real WP-06 server honors the same arg.
+  render: (c: McpClient, args: { project_id: string; cell_uid?: string; engine?: string; aspect_ratio?: AspectRatio; rung?: Rung }) =>
     c.callTool<{ record_id: string }>('composition.render', args),
   preview: (c: McpClient, args: { project_id: string; engine?: string }) =>
     c.callTool<{ preview_uri: string }>('composition.preview', args),

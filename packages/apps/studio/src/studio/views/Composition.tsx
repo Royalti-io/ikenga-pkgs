@@ -53,6 +53,8 @@ import {
   selectPlayheadMs,
   useSharedStore,
 } from '../shared-state';
+import { useProjectStore, selectOpenProject } from '../project-store';
+import { getMcpClient, compositionApi } from '../mcp-client';
 
 const FPS = DEFAULT_FPS;
 const TOTAL_MS = COMPOSITION_TOTAL_MS;
@@ -90,9 +92,16 @@ export function CompositionView() {
   const setHoverBeat = useSharedStore((s) => s.setHoverBeat);
   const setEngineMode = useSharedStore((s) => s.setEngineMode);
 
+  const project = useProjectStore(selectOpenProject);
+
   const [playing, setPlaying] = useState(false);
   const [loop, setLoop] = useState(false);
   const [musicPreset, setMusicPreset] = useState('upbeat-tech');
+
+  // Render-all lifecycle. 'running' while the batched composition.render calls
+  // are in flight (mock emits render/done per cell); flips to 'done' briefly
+  // when every cell's done event has arrived, then settles back to idle.
+  const [rerenderState, setRerenderState] = useState<'idle' | 'running' | 'done'>('idle');
 
   // Mirror of `loop` so a fresh player (StrictMode remount) inherits it.
   const loopRef = useRef(loop);
@@ -170,6 +179,62 @@ export function CompositionView() {
     seekMs(clip.start_ms);
   };
 
+  // ── Render / retry over MCP (mock today, WP-06 real in Wave 3) ───────────
+  // Re-render all: fire composition.render per cell at the composition's rung.
+  // The mock emits a render/done per cell; count them to drive the button
+  // lifecycle. Retry re-renders a single failed clip through the same seam
+  // (Wave 3 swaps this to render.retry(clip.uid)).
+  const rerenderAll = async () => {
+    if (rerenderState === 'running') return;
+    const projectId = project?.project_id;
+    if (!projectId) return;
+    setRerenderState('running');
+    const client = await getMcpClient();
+    const clips = COMPOSITION_TIMELINE;
+    let remaining = clips.length;
+    const off = client.subscribe('render/done', () => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        off();
+        setRerenderState('done');
+        window.setTimeout(() => setRerenderState('idle'), 1600);
+      }
+    });
+    try {
+      await Promise.all(
+        clips.map((c) =>
+          compositionApi.render(client, {
+            project_id: projectId,
+            cell_uid: c.uid,
+            rung: COMPOSITION_META.rung,
+          }),
+        ),
+      );
+    } catch (err) {
+      off();
+      setRerenderState('idle');
+      // eslint-disable-next-line no-console
+      console.error('[studio] re-render all failed', err);
+    }
+  };
+
+  const retryClip = async (uid: string) => {
+    const projectId = project?.project_id;
+    if (!projectId) return;
+    try {
+      const client = await getMcpClient();
+      setCellUid(uid);
+      await compositionApi.render(client, {
+        project_id: projectId,
+        cell_uid: uid,
+        rung: COMPOSITION_META.rung,
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error('[studio] retry render failed', err);
+    }
+  };
+
   // ── Derived state ───────────────────────────────────────────────────────
   const activeClip = clipAtMs(playheadMs);
   const activeWord = COMPOSITION_NARRATION.words.find(
@@ -222,9 +287,20 @@ export function CompositionView() {
         <option value="calm-narrative">music: calm-narrative</option>
         <option value="none">music: none</option>
       </select>
-      <button type="button" className="btn btn-sm btn-ghost" aria-label="Re-render all cells">
+      <button
+        type="button"
+        className="btn btn-sm btn-ghost"
+        aria-label="Re-render all cells"
+        onClick={rerenderAll}
+        disabled={rerenderState === 'running'}
+        aria-busy={rerenderState === 'running'}
+      >
         <IconWand />
-        Re-render all
+        {rerenderState === 'running'
+          ? 'Rendering…'
+          : rerenderState === 'done'
+            ? 'Rendered ✓'
+            : 'Re-render all'}
       </button>
       <button
         type="button"
@@ -434,10 +510,14 @@ export function CompositionView() {
                 text={activeClip.status ?? 'pending'}
                 action={
                   activeClip.status === 'failed' ? (
-                    // Local-only for now — same "not yet MCP-wired" stage as
-                    // the "Re-render all" button above (Wave 3 lights up
-                    // render.retry against the real MCP server).
-                    <button type="button" className="btn btn-sm btn-ghost" aria-label={`Retry render for ${activeClip.uid}`}>
+                    // Re-renders the failed clip through composition.render
+                    // (mock today); Wave 3 swaps this to render.retry(uid).
+                    <button
+                      type="button"
+                      className="btn btn-sm btn-ghost"
+                      aria-label={`Retry render for ${activeClip.uid}`}
+                      onClick={() => retryClip(activeClip.uid)}
+                    >
                       ↺ Retry
                     </button>
                   ) : undefined
