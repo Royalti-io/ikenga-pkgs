@@ -21,17 +21,37 @@
 // tolerated until the --info token lands upstream (same as Canvas/Cell); drop
 // it then.
 
+import { useMemo } from 'react';
+
 import { COMPOSITION_TIMELINE, type TimelineClip } from '../__mocks__/composition';
+import { buildTimelineModel } from '../lib/composition-model';
 import { useLayoutStore } from '../layout-store';
 import { LAYOUTS } from '../routes';
 import { useSharedStore } from '../shared-state';
+import {
+  useStoryboardStore,
+  selectHasRealCells,
+  selectHydratedCells,
+  selectHydratedProject,
+  selectRenderStatus,
+} from '../storyboard-store';
 
-/** The cell whose render is currently in flight (mock render state), or null.
- *  P1: the single `running` clip on the composition timeline. */
+/** The cell whose render is currently in flight, or null. Real mode reads the
+ *  live render-status map (fed by the App-level render.list poll) folded onto
+ *  the hydrated timeline, so the beacon references a REAL cell uid (or is absent
+ *  when nothing is rendering) — never the mock c04. Standalone/mock keeps the
+ *  static mock-timeline derivation. */
 function useRunningCell(): TimelineClip | null {
-  // The mock timeline is static, so this is a plain derivation rather than a
-  // subscription; the real implementation subscribes to `render/progress`.
-  return COMPOSITION_TIMELINE.find((c) => c.status === 'running') ?? null;
+  const hasRealCells = useStoryboardStore(selectHasRealCells);
+  const hydratedCells = useStoryboardStore(selectHydratedCells);
+  const projectDoc = useStoryboardStore(selectHydratedProject);
+  const renderStatus = useStoryboardStore(selectRenderStatus);
+  return useMemo(() => {
+    const clips = hasRealCells
+      ? buildTimelineModel(hydratedCells, projectDoc, renderStatus).clips
+      : COMPOSITION_TIMELINE;
+    return clips.find((c) => c.status === 'running') ?? null;
+  }, [hasRealCells, hydratedCells, projectDoc, renderStatus]);
 }
 
 const INFO = 'var(--info,#5bb3e0)';

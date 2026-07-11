@@ -37,6 +37,7 @@ import {
   useStoryboardStore,
   selectHydratedCells,
   selectHasRealCells,
+  selectHydratedProject,
   toDisplayCell,
 } from '../storyboard-store';
 import { SafeZoneBands } from '../media-controls';
@@ -47,7 +48,8 @@ import {
   type CellColor,
   type MockCell,
 } from '../__mocks__/cells';
-import { clipAtMs } from '../__mocks__/composition';
+import { COMPOSITION_TIMELINE } from '../__mocks__/composition';
+import { buildTimelineModel, clipAt } from '../lib/composition-model';
 import { EmptyState } from '../components/EmptyState';
 
 // @ikenga/contract/canvas ships `ItemId` as an opaque branded string but
@@ -144,12 +146,6 @@ export function CanvasView() {
   const aspect: AspectRatio = project?.aspect_ratio ?? '16:9';
   const isPortrait = aspect === '9:16';
 
-  // Cross-linking §12 — "Composition scrub → playheadMs → Canvas active-cell
-  // highlight". Derived, not stored (activeCellAtPlayhead stays a selector,
-  // per shared-state.ts's deferred-selector note); shares clipAtMs with
-  // Composition so both views agree on the same [start,start+duration) window.
-  const activeAtPlayheadUid = clipAtMs(playheadMs)?.uid ?? null;
-
   const [viewport, setViewport] = useState<Viewport>({ x: 80, y: 30, scale: 0.9 });
   const [editMode, setEditMode] = useState(false);
 
@@ -159,11 +155,25 @@ export function CanvasView() {
   // MockCell shape the canvas item renderer was written against.
   const hydratedCells = useStoryboardStore(selectHydratedCells);
   const hasRealCells = useStoryboardStore(selectHasRealCells);
+  const projectDoc = useStoryboardStore(selectHydratedProject);
   const refetchStoryboard = useStoryboardStore((s) => s.refetch);
   const displayCells = useMemo<MockCell[]>(
     () => (hasRealCells ? hydratedCells.map(toDisplayCell) : MOCK_CELLS),
     [hasRealCells, hydratedCells],
   );
+
+  // Cross-linking §12 — "Composition scrub → playheadMs → Canvas active-cell
+  // highlight". Derived, not stored (activeCellAtPlayhead stays a selector, per
+  // shared-state.ts's deferred-selector note). Uses the SAME timeline windows
+  // Composition builds — the real hydrated model when a real project is open,
+  // else the mock timeline — so both views agree on the same
+  // [start,start+duration) cell for a given playhead. (Status is irrelevant to
+  // the window lookup, so an empty status map is fine here.)
+  const scrubClips = useMemo(
+    () => (hasRealCells ? buildTimelineModel(hydratedCells, projectDoc, {}).clips : COMPOSITION_TIMELINE),
+    [hasRealCells, hydratedCells, projectDoc],
+  );
+  const activeAtPlayheadUid = clipAt(scrubClips, playheadMs)?.uid ?? null;
 
   // Refetch on view (re)mount — the on-demand poll stand-in for the
   // cells/changed event the shell can't relay (a future relay would splice the
