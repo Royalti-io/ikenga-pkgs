@@ -8,12 +8,51 @@
  * Importing @ikenga/tokens here is the WP-07 fix for G21 (Round 8): the
  * iframe sandbox must own its own --bg-*, --fg-*, --border-*, --font-*
  * namespace, because the shell's chrome stylesheet doesn't leak through the
- * iframe boundary. The AppBridge host-context handshake (bridge.ts) layers
- * runtime theme/mode overrides on top via applyHostStyleVariables.
+ * iframe boundary. Theme/mode selection is owned by setupTheme() (theme.ts):
+ * it mirrors the parent <html> data-theme/mode/density/workspace attrs, so
+ * the bundled tokens resolve to the shell's active theme — no AppBridge push.
  */
 
 @import 'tailwindcss';
 @import '@ikenga/tokens/tokens.css';
+
+/* ---------------------------------------------------------------------------
+ * Self-hosted fonts (Wave 0).
+ *
+ * The shell loads Fraunces/Inter/JetBrains Mono from Google Fonts in its own
+ * index.html, but font faces do NOT cross the iframe boundary — and the shell
+ * srcdoc-inlines this pane, where WebKitGTK silently DROPS any HTTP fetch
+ * (Tauri #12767). A Google-Fonts <link> would therefore never load in-shell,
+ * so we self-host. `vite.config.ts` sets `build.assetsInlineLimit` above the
+ * largest woff2 (48 KB), so these url()s are emitted as base64 data: URIs
+ * inlined into the single CSS chunk — no separate font asset files, nothing to
+ * fetch. Each family is a single VARIABLE woff2 (latin subset) declared over a
+ * font-weight range, so 400/500/600 all resolve from one file.
+ * ------------------------------------------------------------------------- */
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('../fonts/inter.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('../fonts/fraunces.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url('../fonts/jetbrains-mono.woff2') format('woff2');
+}
 
 /* studio-editor layer — video-domain component CSS (timeline-rail,
  * clip-segment, waveform-strip) + the media-controls transport family. See
@@ -98,22 +137,6 @@ html, body, #root {
   font-size: 0.85rem;
 }
 
-.studio-scaffold__mode {
-  margin: 1rem 0 0;
-  padding: 0.25rem 0.6rem;
-  border-radius: 999px;
-  border: 1px solid var(--border-soft);
-  background: var(--bg-raised);
-  color: var(--fg-faint);
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.04em;
-}
-
-.studio-scaffold__mode[data-mode='shell']      { color: var(--live); }
-.studio-scaffold__mode[data-mode='standalone'] { color: var(--achievement); }
-.studio-scaffold__mode[data-mode='connecting'] { color: var(--fg-faint); }
-
 /* ---------------------------------------------------------------------------
  * NowRenderingBeacon (commit 12) — the pinging rendering-status dot. The ring
  * expands + fades out, echoing interactions-crosslink.html §4's animate-ping.
@@ -149,7 +172,7 @@ html, body, #root {
   [role='button'], [role='tab'], [role='slider'],
   [tabindex]:not([tabindex='-1'])
 ):where(:not(.composition-frame *)):focus-visible {
-  outline: 2px solid var(--info, #5bb3e0);
+  outline: 2px solid var(--info);
   outline-offset: 2px;
 }
 

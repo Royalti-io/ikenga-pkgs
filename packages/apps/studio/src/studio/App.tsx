@@ -57,7 +57,7 @@ function Pane({ index }: { index: PaneIndex }) {
       className={
         'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border bg-surface outline-none '
         + (focused
-          ? 'border-[var(--border)] ring-1 ring-inset ring-[color-mix(in_oklab,var(--info,#5bb3e0)_45%,transparent)]'
+          ? 'border-[var(--border)] ring-1 ring-inset ring-[color-mix(in_oklab,var(--info)_45%,transparent)]'
           : 'border-soft')
       }
       // Click OR keyboard focus entering the pane makes it the active pane

@@ -24,13 +24,11 @@
 // helper becomes a no-op or returns mocked values. This is what lets
 // `pnpm dev` boot the iframe in a plain browser tab without a shell.
 
-import {
-  App,
-  applyDocumentTheme,
-  applyHostStyleVariables,
-  applyHostFonts,
-  type McpUiHostContext,
-} from '@modelcontextprotocol/ext-apps';
+// NOTE: the ext-apps theme helpers (applyDocumentTheme / applyHostStyleVariables
+// / applyHostFonts) are intentionally NOT imported. Studio owns its theme via
+// the parent-mirror in theme.ts; applyDocumentTheme wrote data-theme='light'|
+// 'dark' and clobbered the Dusk Wood palette (Wave 0 root-cause fix).
+import { App, type McpUiHostContext } from '@modelcontextprotocol/ext-apps';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 // ─── Host-context contract ────────────────────────────────────────────────
@@ -140,7 +138,8 @@ export function connectBridge(opts: {
 
     app.onhostcontextchanged = (ctx: McpUiHostContext) => {
       const typed = ctx as StudioHostContext;
-      applyContext(typed);
+      // Theme is NOT applied here anymore (theme.ts owns it via parent-mirror);
+      // we only fan out activeFeature / supabaseJwt / etc. to view listeners.
       for (const fn of _contextListeners) fn(typed);
     };
 
@@ -148,7 +147,6 @@ export function connectBridge(opts: {
 
     await app.connect();
     const ctx = app.getHostContext() as StudioHostContext | undefined;
-    if (ctx) applyContext(ctx);
 
     _app = app;
     const connection: BridgeConnection = { mode: 'shell', hostContext: ctx };
@@ -157,14 +155,6 @@ export function connectBridge(opts: {
   })();
 
   return _connectionPromise;
-}
-
-/** Apply theme + CSS vars + fonts from a hostContext snapshot. Idempotent;
- *  safe to call from both initial connect and `onhostcontextchanged`. */
-function applyContext(ctx: StudioHostContext): void {
-  if (ctx.theme) applyDocumentTheme(ctx.theme);
-  if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
-  if (ctx.styles?.css?.fonts) applyHostFonts(ctx.styles.css.fonts);
 }
 
 /** Subscribe to hostContext changes (theme flips, royaltiSuite.activeFeature
