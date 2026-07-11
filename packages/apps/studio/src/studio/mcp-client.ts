@@ -22,7 +22,7 @@
 // the probe always times out and we fall back to mock — which is the
 // correct behaviour today.
 
-import { isStandalone } from './bridge';
+import { connectBridge, isStandalone } from './bridge';
 import type {
   StudioEventName,
   StudioEventPayloadMap,
@@ -55,26 +55,29 @@ export interface McpClient {
 
 let _client: McpClient | null = null;
 
-/** When true, getMcpClient() returns the real WP-06-backed client. Flipped
- *  in Wave 3 once the real MCP server ships; until then the mock is the only
- *  implementation, so this stays false and the selection below is a no-op.
- *  `isStandalone()` would force the mock regardless. */
-const USE_REAL_MCP = false;
-
 /** Lazily resolves and caches the MCP client. Idempotent — calling twice
- *  returns the same promise. */
+ *  returns the same promise.
+ *
+ *  Selection is RUNTIME, not a build flag (Wave-3 flip):
+ *    • Standalone dev (plain browser tab, no shell parent) → mock. Lets
+ *      `pnpm dev` boot the iframe without a backend.
+ *    • In-shell (mounted in an Ikenga pane) → REAL. Every call routes through
+ *      the shell bridge to the pkg's `studio` MCP server (real-mcp.ts).
+ *
+ *  `isStandalone()` is the synchronous discriminator. main.tsx only renders
+ *  <App/> after connectBridge() resolves, so in shell mode the bridge is
+ *  already connected before any view calls this; we await it again here
+ *  (idempotent) so the real client's transport is guaranteed live. */
 export async function getMcpClient(): Promise<McpClient> {
   if (_client) return _client;
 
-  if (!USE_REAL_MCP || isStandalone()) {
+  if (isStandalone()) {
     const { createMockMcpClient } = await import('./__mocks__/mcp.js');
     _client = createMockMcpClient();
     return _client;
   }
 
-  // Wave 3: route every callTool through the pkg's real MCP server via the
-  // shell bridge (bridge.callPkgTool → pkg_mcp_call → mcp/dist/index.js) and
-  // reshape responses to the UI types. See real-mcp.ts.
+  await connectBridge();
   const { createRealMcpClient } = await import('./real-mcp.js');
   _client = createRealMcpClient();
   return _client;
