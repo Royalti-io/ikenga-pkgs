@@ -60,13 +60,17 @@ const ICON = {
   recent: 'folder',
 } as const;
 
-// Short mono-friendly seg labels for the layout strip (the rail seg replaces the
-// banner's four radios). LAYOUTS[].label is prose ("Vert split"); this is tighter.
+// Layout glyphs for the seg strip (founder call 2026-07-12: icons, not text).
+// The shell's seg options carry only a text `label` — no icon slot — so these
+// are unicode box glyphs, one visual family: whole pane / vertical split /
+// horizontal split / mixed grid. Screen readers announce them poorly ("white
+// square") — proper option icons need a shell-side Segmented extension, noted
+// as a follow-up in plans/studio/15-ui-redesign.md.
 const LAYOUT_SEG_LABEL: Record<LayoutId, string> = {
-  single: 'Single',
-  vsplit: 'V-Split',
-  hsplit: 'H-Split',
-  tripane: '3-Pane',
+  single: '▢',
+  vsplit: '◫',
+  hsplit: '⊟',
+  tripane: '⊞',
 };
 
 // ── no-project recents (loaded lazily, shell-only) ──────────────────────────
