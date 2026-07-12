@@ -450,7 +450,11 @@ export function CompositionView() {
       data-workspace="studio"
       onKeyDown={onViewKeyDown}
     >
-      <div className="composition-frame comp-cockpit m-2">
+      {/* shrink-0 is load-bearing: the parent scroller is a flex column, so
+          without it this frame (overflow:hidden) compresses to the pane height
+          instead of overflowing — the scroller then has nothing to scroll and
+          the timeline/records get clipped. */}
+      <div className="composition-frame comp-cockpit m-2 shrink-0">
         {/* Header */}
         <header className="comp-header">
           <div className="comp-header__title">
