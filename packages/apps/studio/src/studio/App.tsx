@@ -13,6 +13,7 @@
 
 import { useEffect } from 'react';
 
+import { isStandalone } from './bridge';
 import { useLayoutStore } from './layout-store';
 import { useProjectStore, selectIsProjectOpen, selectOpenProject } from './project-store';
 import { useStoryboardStore } from './storyboard-store';
@@ -158,6 +159,9 @@ function PaneRegion() {
 export function App() {
   const isProjectOpen = useProjectStore(selectIsProjectOpen);
   const openProjectSummary = useProjectStore(selectOpenProject);
+  // Sync window-parent probe (stable for the iframe's lifetime): shell vs
+  // standalone. Gates the banner LayoutSwitcher (see the header comment).
+  const standalone = isStandalone();
   const bindPersistence = useLayoutStore((s) => s.bindPersistence);
   const unbindPersistence = useLayoutStore((s) => s.unbindPersistence);
 
@@ -229,7 +233,12 @@ export function App() {
             </>
           )}
         </div>
-        <LayoutSwitcher />
+        {/* In-shell, the M-A rail's kind:'seg' layout strip owns preset switching,
+            so the banner sheds its four LayoutSwitcher radios (audit: view-switch
+            redundancy). Standalone (pnpm dev, no shell side-menu) keeps the switcher
+            so layout is still reachable — and the component file is retained for a
+            future pop-out window banner that would render it again. */}
+        {standalone && <LayoutSwitcher />}
       </header>
       <PaneRegion />
       {/* Layout-independent rendering beacon — floats over every view/layout

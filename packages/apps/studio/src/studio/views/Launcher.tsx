@@ -25,6 +25,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { archetypeApi, projectApi, renderApi, getMcpClient, type McpClient } from '../mcp-client';
 import { openFolder } from '../bridge';
 import { useProjectStore } from '../project-store';
+import { openProjectByPath } from '../lib/open-project';
 import { loadLastProject, clearLastProject } from '../lib/project-persistence';
 import type { AspectRatio, Archetype, EngineCapability } from '../mcp-types';
 import { Icon } from './launcher/icons';
@@ -179,25 +180,13 @@ export function LauncherView() {
   );
 
   // Open a project by path, then fetch its real archetype/aspect (project.info)
-  // so the in-project header shows the truth rather than a guess.
+  // so the in-project header shows the truth rather than a guess. Delegates to
+  // the shared `openProjectByPath` helper (lib/open-project.ts) so the shell
+  // side-menu's `recent:<path>` rows reuse the SAME open + enrichment +
+  // persistence flow rather than forking it.
   const openByPath = useCallback(
-    async (path: string, fallbackName: string) => {
-      const client = clientRef.current ?? (clientRef.current = await getMcpClient());
-      const { project_id } = await projectApi.open(client, path);
-      let archetype_id = '';
-      let aspect_ratio: AspectRatio = '16:9';
-      let name = fallbackName;
-      try {
-        const info = await projectApi.info(client, project_id);
-        if (info?.archetype_id) archetype_id = info.archetype_id;
-        if (info?.aspect_ratio) aspect_ratio = info.aspect_ratio;
-        if (info?.title) name = info.title;
-      } catch {
-        // info is best-effort enrichment; opening still succeeds without it.
-      }
-      openProject({ project_id, name, archetype_id, aspect_ratio, path });
-    },
-    [openProject],
+    (path: string, fallbackName: string) => openProjectByPath(path, fallbackName),
+    [],
   );
 
   const openRecentRow = useCallback(

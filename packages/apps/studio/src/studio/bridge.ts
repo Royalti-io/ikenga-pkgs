@@ -288,15 +288,33 @@ export function openFolder(): Promise<HostCallResult> {
   return callHostTool('host.openFolder', {});
 }
 
-/** Publish a sidebar menu to the shell. Items: [{ id, label, icon?, badge? }].
- *  Click feedback arrives back through `hostContext.royaltiSuite.activeFeature`
- *  on the next `onhostcontextchanged`. */
-export function setMenu(items: Array<{
+/** A published sidebar-menu item. Mirrors the shell's `PkgMenuItem`
+ *  (shell/src/lib/pkg/pkg-menu-store.ts) 1:1 so the M-A "production ledger"
+ *  menu can publish sections / badges / a `kind:'seg'` layout strip /
+ *  disabled+active state — the shell renders all of these; the pkg only
+ *  publishes the data. Keep this in lockstep with the shell contract. */
+export interface PublishedMenuItem {
   id: string;
   label: string;
-  icon?: string;
-  badge?: string;
-}>): Promise<HostCallResult> {
+  icon?: string | null;
+  badge?: string | number | null;
+  /** Consecutive items sharing a `section` render under one heading; items with
+   *  no section form the implicit first group. Order is preserved as published. */
+  section?: string | null;
+  /** Renders dimmed + non-interactive (project-header row, inert states). */
+  disabled?: boolean;
+  /** Explicit active-highlight; overrides the shell's last-clicked fallback so
+   *  view rows can track the FOCUSED pane's view independent of last click. */
+  active?: boolean;
+  /** `'seg'` renders an inline Segmented pill strip (layout presets); each
+   *  option's id is published back as activeFeature on click. */
+  kind?: 'item' | 'seg';
+  options?: Array<{ id: string; label: string; active?: boolean }>;
+}
+
+/** Publish a sidebar menu to the shell. Click feedback arrives back through
+ *  `hostContext.royaltiSuite.activeFeature` on the next `onhostcontextchanged`. */
+export function setMenu(items: PublishedMenuItem[]): Promise<HostCallResult> {
   return callHostTool('host.pkg.setMenu', { items });
 }
 
