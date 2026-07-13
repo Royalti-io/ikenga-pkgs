@@ -1,7 +1,7 @@
 {
   "name": "@ikenga/studio-toolchain",
-  "version": "0.1.0",
-  "description": "Studio toolchain suite \u2014 the interview/instantiate/render/author loop (init, oneshot, watch, archetype-build, block-author, generate-narration, freeform-video) that drives the Studio MCP surface (archetype.* / block.* / render.*).",
+  "version": "0.2.0",
+  "description": "Studio toolchain suite — the interview/instantiate/render/author loop (init, oneshot, watch, archetype-build, block-author, generate-narration, freeform-video) that drives the Studio MCP surface (archetype.* / block.* / render.*).",
   "keywords": [
     "claude",
     "claude-code",
@@ -37,8 +37,8 @@
     "README.md"
   ],
   "scripts": {
-    "build": "echo 'no build \u2014 content-only pkg'",
-    "typecheck": "echo 'no ts \u2014 content-only pkg'"
+    "build": "echo 'no build — content-only pkg'",
+    "typecheck": "echo 'no ts — content-only pkg'"
   },
   "peerDependencies": {
     "@ikenga/studio-schema": "^0.1.0"
