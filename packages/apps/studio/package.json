@@ -1,8 +1,8 @@
 {
   "name": "@ikenga/pkg-studio",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
-  "description": "com.ikenga.studio app pkg \u2014 project sidecar (storyboard/render queue + HuggingFace and Excalidraw renderer adapters), FFmpeg-backed exporter, and a 40-tool MCP server; iframe UI in progress.",
+  "description": "com.ikenga.studio app pkg — project sidecar (storyboard/render queue + HuggingFace and Excalidraw renderer adapters), FFmpeg-backed exporter, and a 40-tool MCP server; iframe UI in progress.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.web.json --noEmit && vite build",

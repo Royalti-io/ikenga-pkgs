@@ -1,7 +1,7 @@
 {
   "name": "@ikenga/studio-doctor",
-  "version": "0.1.0",
-  "description": "Studio toolchain preflight \u2014 pure-shell check.sh that verifies the local render stack. Zero coupling; independently useful as a doctor/preflight skill.",
+  "version": "0.2.0",
+  "description": "Studio toolchain preflight — pure-shell check.sh that verifies the local render stack. Zero coupling; independently useful as a doctor/preflight skill.",
   "keywords": [
     "claude",
     "claude-code",
@@ -37,7 +37,7 @@
     "README.md"
   ],
   "scripts": {
-    "build": "echo 'no build \u2014 content-only pkg'",
-    "typecheck": "echo 'no ts \u2014 content-only pkg'"
+    "build": "echo 'no build — content-only pkg'",
+    "typecheck": "echo 'no ts — content-only pkg'"
   }
 }
