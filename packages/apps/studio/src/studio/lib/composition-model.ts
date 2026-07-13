@@ -51,7 +51,7 @@ export interface TimelineModel {
 // The 6 beat accents from the studio-editor layer's --beat-accent-* set
 // (contract §5). Cycled per distinct beat in first-seen order — same spread
 // strategy Canvas uses for its columns, so a beat always tints one colour.
-const BEAT_ACCENTS: BeatAccent[] = ['amber', 'rose', 'emerald', 'sky', 'violet', 'fuchsia'];
+export const BEAT_ACCENTS: BeatAccent[] = ['amber', 'rose', 'emerald', 'sky', 'violet', 'fuchsia'];
 
 const TRANSITION_KINDS: TransitionKind[] = ['cut', 'fade', 'smash-cut', 'j-cut', 'l-cut'];
 

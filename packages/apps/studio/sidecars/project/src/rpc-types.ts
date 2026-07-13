@@ -35,6 +35,10 @@ export interface ProjectSummary {
   path: string;
   name: string;
   lastOpened: number;
+  /** Whether the stored path still exists on disk (cheap fs.existsSync at
+   *  list-time). The Launcher dims rows whose folder has moved/been deleted
+   *  and withholds the Open affordance (audit: Recents hygiene). */
+  exists: boolean;
 }
 export type ProjectListResult = { ok: true; projects: ProjectSummary[] };
 
@@ -72,7 +76,10 @@ export type RpcMethod =
   // storyboard.*
   | 'storyboard.read'
   | 'storyboard.read_cell'
+  | 'storyboard.read_fountain'
+  | 'storyboard.read_cell_content'
   | 'storyboard.write_cell'
+  | 'storyboard.write_cell_content'
   | 'storyboard.create_cell'
   | 'storyboard.delete_cell'
   | 'storyboard.list_cells'
@@ -98,7 +105,10 @@ export type RpcMethod =
   | 'render.cancel'
   | 'render.list'
   | 'render.list_engines'
+  | 'render.read_bytes'
   // export.* (WP-07c / G-38)
   | 'export.compose'
   | 'export.status'
-  | 'export.list';
+  | 'export.list'
+  | 'export.read_bytes'
+  | 'export.check_bed';

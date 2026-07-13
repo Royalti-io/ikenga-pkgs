@@ -175,7 +175,10 @@ function listKnownProjects(db: Db): ProjectSummary[] {
       name: string;
       last_opened: number;
     }>;
-  return rows.map(toProjectSummary);
+  // exists: cheap per-row fs.existsSync so the Launcher can dim stale/dead
+  // paths (moved or deleted project folders) instead of rendering them as
+  // first-class openable recents (audit: Recents hygiene).
+  return rows.map((row) => ({ ...toProjectSummary(row), exists: existsSync(row.path) }));
 }
 
 // Initialize a fresh project skeleton on disk (used by project.create).
@@ -340,9 +343,11 @@ function buildHandlers(db: Db): RpcHandlers {
       'render.status',
       'render.cancel',
       'render.list',
+      'render.read_bytes',
       'export.compose',
       'export.status',
       'export.list',
+      'export.read_bytes',
     ]);
 
     let root = '';
@@ -358,6 +363,15 @@ function buildHandlers(db: Db): RpcHandlers {
         return storyboard.read(root).result;
       case 'storyboard.read_cell':
         return storyboard.readCell(root, params.cellId as string).result;
+      case 'storyboard.read_fountain':
+        return storyboard.readFountain(root).result;
+      case 'storyboard.read_cell_content':
+        return storyboard.readCellContent(root, params.cellId as string).result;
+      case 'storyboard.write_cell_content': {
+        const r = storyboard.writeCellContent(root, params.cellId as string, params.html);
+        if (r.project) syncOpenProject(params.projectId as string, r.project);
+        return r.result;
+      }
       case 'storyboard.list_cells':
         return storyboard.listCells(root, {
           beat_id: params.beat_id as string | undefined,
@@ -454,6 +468,8 @@ function buildHandlers(db: Db): RpcHandlers {
         });
       case 'render.list_engines':
         return { ok: true, engines: listEngines() };
+      case 'render.read_bytes':
+        return runner.readBytes(params.recordId as string);
 
       // ── export.* (WP-07c / G-38) ──
       case 'export.compose':
@@ -468,6 +484,20 @@ function buildHandlers(db: Db): RpcHandlers {
         return exporter.status(params.exportId as string);
       case 'export.list':
         return exporter.list(params.projectId as string | undefined);
+      case 'export.read_bytes':
+        return exporter.readBytes(params.exportId as string);
+      case 'export.check_bed': {
+        // Honest silent-bed check (F7): does a real music-bed file exist on
+        // disk for the chosen preset? Mirrors the exporter's own resolver
+        // (`assets/music/<preset>.mp3`). none/silent are silent by design.
+        const preset = (params.music_preset as string | undefined) ?? 'none';
+        if (preset === 'none' || preset === 'silent') {
+          return { ok: true, hasBed: false, willBeSilent: true, byDesign: true };
+        }
+        const bed = join(root, 'assets', 'music', `${preset}.mp3`);
+        const hasBed = existsSync(bed);
+        return { ok: true, hasBed, willBeSilent: !hasBed, byDesign: false, path: hasBed ? bed : undefined };
+      }
 
       default:
         return { ok: false, error: 'method-not-implemented', message: method };

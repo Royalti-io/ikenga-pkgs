@@ -12,20 +12,32 @@ import { StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 import { App } from './studio/App';
-import { connectBridge, isStandalone } from './studio/bridge';
+import { connectBridge } from './studio/bridge';
+import { setupTheme } from './studio/theme';
 import './studio/styles/index.css';
 
-function ScaffoldPlaceholder({ mode }: { mode: 'standalone' | 'connecting' | 'error' }) {
+// Own the theme BEFORE React mounts (and before the styles above paint anything
+// theme-dependent): mirror the shell's data-theme/mode/density onto our own
+// <html>, or pin Theme A + OS scheme standalone. This is the retired
+// AppBridge-theme-leg's replacement — see theme.ts.
+setupTheme();
+
+// Boot placeholder connection state. Pre-settled is always the neutral
+// "connecting" state (never an error): the first-mount error flash came from
+// surfacing an error-ish state before the handshake resolved. We only show the
+// failure copy after connectBridge() actually REJECTS, or a grace timeout
+// passes with no connection — and standalone resolves near-instantly, so it
+// never trips the timeout.
+type BootState = 'connecting' | 'error';
+
+function ScaffoldPlaceholder({ state }: { state: BootState }) {
   return (
     <main className="studio-scaffold">
       <h1 className="studio-scaffold__title">Studio</h1>
       <p className="studio-scaffold__hint">
-        {mode === 'error'
-          ? 'Could not connect to the host — see devtools.'
-          : 'Connecting to the workspace…'}
-      </p>
-      <p className="studio-scaffold__mode" data-mode={mode === 'error' ? 'connecting' : mode}>
-        bridge: {mode}
+        {state === 'error'
+          ? "Studio couldn't reach the workspace."
+          : 'Connecting to your workspace…'}
       </p>
     </main>
   );
@@ -37,14 +49,29 @@ if (!host) {
 }
 
 const root: Root = createRoot(host);
-root.render(
-  <StrictMode>
-    <ScaffoldPlaceholder mode={isStandalone() ? 'standalone' : 'connecting'} />
-  </StrictMode>,
-);
+
+function renderBoot(state: BootState): void {
+  root.render(
+    <StrictMode>
+      <ScaffoldPlaceholder state={state} />
+    </StrictMode>,
+  );
+}
+
+// Neutral connecting state until the handshake settles — no error surfaced yet.
+renderBoot('connecting');
+
+let settled = false;
+// Grace timeout: only escalate to the error copy if nothing has connected after
+// ~1.5s. A resolved OR rejected connectBridge() clears this first.
+const graceTimer = window.setTimeout(() => {
+  if (!settled) renderBoot('error');
+}, 1500);
 
 connectBridge()
   .then(() => {
+    settled = true;
+    window.clearTimeout(graceTimer);
     root.render(
       <StrictMode>
         <App />
@@ -52,11 +79,9 @@ connectBridge()
     );
   })
   .catch((err) => {
+    settled = true;
+    window.clearTimeout(graceTimer);
     // eslint-disable-next-line no-console
     console.error('[studio] connectBridge() failed', err);
-    root.render(
-      <StrictMode>
-        <ScaffoldPlaceholder mode="error" />
-      </StrictMode>,
-    );
+    renderBoot('error');
   });

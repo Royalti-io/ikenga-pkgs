@@ -1,416 +1,731 @@
-// com.ikenga.studio · Launcher
+// com.ikenga.studio · Launcher (Wave 1 rebuild — concept L-A "production desk")
 //
-// The pre-project shell (Screen S1 — launcher.md / G25). Not a sub-view — it
-// pre-empts the whole Pattern-C pane layout when no project is open
-// (project-store.ts `isOpen === false`) and unmounts entirely once a project
-// opens. Visual bar: designs/launcher.html (archetype gallery + create panel
-// + recent projects + open-folder trust gate).
+// The pre-project shell (Screen S1). Pre-empts the Pattern-C pane layout when
+// no project is open (project-store isOpen === false) and unmounts once a
+// project opens. Visual + behavioral spec: plans/studio/designs/redesign/
+// launcher-a-production-desk.html, with grafts from L-B (teaching footer +
+// dashed Custom card) and L-C (⌘K command palette).
 //
-// Flow: pick an archetype → create panel slides in (name + aspect enum) →
-// "Create & open" calls `project.create` (mock) → project-store.openProject
-// → App.tsx swaps to the pane layout. Recent-project rows and the trust-gate
-// "Grant & open" both short-circuit straight to openProject with a synthetic
-// summary — real folder access + SQLite-backed recents are shell-side work
-// (WP-04 / launcher.md §"Gaps").
+// THE HONESTY RULE (this rebuild's core): render ONLY data that has a real
+// seam. Recents come from the real project.list() (a ProjectSummary that
+// carries name / path / last-opened but NO archetype / aspect / cell-count /
+// render-coverage / exported-status for an un-opened project), so those
+// decorations are dropped rather than faked. Widgets whose data isn't reachable
+// in Wave 1 are OMITTED (see the report's deferral list): poster thumbnails,
+// "Latest export" card, render-engine stat facts, a user-name greeting.
+//
+// Every create/open/list call is wrapped in try/catch with a visible surface
+// (toast + inline error). Open-folder consumes the shell's real picker/grant
+// result honestly — cancel does nothing, denial shows "access denied", success
+// opens the actually-picked path. No pkg-side trust pre-modal (the shell's
+// native picker + grant dialog is the single consent surface).
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { archetypeApi, projectApi, getMcpClient } from '../mcp-client';
+import { archetypeApi, projectApi, renderApi, getMcpClient, type McpClient } from '../mcp-client';
 import { openFolder } from '../bridge';
 import { useProjectStore } from '../project-store';
-import { presentationFor, RECENT, type RecentProject } from '../__mocks__/launcher';
-import type { AspectRatio, Archetype } from '../mcp-types';
+import { openProjectByPath } from '../lib/open-project';
+import { loadLastProject, clearLastProject } from '../lib/project-persistence';
+import type { AspectRatio, Archetype, EngineCapability } from '../mcp-types';
+import { Icon } from './launcher/icons';
+import { Gallery } from './launcher/Gallery';
+import { Recents } from './launcher/Recents';
+import { CommandPalette, type PaletteAction } from './launcher/CommandPalette';
+import { derivePhase, normalizeRecent, type RecentRow } from './launcher/presentation';
 
-// ─── Inline icons (lucide subset — no icon dependency) ──────────────────
+// ─── toasts ──────────────────────────────────────────────────────────────
 
-const ICON_PATHS: Record<string, string | string[]> = {
-  sparkles: 'M12 3l1.9 4.6L18.5 9.5 13.9 11.4 12 16l-1.9-4.6L5.5 9.5 10.1 7.6ZM5 16l.9 2.1L8 19l-2.1.9L5 22l-.9-2.1L2 19l2.1-.9ZM19 14l.6 1.5L21 16l-1.4.5L19 18l-.6-1.5L17 16l1.4-.5Z',
-  film: 'M2 2h20v20H2zM2 7h20M2 17h20M7 2v20M17 2v20',
-  package: 'M16.5 9.4 7.55 4.24M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Zm-9 5.5V12m0 0 8.7-5M12 12 3.3 7',
-  scissors: 'M6 9a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM6 21a3 3 0 1 0 0-6 3 3 0 0 0 0 6ZM20 4 8.12 15.88M14.47 14.48 20 20M8.12 8.12 12 12',
-  list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
-  music: 'M9 18V5l12-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm12-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z',
-  mic: 'M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3ZM19 10v2a7 7 0 0 1-14 0v-2M12 19v3',
-  plus: 'M12 5v14M5 12h14',
-  folder: 'M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z',
-  clock: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20ZM12 6v6l4 2',
-  shield: 'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z',
-  arrow: 'M5 12h14M12 5l7 7-7 7',
-  check: 'M20 6 9 17l-5-5',
-  x: 'M18 6 6 18M6 6l12 12',
-  message: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
-};
-
-function Icon({ name, size = 14, className = '' }: { name: string; size?: number; className?: string }) {
-  const d = ICON_PATHS[name] ?? ICON_PATHS.package;
-  return (
-    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
-      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className} aria-hidden="true">
-      {Array.isArray(d) ? d.map((p, i) => <path key={i} d={p} />) : <path d={d} />}
-    </svg>
-  );
+interface Toast {
+  id: number;
+  kind: 'success' | 'error' | 'info';
+  title: string;
+  detail?: string;
+  action?: { label: string; run: () => void };
 }
 
-const ASPECTS: { id: AspectRatio; res: string; note: string }[] = [
-  { id: '16:9', res: '1920×1080', note: 'landscape' },
-  { id: '9:16', res: '1080×1920', note: 'TikTok / Reels' },
-  { id: '1:1',  res: '1080×1080', note: 'square' },
-];
-
-function accentStyle(accent: string): React.CSSProperties {
-  // 'cyan' has no --beat-accent- token (contract §5 lists 6 canonical
-  // accents) — fall back to --info, the closest cool role.
-  const varName = accent === 'cyan' ? '--info' : `--beat-accent-${accent}`;
-  return {
-    color: `var(${varName})`,
-    background: accent === 'cyan' ? 'color-mix(in srgb, var(--info) 14%, transparent)' : `var(${varName}-soft)`,
-    borderColor: accent === 'cyan' ? 'color-mix(in srgb, var(--info) 34%, var(--border))' : `var(${varName}-border)`,
-  };
+function errText(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e);
+  // Strip the internal '[studio] <tool> failed:' prefix from user-facing copy.
+  return m.replace(/^\[studio\]\s*/, '').slice(0, 200);
 }
 
-// ─── Archetype card ─────────────────────────────────────────────────────
-
-function ArchetypeCard({
-  archetype,
-  selected,
-  onPick,
-}: {
-  archetype: Archetype;
-  selected: boolean;
-  onPick: () => void;
-}) {
-  // Every archetype gets a card — presentationFor() falls back to a generic
-  // decoration for ids the map doesn't enumerate (real catalog ids), so a
-  // real `ai_short` / `music_video` never silently drops out of the gallery.
-  const pres = presentationFor(archetype.id);
-  return (
-    <button
-      type="button"
-      onClick={onPick}
-      aria-label={`${archetype.name} — ${pres.beats}`}
-      className={
-        'flex flex-col gap-2 rounded-xl border bg-surface p-4 text-left transition-transform hover:-translate-y-0.5 '
-        + (selected ? 'border-[var(--border-strong)] ring-1 ring-[var(--border-strong)]' : 'border-soft')
-      }
-    >
-      <div className="flex items-center justify-between">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg border" style={accentStyle(pres.accent)}>
-          <Icon name={pres.icon} size={15} />
-        </div>
-        <span
-          className="rounded px-1.5 py-0.5 font-mono text-[10px] ring-1 ring-inset"
-          style={{ color: 'var(--beat-accent-emerald)', background: 'var(--beat-accent-emerald-soft)', borderColor: 'var(--beat-accent-emerald-border)' }}
-        >
-          P1
-        </span>
-      </div>
-      <div className="text-sm font-semibold text-fg">{archetype.name}</div>
-      <div className="font-mono text-[11px] leading-snug text-fg-faint">{pres.beats}</div>
-      <div className="text-xs leading-snug text-fg-muted">{pres.blurb}</div>
-      <div className="mt-1 flex items-center gap-1.5 text-[10px] text-fg-faint">
-        <span className="rounded border px-1.5 py-0.5" style={accentStyle(pres.accent)}>{pres.engine}</span>
-        <span className="rounded border border-soft px-1.5 py-0.5 text-fg-muted">{pres.duration}</span>
-      </div>
-    </button>
-  );
-}
-
-// ─── Create panel ───────────────────────────────────────────────────────
-
-function CreatePanel({
-  archetype,
-  onClose,
-  onCreate,
-}: {
-  archetype: Archetype;
-  onClose: () => void;
-  onCreate: (name: string, aspect: AspectRatio) => void;
-}) {
-  const pres = presentationFor(archetype.id);
-  const [name, setName] = useState('');
-  const [aspect, setAspect] = useState<AspectRatio>('16:9');
-  const placeholder = archetype.id.includes('music') ? 'label-anthem' : archetype.id === 'product' ? 'q2-launch' : `my-${archetype.id.replace(/_/g, '-')}`;
-
-  return (
-    <div className="sticky top-4 flex flex-col gap-4 rounded-xl border border-soft bg-surface p-4">
-      <div className="flex items-start justify-between">
-        <div className="flex items-center gap-2">
-          <div className="flex h-8 w-8 items-center justify-center rounded-lg border" style={accentStyle(pres?.accent ?? 'sky')}>
-            <Icon name={pres?.icon ?? 'package'} size={15} />
-          </div>
-          <div>
-            <div className="text-sm font-semibold text-fg">New {archetype.name} project</div>
-            <div className="font-mono text-[11px] text-fg-faint">archetype.instantiate_into_project</div>
-          </div>
-        </div>
-        <button type="button" onClick={onClose} aria-label="Close create panel" className="text-fg-faint hover:text-fg">
-          <Icon name="x" size={16} />
-        </button>
-      </div>
-
-      <label className="block">
-        <span className="text-[11px] uppercase tracking-wide text-fg-faint">Project name</span>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder={placeholder}
-          className="input mt-1 w-full font-mono"
-          aria-label="Project name"
-        />
-      </label>
-
-      <div>
-        <span className="text-[11px] uppercase tracking-wide text-fg-faint">Aspect ratio</span>
-        <div className="mt-1 grid grid-cols-3 gap-2" role="radiogroup" aria-label="Aspect ratio">
-          {ASPECTS.map((opt) => (
-            <button
-              key={opt.id}
-              type="button"
-              role="radio"
-              aria-checked={aspect === opt.id}
-              onClick={() => setAspect(opt.id)}
-              className={
-                'rounded-lg border px-2 py-2 text-center '
-                + (aspect === opt.id ? 'border-[var(--border-strong)] bg-raised' : 'border-soft hover:border-[var(--border-strong)]')
-              }
-            >
-              <div className="text-sm font-semibold text-fg">{opt.id}</div>
-              <div className="font-mono text-[10px] text-fg-faint">{opt.res}</div>
-              <div className="text-[10px] text-fg-faint">{opt.note}</div>
-            </button>
-          ))}
-        </div>
-        <p className="mt-1 text-[10px] text-fg-faint">9:16 renders a TikTok safe-zone overlay on the canvas (G1).</p>
-      </div>
-
-      <button
-        type="button"
-        onClick={() => onCreate(name || placeholder, aspect)}
-        className="flex w-full items-center justify-center gap-2 rounded-lg bg-[var(--fg)] py-2.5 text-sm font-semibold text-[var(--bg-base)] hover:opacity-90"
-      >
-        <Icon name="arrow" size={15} /> Create &amp; open
-      </button>
-      <p className="text-[10px] leading-relaxed text-fg-faint">
-        Materializes the block chain into beats + cells, then opens the in-project layout. You can
-        also just ask the agent in chat — the launcher only removes the blank-canvas start.
-      </p>
-    </div>
-  );
-}
-
-// ─── View ───────────────────────────────────────────────────────────────
+// ─── view ──────────────────────────────────────────────────────────────────
 
 export function LauncherView() {
   const openProject = useProjectStore((s) => s.openProject);
 
-  const [archetypes, setArchetypes] = useState<Archetype[]>([]);
-  const [picked, setPicked] = useState<Archetype | null>(null);
-  const [trustOpen, setTrustOpen] = useState(false);
-  const [toast, setToast] = useState<{ name: string; archetype_id: string; aspect: AspectRatio } | null>(null);
+  const clientRef = useRef<McpClient | null>(null);
+  const [mode, setMode] = useState<'real' | 'mock' | null>(null);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const client = await getMcpClient();
-      const { archetypes: list } = await archetypeApi.list(client);
-      if (!cancelled) setArchetypes(list);
-    })();
-    return () => { cancelled = true; };
+  const [archetypes, setArchetypes] = useState<Archetype[]>([]);
+  const [archLoading, setArchLoading] = useState(true);
+  const [archError, setArchError] = useState<string | null>(null);
+
+  const [recents, setRecents] = useState<RecentRow[]>([]);
+  const [recentsLoading, setRecentsLoading] = useState(true);
+  const [recentsError, setRecentsError] = useState<string | null>(null);
+
+  const [engines, setEngines] = useState<EngineCapability[]>([]);
+
+  const [picked, setPicked] = useState<Archetype | null>(null);
+  const [galleryOpen, setGalleryOpen] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
+  const [opening, setOpening] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+
+  // Auto-reopen (audit: project-open-not-rehydrated): after a sidecar/dev-reload
+  // the open-project registry is gone and we land here; if a project was open we
+  // reopen it quietly. `reopening` shows the "Reopening <name>…" banner;
+  // `reopenError` is the honest failure banner (moved/denied → persisted entry
+  // cleared, stay on the desk). `reopenAttempted` guards one attempt per mount.
+  const [reopening, setReopening] = useState<string | null>(null);
+  const [reopenError, setReopenError] = useState<{ name: string; detail: string } | null>(null);
+  const reopenAttempted = useRef(false);
+
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const toastId = useRef(0);
+  const galleryRef = useRef<HTMLDivElement>(null);
+
+  const pushToast = useCallback((t: Omit<Toast, 'id'>) => {
+    const id = ++toastId.current;
+    setToasts((cur) => [...cur, { ...t, id }]);
+    window.setTimeout(() => setToasts((cur) => cur.filter((x) => x.id !== id)), 6500);
+    return id;
+  }, []);
+  const dismissToast = useCallback((id: number) => {
+    setToasts((cur) => cur.filter((x) => x.id !== id));
   }, []);
 
-  async function createAndOpen(archetype: Archetype, name: string, aspect: AspectRatio) {
-    const client = await getMcpClient();
-    const { project_id } = await projectApi.create(client, {
-      archetype_id: archetype.id,
-      name,
-      path: `~/Projects/${name}`,
-      aspect_ratio: aspect,
+  // ─── loaders ────────────────────────────────────────────────────────────
+
+  const loadArchetypes = useCallback(async () => {
+    setArchLoading(true);
+    setArchError(null);
+    try {
+      const client = clientRef.current ?? (clientRef.current = await getMcpClient());
+      setMode(client.mode);
+      const { archetypes: list } = await archetypeApi.list(client);
+      setArchetypes(list);
+    } catch (e) {
+      setArchError(errText(e));
+      setArchetypes([]);
+    } finally {
+      setArchLoading(false);
+    }
+  }, []);
+
+  const loadRecents = useCallback(async () => {
+    setRecentsLoading(true);
+    setRecentsError(null);
+    try {
+      const client = clientRef.current ?? (clientRef.current = await getMcpClient());
+      setMode(client.mode);
+      const { projects } = await projectApi.list(client);
+      const rows = (projects ?? [])
+        .map(normalizeRecent)
+        .filter((r): r is RecentRow => r !== null);
+      setRecents(rows);
+    } catch (e) {
+      setRecentsError(errText(e));
+      setRecents([]);
+    } finally {
+      setRecentsLoading(false);
+    }
+  }, []);
+
+  const loadEngines = useCallback(async () => {
+    try {
+      const client = clientRef.current ?? (clientRef.current = await getMcpClient());
+      const { engines: list } = await renderApi.list_engines(client);
+      setEngines(list ?? []);
+    } catch {
+      // Honest degrade: no engine seam → omit the rail card entirely.
+      setEngines([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadArchetypes();
+    void loadRecents();
+    void loadEngines();
+  }, [loadArchetypes, loadRecents, loadEngines]);
+
+  // ─── actions ────────────────────────────────────────────────────────────
+
+  const createAndOpen = useCallback(
+    async (archetype: Archetype, name: string, aspect: AspectRatio) => {
+      setCreating(true);
+      setCreateError(null);
+      try {
+        const client = clientRef.current ?? (clientRef.current = await getMcpClient());
+        const { project_id } = await projectApi.create(client, {
+          archetype_id: archetype.id,
+          name,
+          path: `~/Projects/${name}`,
+          aspect_ratio: aspect,
+        });
+        setPicked(null);
+        openProject({ project_id, name, archetype_id: archetype.id, aspect_ratio: aspect, path: `~/Projects/${name}` });
+      } catch (e) {
+        const msg = errText(e);
+        setCreateError(msg); // keep the panel + its input; surface inline
+        pushToast({ kind: 'error', title: `Couldn’t create “${name}”`, detail: msg });
+      } finally {
+        setCreating(false);
+      }
+    },
+    [openProject, pushToast],
+  );
+
+  // Open a project by path, then fetch its real archetype/aspect (project.info)
+  // so the in-project header shows the truth rather than a guess. Delegates to
+  // the shared `openProjectByPath` helper (lib/open-project.ts) so the shell
+  // side-menu's `recent:<path>` rows reuse the SAME open + enrichment +
+  // persistence flow rather than forking it.
+  const openByPath = useCallback(
+    (path: string, fallbackName: string) => openProjectByPath(path, fallbackName),
+    [],
+  );
+
+  const openRecentRow = useCallback(
+    async (row: RecentRow) => {
+      if (opening) return;
+      setOpening(true);
+      try {
+        await openByPath(row.path || `~/Projects/${row.name}`, row.name);
+      } catch (e) {
+        pushToast({
+          kind: 'error',
+          title: `Couldn’t open “${row.name}”`,
+          detail: errText(e),
+          action: { label: 'Retry', run: () => void openRecentRow(row) },
+        });
+      } finally {
+        setOpening(false);
+      }
+    },
+    [opening, openByPath, pushToast],
+  );
+
+  // Resume opens the first row whose folder still exists on disk — never a
+  // dimmed "missing" row (audit: Recents hygiene).
+  const firstOpenable = recents.find((r) => r.exists) ?? null;
+  const resumeLast = useCallback(() => {
+    const target = recents.find((r) => r.exists);
+    if (target) void openRecentRow(target);
+  }, [recents, openRecentRow]);
+
+  // Auto-reopen the last project once the REAL engine is ready (mode==='real').
+  // Standalone/mock never auto-reopens (nothing real on disk to reopen). One
+  // attempt per mount (reopenAttempted) so a failure can't loop. On success
+  // openByPath → openProject flips isProjectOpen and this Launcher unmounts.
+  useEffect(() => {
+    if (mode !== 'real') return;
+    if (reopenAttempted.current) return;
+    const last = loadLastProject();
+    if (!last?.path) return;
+    reopenAttempted.current = true;
+    const label = last.name || last.path;
+    setReopening(label);
+    setReopenError(null);
+    void (async () => {
+      try {
+        await openByPath(last.path, label);
+        // Success → the view unmounts; no need to clear `reopening`.
+      } catch (e) {
+        // Moved / access denied / sidecar error — forget it so we don't retry
+        // on the next mount, and tell the user honestly. They stay on the desk.
+        clearLastProject();
+        setReopening(null);
+        setReopenError({ name: label, detail: errText(e) });
+      }
+    })();
+  }, [mode, openByPath]);
+
+  // Open-folder: the shell pops its OWN native picker + grant dialog. We consume
+  // the real result honestly — no pkg-side pre-modal, no hardcoded mock project.
+  const openFolderFlow = useCallback(async () => {
+    if (opening) return;
+    setOpening(true);
+    try {
+      const res = await openFolder();
+      const sc = (res.structuredContent ?? {}) as {
+        ok?: boolean;
+        cancelled?: boolean;
+        granted?: boolean;
+        path?: string;
+      };
+      if (sc.cancelled) return; // user cancelled the OS picker — do nothing
+      if (sc.ok === false || sc.granted === false || !sc.path) {
+        pushToast({ kind: 'info', title: 'Access denied — nothing opened' });
+        return;
+      }
+      await openByPath(sc.path, sc.path.split('/').filter(Boolean).pop() ?? 'project');
+      void loadRecents(); // the just-opened project now belongs in recents
+    } catch (e) {
+      pushToast({
+        kind: 'error',
+        title: 'Couldn’t open that folder',
+        detail: errText(e),
+        action: { label: 'Try again', run: () => void openFolderFlow() },
+      });
+    } finally {
+      setOpening(false);
+    }
+  }, [opening, openByPath, pushToast, loadRecents]);
+
+  const toggleGallery = useCallback(() => {
+    setGalleryOpen((v) => {
+      const next = !v;
+      if (next) {
+        window.setTimeout(
+          () => galleryRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }),
+          0,
+        );
+      }
+      return next;
     });
-    setToast({ name, archetype_id: archetype.id, aspect });
-    setPicked(null);
-    openProject({ project_id, name, archetype_id: archetype.id, aspect_ratio: aspect });
+  }, []);
+
+  const pickArchetype = useCallback((a: Archetype) => {
+    setPicked(a);
+    setCreateError(null);
+    setGalleryOpen(true);
+  }, []);
+
+  const onDisabledArchetype = useCallback(
+    (a: Archetype) => {
+      pushToast({
+        kind: 'info',
+        title: `${a.name} isn’t available yet`,
+        detail: 'Explainer, Product & Tutorial are live now — the rest ship in a later phase.',
+      });
+    },
+    [pushToast],
+  );
+
+  const onCustom = useCallback(() => {
+    pushToast({
+      kind: 'info',
+      title: 'Custom chains are composed with your Chi',
+      detail: 'Ask in chat to start one — the desk seeds one-click templates only.',
+    });
+  }, [pushToast]);
+
+  // ─── keyboard: R / O / N + ⌘K ─────────────────────────────────────────────
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName ?? '';
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || target?.isContentEditable;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+        return;
+      }
+      if (paletteOpen || typing || e.metaKey || e.ctrlKey || e.altKey) return;
+      const k = e.key.toLowerCase();
+      if (k === 'r' && firstOpenable) {
+        e.preventDefault();
+        resumeLast();
+      } else if (k === 'o') {
+        e.preventDefault();
+        void openFolderFlow();
+      } else if (k === 'n') {
+        e.preventDefault();
+        toggleGallery();
+      }
+    }
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [paletteOpen, firstOpenable, resumeLast, openFolderFlow, toggleGallery]);
+
+  // ─── command-palette actions ──────────────────────────────────────────────
+
+  const paletteActions: PaletteAction[] = [];
+  if (firstOpenable) {
+    paletteActions.push({
+      id: 'resume',
+      label: 'Resume last project',
+      hint: firstOpenable.name,
+      icon: 'play',
+      keywords: 'recent open continue',
+      run: resumeLast,
+    });
+  }
+  paletteActions.push(
+    { id: 'open', label: 'Open folder…', hint: 'pick a project folder on disk', icon: 'folder', keywords: 'existing disk import', run: () => void openFolderFlow() },
+    { id: 'new', label: 'New project', hint: 'seed beats & cells from a template', icon: 'plus', keywords: 'create template archetype', run: toggleGallery },
+  );
+  for (const a of archetypes) {
+    // Same phase guard as the gallery: unavailable (P2/P3) archetypes don't
+    // get a create shortcut — the palette must not bypass the disabled card.
+    if (!derivePhase(a.id).available) continue;
+    paletteActions.push({
+      id: `new-${a.id}`,
+      label: `New ${a.name} project`,
+      hint: 'template',
+      icon: 'plus',
+      keywords: `create ${a.id}`,
+      run: () => pickArchetype(a),
+    });
   }
 
-  async function openRecent(recent: RecentProject) {
-    const client = await getMcpClient();
-    const { project_id } = await projectApi.open(client, `~/Projects/${recent.slug}`);
-    openProject({ project_id, name: recent.slug, archetype_id: recent.archetype_id, aspect_ratio: recent.aspect });
-  }
-
-  async function grantAndOpen() {
-    setTrustOpen(false);
-    await openFolder();
-    // Mirrors designs/launcher.html's trust-gate demo target — a real grant
-    // resolves to whatever folder the OS picker returned (shell-side, WP-04).
-    openProject({
-      project_id: 'mock-granted',
-      name: 'label-anthem-mv',
-      archetype_id: 'musicvideo',
-      aspect_ratio: '9:16',
-    });
-  }
+  const engineReady = mode === 'real';
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-auto bg-base text-fg">
-      <header className="sticky top-0 z-10 flex items-center justify-between border-b border-soft bg-sunken/90 px-4 py-3 backdrop-blur">
+    <div className="launcher-desk flex h-full min-h-0 flex-col overflow-auto bg-base text-fg">
+      {/* App header */}
+      <header className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-soft bg-sunken/90 px-5 py-2.5 backdrop-blur">
         <div className="flex items-center gap-2.5">
           <div
-            className="flex h-7 w-7 items-center justify-center rounded-lg border"
-            style={{ borderColor: 'var(--border)', color: 'var(--beat-accent-violet)', background: 'var(--beat-accent-violet-soft)' }}
+            className="flex h-8 w-8 items-center justify-center rounded-md border"
+            style={{ color: 'var(--tint-studio-fg)', background: 'var(--tint-studio-bg)', borderColor: 'color-mix(in srgb, var(--ember) 34%, var(--border))' }}
           >
-            <Icon name="sparkles" size={15} />
+            <Icon name="film" size={16} />
           </div>
           <div>
             <div className="text-sm font-semibold leading-tight text-fg">Studio</div>
             <div className="font-mono text-[10px] leading-tight text-fg-faint">no project open</div>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => setTrustOpen(true)}
-          className="flex items-center gap-2 rounded-lg border border-soft px-3 py-1.5 text-xs text-fg-muted hover:border-[var(--border-strong)] hover:text-fg"
-        >
-          <Icon name="folder" size={14} /> Open folder…
-        </button>
+        <div className="flex items-center gap-3">
+          <span
+            className="hidden items-center gap-2 rounded-full border border-soft px-2.5 py-1 font-mono text-[11px] text-fg-muted sm:inline-flex"
+            style={{ background: 'var(--bg-surface)' }}
+          >
+            <span
+              className="h-1.5 w-1.5 rounded-full"
+              style={{
+                background: engineReady ? 'var(--live)' : 'var(--fg-faint)',
+                boxShadow: engineReady ? '0 0 0 3px var(--live-soft)' : 'none',
+              }}
+            />
+            {engineReady ? 'Studio engine · ready' : 'Demo data'}
+          </span>
+          <button
+            type="button"
+            onClick={() => void openFolderFlow()}
+            disabled={opening}
+            className="flex items-center gap-2 rounded-md border border-soft px-3 py-1.5 text-xs text-fg-muted hover:border-[var(--chip-carve)] hover:text-fg disabled:opacity-60"
+          >
+            <Icon name="folder" size={14} /> Open folder…
+          </button>
+        </div>
       </header>
 
-      <main className="mx-auto grid w-full max-w-6xl grid-cols-12 gap-6 px-6 py-8">
-        <section className={picked ? 'col-span-12 lg:col-span-8' : 'col-span-12'}>
-          <div className="mb-1 flex items-baseline justify-between">
-            <h1 className="text-lg font-semibold text-fg">Start a project</h1>
-          </div>
-          <p className="mb-5 max-w-2xl text-sm text-fg-muted">
-            Pick a template to seed beats + cells, open an existing project folder, or just ask the
-            agent in chat — Claude drives the same <span className="font-mono text-fg">project.create</span> flow.
-          </p>
-          <div className={`grid gap-3 ${picked ? 'grid-cols-2' : 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4'}`} role="list">
-            {archetypes.map((a) => (
-              <ArchetypeCard
-                key={a.id}
-                archetype={a}
-                selected={picked?.id === a.id}
-                onPick={() => setPicked(a)}
-              />
-            ))}
-          </div>
-
-          <div className="mt-8">
-            <div className="mb-2 flex items-center gap-2 text-xs uppercase tracking-wide text-fg-faint">
-              <Icon name="clock" size={13} /> Recent projects
-            </div>
-            <div className="divide-y divide-[var(--border-soft)] overflow-hidden rounded-xl border border-soft">
-              {RECENT.map((r) => {
-                const pres = presentationFor(r.archetype_id);
-                return (
-                  <button
-                    key={r.slug}
-                    type="button"
-                    onClick={() => openRecent(r)}
-                    className="flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-raised/60"
-                  >
-                    <div className="flex h-7 w-7 items-center justify-center rounded-lg border" style={accentStyle(pres?.accent ?? 'sky')}>
-                      <Icon name={pres?.icon ?? 'package'} size={13} />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate font-mono text-sm text-fg">{r.slug}</div>
-                      <div className="text-[11px] text-fg-faint">
-                        {r.archetype_id} · {r.cells} cells · {r.aspect}
-                      </div>
-                    </div>
-                    <span className="whitespace-nowrap text-[11px] text-fg-faint">{r.ago}</span>
-                    <Icon name="arrow" size={14} className="text-fg-faint" />
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-
-          <p className="mt-6 flex items-center gap-1.5 text-[11px] text-fg-faint">
-            <Icon name="message" size={13} /> Chat / MCP stays the primary authoring loop — the launcher is the
-            no-project entry point, not a required step.
-          </p>
-        </section>
-
-        {picked && (
-          <aside className="col-span-12 lg:col-span-4">
-            <CreatePanel
-              archetype={picked}
-              onClose={() => setPicked(null)}
-              onCreate={(name, aspect) => createAndOpen(picked, name, aspect)}
-            />
-          </aside>
-        )}
-      </main>
-
-      {trustOpen && (
-        <div
-          className="fixed inset-0 z-30 flex items-center justify-center bg-black/60 p-4"
-          onClick={() => setTrustOpen(false)}
-          role="presentation"
-        >
+      <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-7">
+        {/* Auto-reopen: quiet "Reopening…" while we re-establish the last open
+            project after a sidecar/dev-reload; honest failure banner if it moved
+            or access was denied (audit: project-open-not-rehydrated). */}
+        {reopening && (
           <div
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="trust-gate-title"
-            className="w-full max-w-sm rounded-xl border border-soft bg-surface p-5"
-            onClick={(e) => e.stopPropagation()}
+            role="status"
+            aria-live="polite"
+            className="mb-5 flex items-center gap-2.5 rounded-lg border border-soft bg-surface px-4 py-2.5 text-[13px] text-fg-muted"
           >
-            <div className="mb-2 flex items-center gap-2">
-              <div
-                className="flex h-8 w-8 items-center justify-center rounded-lg border"
-                style={{ color: 'var(--beat-accent-amber)', background: 'var(--beat-accent-amber-soft)', borderColor: 'var(--beat-accent-amber-border)' }}
-              >
-                <Icon name="shield" size={16} />
-              </div>
-              <div id="trust-gate-title" className="text-sm font-semibold text-fg">Grant access to this folder?</div>
+            <span
+              aria-hidden="true"
+              className="h-3.5 w-3.5 flex-none animate-spin rounded-full border-2"
+              style={{ borderColor: 'var(--border)', borderTopColor: 'var(--primary)' }}
+            />
+            Reopening{' '}
+            <span className="font-mono text-fg">{reopening}</span>…
+          </div>
+        )}
+        {reopenError && (
+          <div
+            role="alert"
+            className="mb-5 flex items-start gap-3 rounded-lg border px-4 py-3"
+            style={{ borderColor: 'color-mix(in srgb, var(--danger) 44%, var(--border))', background: 'var(--danger-soft)' }}
+          >
+            <span className="mt-0.5 flex-none" style={{ color: 'var(--danger)' }}>
+              <Icon name="alert" size={16} />
+            </span>
+            <div className="min-w-0 flex-1 text-[13px] leading-snug">
+              <div className="font-semibold text-fg">Couldn&rsquo;t reopen &ldquo;{reopenError.name}&rdquo;</div>
+              <p className="mt-0.5 text-fg-muted">
+                It may have moved or access was denied. Removed it from the last-opened slot — open it again from Recent projects or a folder below.{' '}
+                <span className="font-mono text-fg-faint">{reopenError.detail}</span>
+              </p>
             </div>
-            <p className="mb-1 font-mono text-xs text-fg-muted">~/Movies/label-anthem-mv</p>
-            <p className="mb-4 text-xs leading-relaxed text-fg-faint">
-              Studio reads + writes project files here. Granted once per folder, like VS Code
-              workspace trust — subsequent opens won't reprompt.
+            <button
+              type="button"
+              onClick={() => setReopenError(null)}
+              aria-label="Dismiss"
+              className="flex-none text-fg-faint hover:text-fg"
+            >
+              <Icon name="x" size={14} />
+            </button>
+          </div>
+        )}
+
+        {/* Command band */}
+        <div className="mb-6 flex flex-wrap items-end justify-between gap-6">
+          <div>
+            <h1
+              className="text-[28px] font-medium leading-tight tracking-[-0.01em]"
+              style={{ fontFamily: 'var(--font-display)' }}
+            >
+              Back at the{' '}
+              <em className="not-italic" style={{ fontStyle: 'italic', color: 'var(--kola-amber)' }}>
+                desk
+              </em>
+              .
+            </h1>
+            <p className="mt-1.5 max-w-[46ch] text-sm text-fg-muted">
+              Pick up a project where you left it, open a folder from disk, or start a new one from a
+              template. Chat with your Chi still drives the same production loop — the desk just skips
+              the blank start.
             </p>
-            <div className="flex justify-end gap-2">
+          </div>
+          <div className="flex flex-col items-end gap-2">
+            <div className="flex flex-wrap justify-end gap-2">
+              {firstOpenable && (
+                <button
+                  type="button"
+                  onClick={resumeLast}
+                  disabled={opening}
+                  className="flex items-center gap-2 rounded-lg px-4 py-2.5 text-sm font-semibold disabled:opacity-60"
+                  style={{ background: 'var(--primary)', color: 'var(--primary-fg)' }}
+                >
+                  <Icon name="play" size={15} filled /> Resume last project
+                </button>
+              )}
               <button
                 type="button"
-                onClick={() => setTrustOpen(false)}
-                className="rounded-lg border border-soft px-3 py-1.5 text-xs text-fg-muted hover:border-[var(--border-strong)]"
+                onClick={() => void openFolderFlow()}
+                disabled={opening}
+                className="flex items-center gap-2 rounded-lg border border-soft bg-raised px-4 py-2.5 text-sm font-semibold text-fg hover:border-[var(--chip-carve)] disabled:opacity-60"
               >
-                Cancel
+                <Icon name="folder" size={15} /> Open folder…
               </button>
               <button
                 type="button"
-                onClick={grantAndOpen}
-                className="rounded-lg bg-[var(--fg)] px-3 py-1.5 text-xs font-semibold text-[var(--bg-base)] hover:opacity-90"
+                onClick={toggleGallery}
+                aria-expanded={galleryOpen}
+                aria-controls="new-project-gallery"
+                className="flex items-center gap-2 rounded-lg border border-soft bg-raised px-4 py-2.5 text-sm font-semibold text-fg hover:border-[var(--chip-carve)]"
               >
-                Grant &amp; open
+                <Icon name="plus" size={15} /> New project
+                <Icon
+                  name="chevron"
+                  size={14}
+                  className={'transition-transform ' + (galleryOpen ? 'rotate-180' : '')}
+                />
               </button>
+            </div>
+            <div className="flex gap-3.5 font-mono text-[11px] text-fg-faint" aria-hidden="true">
+              <span>
+                <kbd className="mr-1 rounded border border-soft px-1.5 py-px">R</kbd>resume
+              </span>
+              <span>
+                <kbd className="mr-1 rounded border border-soft px-1.5 py-px">O</kbd>open
+              </span>
+              <span>
+                <kbd className="mr-1 rounded border border-soft px-1.5 py-px">N</kbd>new
+              </span>
+              <span>
+                <kbd className="mr-1 rounded border border-soft px-1.5 py-px">⌘K</kbd>all
+              </span>
             </div>
           </div>
         </div>
-      )}
 
-      {toast && (
-        <div
-          role="status"
-          className="fixed bottom-5 left-1/2 z-20 flex max-w-md -translate-x-1/2 items-center gap-3 rounded-xl border px-4 py-3 shadow-2xl"
-          style={{ borderColor: 'var(--beat-accent-emerald-border)', background: 'var(--bg-raised)' }}
-        >
-          <div
-            className="flex h-7 w-7 items-center justify-center rounded-lg border"
-            style={{ color: 'var(--beat-accent-emerald)', background: 'var(--beat-accent-emerald-soft)', borderColor: 'var(--beat-accent-emerald-border)' }}
-          >
-            <Icon name="check" size={15} />
-          </div>
-          <div className="text-xs leading-snug">
-            <div className="text-fg">
-              Created <span className="font-mono text-[var(--beat-accent-emerald)]">{toast.name}</span>{' '}
-              ({toast.archetype_id} · {toast.aspect})
+        <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_320px]">
+          {/* Left column */}
+          <div className="flex flex-col gap-5">
+            <Recents
+              loading={recentsLoading}
+              error={recentsError}
+              rows={recents}
+              onOpen={openRecentRow}
+              onOpenFolder={() => void openFolderFlow()}
+              onNew={toggleGallery}
+              onRetry={() => void loadRecents()}
+            />
+
+            {/* Teaching footer (graft from L-B) */}
+            <div className="flex flex-wrap items-center gap-2 rounded-lg border border-soft bg-surface px-4 py-3 font-mono text-[11px] text-fg-muted">
+              <span className="uppercase tracking-[0.06em] text-fg-faint">the loop</span>
+              <span className="flex items-center gap-1.5">
+                <Icon name="list" size={12} /> Beats &amp; cells
+              </span>
+              <Icon name="arrow" size={12} className="text-fg-faint" />
+              <span className="flex items-center gap-1.5">
+                <Icon name="film" size={12} /> Compose
+              </span>
+              <Icon name="arrow" size={12} className="text-fg-faint" />
+              <span className="flex items-center gap-1.5">
+                <Icon name="check" size={12} /> Render &amp; export
+              </span>
             </div>
-            <div className="font-mono text-fg-faint">project.create → opening layout…</div>
+
+            {galleryOpen && (
+              <div ref={galleryRef} id="new-project-gallery">
+                <div className="mb-3 flex items-baseline justify-between gap-3">
+                  <h2 className="font-mono text-[12px] uppercase tracking-[0.05em] text-fg-muted">
+                    Start something new
+                  </h2>
+                  <span className="font-mono text-[11px] text-fg-faint">
+                    templates seed beats &amp; cells — edit everything after
+                  </span>
+                </div>
+                <Gallery
+                  archetypes={archetypes}
+                  loading={archLoading}
+                  error={archError}
+                  picked={picked}
+                  creating={creating}
+                  createError={createError}
+                  onPick={pickArchetype}
+                  onCloseCreate={() => setPicked(null)}
+                  onCreate={(name, aspect) => picked && void createAndOpen(picked, name, aspect)}
+                  onDisabled={onDisabledArchetype}
+                  onCustom={onCustom}
+                  onRetry={() => void loadArchetypes()}
+                />
+              </div>
+            )}
           </div>
-          <button type="button" onClick={() => setToast(null)} aria-label="Dismiss" className="text-fg-faint hover:text-fg">
-            <Icon name="x" size={14} />
-          </button>
+
+          {/* Rail — sticky below the sticky app header (top-0 + py-2.5 ≈ 3.5rem)
+              so the desk cards stay in view while recents/gallery scroll. */}
+          <aside className="sticky top-14 flex flex-col gap-4 self-start" aria-label="Desk sidebar">
+            <div className="rounded-lg border border-soft bg-surface p-4">
+              <h3 className="mb-2.5 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.07em] text-fg-muted">
+                <Icon name="command" size={13} /> Jump back in
+              </h3>
+              <div className="flex flex-col gap-2 text-[12.5px] text-fg-muted">
+                <div className="flex items-center justify-between gap-2">
+                  <span>Resume last project</span>
+                  <kbd className="rounded border border-soft px-1.5 py-px font-mono text-[11px]">R</kbd>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span>Open a folder from disk</span>
+                  <kbd className="rounded border border-soft px-1.5 py-px font-mono text-[11px]">O</kbd>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span>New from a template</span>
+                  <kbd className="rounded border border-soft px-1.5 py-px font-mono text-[11px]">N</kbd>
+                </div>
+                <div className="flex items-center justify-between gap-2">
+                  <span>All commands</span>
+                  <kbd className="rounded border border-soft px-1.5 py-px font-mono text-[11px]">⌘K</kbd>
+                </div>
+              </div>
+            </div>
+
+            {engines.length > 0 && (
+              <div className="rounded-lg border border-soft bg-surface p-4">
+                <h3 className="mb-2.5 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.07em] text-fg-muted">
+                  <Icon name="film" size={13} /> Render engines
+                </h3>
+                <div className="flex flex-col gap-2 text-[12.5px] text-fg-muted">
+                  {engines.map((e) => (
+                    <div key={e.id} className="flex items-center justify-between gap-2">
+                      <span className="text-fg">{e.id}</span>
+                      <span className="font-mono text-[10.5px] text-fg-faint">
+                        {e.aspect_ratios?.join(' · ')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div
+              className="rounded-lg border p-4"
+              style={{
+                borderColor: 'color-mix(in srgb, var(--agent) 30%, var(--border))',
+                background: 'color-mix(in srgb, var(--agent-soft) 55%, var(--bg-surface))',
+              }}
+            >
+              <h3
+                className="mb-2 flex items-center gap-1.5 font-mono text-[11px] uppercase tracking-[0.07em]"
+                style={{ color: 'color-mix(in srgb, var(--agent) 75%, var(--fg))' }}
+              >
+                <Icon name="message" size={13} /> Or ask your Chi
+              </h3>
+              <p className="text-[12.5px] leading-relaxed text-fg-muted">
+                Rather describe the video than click? Tell it to{' '}
+                <span style={{ fontFamily: 'var(--font-display)', fontStyle: 'italic', color: 'color-mix(in srgb, var(--agent) 80%, var(--fg))' }}>
+                  your Chi
+                </span>{' '}
+                in chat — it runs the same create, storyboard, and render steps the desk does, and the
+                result lands right here in Recent projects.
+              </p>
+            </div>
+          </aside>
+        </div>
+      </main>
+
+      <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} actions={paletteActions} />
+
+      {/* Toasts */}
+      {toasts.length > 0 && (
+        <div
+          className="fixed bottom-6 left-1/2 z-50 flex w-[min(440px,calc(100vw-32px))] -translate-x-1/2 flex-col items-center gap-2"
+          aria-live="polite"
+          aria-atomic="false"
+        >
+          {toasts.map((t) => (
+            <div
+              key={t.id}
+              role="status"
+              className="flex w-full items-start gap-3 rounded-lg border bg-raised px-3 py-3 shadow-2xl"
+              style={{
+                borderColor:
+                  t.kind === 'success'
+                    ? 'color-mix(in srgb, var(--live) 40%, var(--border))'
+                    : t.kind === 'error'
+                    ? 'color-mix(in srgb, var(--danger) 46%, var(--border))'
+                    : 'var(--border)',
+              }}
+            >
+              <span
+                className="mt-0.5 flex-none"
+                style={{
+                  color:
+                    t.kind === 'success'
+                      ? 'var(--live)'
+                      : t.kind === 'error'
+                      ? 'var(--danger)'
+                      : 'var(--info)',
+                }}
+              >
+                <Icon name={t.kind === 'success' ? 'check' : t.kind === 'error' ? 'alert' : 'arrow'} size={16} />
+              </span>
+              <div className="min-w-0 flex-1 text-xs leading-snug">
+                <div className="font-semibold text-fg">{t.title}</div>
+                {t.detail && <div className="mt-0.5 break-words font-mono text-fg-faint">{t.detail}</div>}
+                {t.action && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      t.action?.run();
+                      dismissToast(t.id);
+                    }}
+                    className="mt-1 font-mono text-[11.5px]"
+                    style={{ color: 'var(--info)' }}
+                  >
+                    {t.action.label}
+                  </button>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => dismissToast(t.id)}
+                aria-label="Dismiss"
+                className="flex-none text-fg-faint hover:text-fg"
+              >
+                <Icon name="x" size={14} />
+              </button>
+            </div>
+          ))}
         </div>
       )}
     </div>

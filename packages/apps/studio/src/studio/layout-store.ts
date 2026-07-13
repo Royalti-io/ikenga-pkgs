@@ -18,12 +18,24 @@ import { create } from 'zustand';
 
 import {
   DEFAULT_PANE_VIEWS,
+  DEFAULT_RATIOS,
   LAYOUTS,
   type LayoutId,
   type PaneIndex,
   type ViewId,
 } from './routes';
 import { loadLayout, saveLayout } from './lib/layout-persistence';
+
+/** Deep-clone the default ratio table so the store never mutates the module
+ *  constant (arrays are held by reference otherwise). */
+function freshRatios(): Record<LayoutId, number[]> {
+  return {
+    single: [...DEFAULT_RATIOS.single],
+    vsplit: [...DEFAULT_RATIOS.vsplit],
+    hsplit: [...DEFAULT_RATIOS.hsplit],
+    tripane: [...DEFAULT_RATIOS.tripane],
+  };
+}
 
 export interface LayoutStoreState {
   layout: LayoutId;
@@ -33,6 +45,11 @@ export interface LayoutStoreState {
   /** Which pane currently has keyboard focus (for the 1–5 view-switcher
    *  shortcut + the V-split focus trap, commit 15). */
   focusedPane: PaneIndex;
+  /** Per-preset divider ratios (draggable pane resizing). Each entry is the
+   *  first-side fraction (0–1) of that preset's divider(s); see routes.ts
+   *  DEFAULT_RATIOS for the index→divider mapping. Kept per preset so switching
+   *  presets restores each one's last drag position. */
+  ratios: Record<LayoutId, number[]>;
 }
 
 export interface LayoutStoreActions {
@@ -42,6 +59,11 @@ export interface LayoutStoreActions {
   /** Move focus to the next/prev pane within the active layout (F6 / Ctrl+`,
    *  commit 15). Wraps. */
   cycleFocus: (dir: 1 | -1) => void;
+  /** Set the ratio (first-side fraction, 0–1) of a divider in a preset. Callers
+   *  clamp to the min-pane constraint before calling (the store just stores). */
+  setRatio: (layout: LayoutId, divider: number, value: number) => void;
+  /** Reset a divider to its preset default (double-click on the divider). */
+  resetRatio: (layout: LayoutId, divider: number) => void;
   /** Bind persistence to an open project: rehydrate the stored layout +
    *  paneViews for `projectId`, then persist every subsequent change under it.
    *  Called from App.tsx when a project opens. */
@@ -56,6 +78,7 @@ const INITIAL: LayoutStoreState = {
   layout: 'vsplit',
   paneViews: { ...DEFAULT_PANE_VIEWS },
   focusedPane: 0,
+  ratios: freshRatios(),
 };
 
 export const useLayoutStore = create<LayoutStore>((set, get) => {
@@ -65,8 +88,8 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
 
   const persist = () => {
     if (!boundProjectId) return;
-    const { layout, paneViews } = get();
-    saveLayout(boundProjectId, { layout, paneViews });
+    const { layout, paneViews, ratios } = get();
+    saveLayout(boundProjectId, { layout, paneViews, ratios });
   };
 
   return {
@@ -97,6 +120,29 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
       set({ focusedPane: next });
     },
 
+    setRatio: (layout, divider, value) => {
+      set((s) => {
+        const current = s.ratios[layout];
+        if (divider < 0 || divider >= current.length) return s;
+        if (current[divider] === value) return s;
+        const next = current.slice();
+        next[divider] = value;
+        return { ratios: { ...s.ratios, [layout]: next } };
+      });
+      persist();
+    },
+
+    resetRatio: (layout, divider) => {
+      set((s) => {
+        const current = s.ratios[layout];
+        if (divider < 0 || divider >= current.length) return s;
+        const next = current.slice();
+        next[divider] = DEFAULT_RATIOS[layout][divider];
+        return { ratios: { ...s.ratios, [layout]: next } };
+      });
+      persist();
+    },
+
     bindPersistence: (projectId) => {
       boundProjectId = projectId;
       const restored = loadLayout(projectId);
@@ -104,10 +150,20 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
       set((s) => {
         const layout = restored.layout;
         const maxPane = (LAYOUTS[layout].panes - 1) as PaneIndex;
+        // Merge restored ratios over the defaults so a preset absent from
+        // storage (or with an out-of-range length) keeps its 50/50 default.
+        const ratios = freshRatios();
+        if (restored.ratios) {
+          for (const id of Object.keys(ratios) as LayoutId[]) {
+            const saved = restored.ratios[id];
+            if (saved && saved.length === ratios[id].length) ratios[id] = saved;
+          }
+        }
         return {
           layout,
           paneViews: { ...s.paneViews, ...restored.paneViews },
           focusedPane: Math.min(s.focusedPane, maxPane) as PaneIndex,
+          ratios,
         };
       });
     },

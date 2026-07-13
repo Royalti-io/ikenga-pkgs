@@ -1,9 +1,8 @@
 {
-  "name": "@ikenga/studio",
+  "name": "@ikenga/pkg-studio",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
-  "description": "com.ikenga.studio app pkg — project sidecar (storyboard/render queue + HuggingFace and Excalidraw renderer adapters), FFmpeg-backed exporter, and a 40-tool MCP server; iframe UI in progress.",
+  "description": "com.ikenga.studio app pkg \u2014 project sidecar (storyboard/render queue + HuggingFace and Excalidraw renderer adapters), FFmpeg-backed exporter, and a 40-tool MCP server; iframe UI in progress.",
   "scripts": {
     "dev": "vite",
     "build": "tsc -p tsconfig.web.json --noEmit && vite build",
@@ -12,7 +11,8 @@
     "build:sidecar": "bash sidecars/project/build.sh",
     "dev:sidecar": "bash sidecars/project/build.sh --watch",
     "build:mcp": "bash mcp/build.sh",
-    "dev:mcp": "bash mcp/build.sh --watch"
+    "dev:mcp": "bash mcp/build.sh --watch",
+    "prepublishOnly": "npm run build:mcp && npm run build:sidecar"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -46,5 +46,15 @@
     "tailwindcss": "4",
     "typescript": "^5.4.0",
     "vite": "^5.4.0"
+  },
+  "files": [
+    "manifest.json",
+    "dist",
+    "mcp/dist",
+    "sidecars/project/dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }

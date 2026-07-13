@@ -13,11 +13,14 @@
 
 import { useEffect } from 'react';
 
+import { isStandalone } from './bridge';
 import { useLayoutStore } from './layout-store';
 import { useProjectStore, selectIsProjectOpen, selectOpenProject } from './project-store';
-import { useStoryboardStore, selectStoryboardSource } from './storyboard-store';
+import { useStoryboardStore } from './storyboard-store';
+import { useRenderPoll } from './lib/use-render-poll';
 import type { PaneIndex, ViewComponentRegistry } from './routes';
 import { LayoutSwitcher } from './components/LayoutSwitcher';
+import { Split } from './components/Split';
 import { ViewSwitcher } from './components/ViewSwitcher';
 import { PanePlaceholder } from './components/PanePlaceholder';
 import { CanvasView } from './views/Canvas';
@@ -57,7 +60,7 @@ function Pane({ index }: { index: PaneIndex }) {
       className={
         'flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden rounded-md border bg-surface outline-none '
         + (focused
-          ? 'border-[var(--border)] ring-1 ring-inset ring-[color-mix(in_oklab,var(--info,#5bb3e0)_45%,transparent)]'
+          ? 'border-[var(--border)] ring-1 ring-inset ring-[color-mix(in_oklab,var(--info)_45%,transparent)]'
           : 'border-soft')
       }
       // Click OR keyboard focus entering the pane makes it the active pane
@@ -81,6 +84,9 @@ function Pane({ index }: { index: PaneIndex }) {
 
 function PaneRegion() {
   const layout = useLayoutStore((s) => s.layout);
+  const ratios = useLayoutStore((s) => s.ratios);
+  const setRatio = useLayoutStore((s) => s.setRatio);
+  const resetRatio = useLayoutStore((s) => s.resetRatio);
 
   if (layout === 'single') {
     return (
@@ -92,30 +98,60 @@ function PaneRegion() {
 
   if (layout === 'vsplit') {
     return (
-      <div className="flex min-h-0 flex-1 gap-1.5 p-1.5">
-        <Pane index={0} />
-        <Pane index={1} />
+      <div className="min-h-0 flex-1 p-1.5">
+        <Split
+          axis="x"
+          label="Resize left/right panes"
+          ratio={ratios.vsplit[0]}
+          onRatio={(v) => setRatio('vsplit', 0, v)}
+          onReset={() => resetRatio('vsplit', 0)}
+          first={<Pane index={0} />}
+          second={<Pane index={1} />}
+        />
       </div>
     );
   }
 
   if (layout === 'hsplit') {
     return (
-      <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-1.5">
-        <Pane index={0} />
-        <Pane index={1} />
+      <div className="min-h-0 flex-1 p-1.5">
+        <Split
+          axis="y"
+          label="Resize top/bottom panes"
+          ratio={ratios.hsplit[0]}
+          onRatio={(v) => setRatio('hsplit', 0, v)}
+          onReset={() => resetRatio('hsplit', 0)}
+          first={<Pane index={0} />}
+          second={<Pane index={1} />}
+        />
       </div>
     );
   }
 
   // tripane: two on top, one full-width below — matches the design glyph.
+  // Outer split (axis y, divider index 1) sizes the top row vs pane 3; the
+  // inner split (axis x, divider index 0) sizes pane 1 vs pane 2 within the row.
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-1.5 p-1.5">
-      <div className="flex min-h-0 flex-1 gap-1.5">
-        <Pane index={0} />
-        <Pane index={1} />
-      </div>
-      <Pane index={2} />
+    <div className="min-h-0 flex-1 p-1.5">
+      <Split
+        axis="y"
+        label="Resize top row and bottom pane"
+        ratio={ratios.tripane[1]}
+        onRatio={(v) => setRatio('tripane', 1, v)}
+        onReset={() => resetRatio('tripane', 1)}
+        first={
+          <Split
+            axis="x"
+            label="Resize top-left and top-right panes"
+            ratio={ratios.tripane[0]}
+            onRatio={(v) => setRatio('tripane', 0, v)}
+            onReset={() => resetRatio('tripane', 0)}
+            first={<Pane index={0} />}
+            second={<Pane index={1} />}
+          />
+        }
+        second={<Pane index={2} />}
+      />
     </div>
   );
 }
@@ -123,6 +159,9 @@ function PaneRegion() {
 export function App() {
   const isProjectOpen = useProjectStore(selectIsProjectOpen);
   const openProjectSummary = useProjectStore(selectOpenProject);
+  // Sync window-parent probe (stable for the iframe's lifetime): shell vs
+  // standalone. Gates the banner LayoutSwitcher (see the header comment).
+  const standalone = isStandalone();
   const bindPersistence = useLayoutStore((s) => s.bindPersistence);
   const unbindPersistence = useLayoutStore((s) => s.unbindPersistence);
 
@@ -154,20 +193,12 @@ export function App() {
     else clearStoryboard();
   }, [openProjectSummary?.project_id, hydrateStoryboard, clearStoryboard]);
 
-  // Render-status poll: the shell can't relay pkg:// render/progress events to
-  // the iframe (Round-13 Finding), so poll render.list while a REAL project is
-  // open and fold it into the storyboard-store. Runs app-wide (not per-pane) so
-  // the now-rendering beacon + the Composition timeline both reflect live
-  // running→done regardless of which view is mounted. No-op in mock/standalone.
-  const storyboardSource = useStoryboardStore(selectStoryboardSource);
-  const refreshRenders = useStoryboardStore((s) => s.refreshRenders);
-  useEffect(() => {
-    const projectId = openProjectSummary?.project_id;
-    if (!projectId || storyboardSource !== 'real') return;
-    void refreshRenders();
-    const id = window.setInterval(() => { void refreshRenders(); }, 2500);
-    return () => window.clearInterval(id);
-  }, [openProjectSummary?.project_id, storyboardSource, refreshRenders]);
+  // Render-status poll (adaptive): fast only while a render is in flight, idle
+  // otherwise — kills the old unconditional 2.5s global chatter
+  // (`poll-render-list-unbounded`). Still app-wide so the NowRenderingBeacon +
+  // the Composition timeline both reflect live running→done regardless of which
+  // view is mounted. No-op in mock/standalone.
+  useRenderPoll();
 
   // The launcher pre-empts the pane layout entirely — it isn't a sub-view
   // and doesn't share the layout/view-switcher chrome (launcher.md §"Chrome
@@ -179,15 +210,37 @@ export function App() {
 
   return (
     <div className="flex h-full flex-col bg-base text-fg">
-      <header className="flex items-center justify-between border-b border-soft bg-sunken px-3 py-1.5">
-        <div className="flex items-center gap-2">
-          <span className="font-display text-sm font-semibold tracking-tight">Studio</span>
-          <span className="font-mono text-[9px] uppercase tracking-wider text-fg-faint">
-            com.ikenga.studio
-          </span>
-        </div>
-        <LayoutSwitcher />
-      </header>
+      {/* In-shell the app bar is GONE (founder call, 2026-07-12): the M-A rail
+          already carries the project header + layout seg, so the bar was pure
+          redundancy. Standalone (pnpm dev — no shell rail) keeps it: it is the
+          only place the brand, project context, and LayoutSwitcher exist. */}
+      {standalone && (
+        <header className="flex items-center justify-between border-b border-soft bg-sunken px-3 py-1.5">
+          <div className="flex min-w-0 items-center gap-2">
+            {/* pkg id lives in the tooltip / debug only — not user-facing chrome. */}
+            <span
+              className="font-display text-sm font-semibold tracking-tight"
+              title="com.ikenga.studio"
+            >
+              Studio
+            </span>
+            {openProjectSummary?.name && (
+              <>
+                <span className="text-fg-faint">·</span>
+                <span className="truncate font-mono text-[11px] text-fg-muted">
+                  {openProjectSummary.name}
+                </span>
+                {openProjectSummary.aspect_ratio && (
+                  <span className="rounded bg-raised px-1.5 py-0.5 font-mono text-[10px] text-fg-faint">
+                    {openProjectSummary.aspect_ratio}
+                  </span>
+                )}
+              </>
+            )}
+          </div>
+          <LayoutSwitcher />
+        </header>
+      )}
       <PaneRegion />
       {/* Layout-independent rendering beacon — floats over every view/layout
           (fixed positioning), visible whenever a render is in flight. */}

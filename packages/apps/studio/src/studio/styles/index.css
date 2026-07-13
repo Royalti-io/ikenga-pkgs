@@ -8,12 +8,51 @@
  * Importing @ikenga/tokens here is the WP-07 fix for G21 (Round 8): the
  * iframe sandbox must own its own --bg-*, --fg-*, --border-*, --font-*
  * namespace, because the shell's chrome stylesheet doesn't leak through the
- * iframe boundary. The AppBridge host-context handshake (bridge.ts) layers
- * runtime theme/mode overrides on top via applyHostStyleVariables.
+ * iframe boundary. Theme/mode selection is owned by setupTheme() (theme.ts):
+ * it mirrors the parent <html> data-theme/mode/density/workspace attrs, so
+ * the bundled tokens resolve to the shell's active theme — no AppBridge push.
  */
 
 @import 'tailwindcss';
 @import '@ikenga/tokens/tokens.css';
+
+/* ---------------------------------------------------------------------------
+ * Self-hosted fonts (Wave 0).
+ *
+ * The shell loads Fraunces/Inter/JetBrains Mono from Google Fonts in its own
+ * index.html, but font faces do NOT cross the iframe boundary — and the shell
+ * srcdoc-inlines this pane, where WebKitGTK silently DROPS any HTTP fetch
+ * (Tauri #12767). A Google-Fonts <link> would therefore never load in-shell,
+ * so we self-host. `vite.config.ts` sets `build.assetsInlineLimit` above the
+ * largest woff2 (48 KB), so these url()s are emitted as base64 data: URIs
+ * inlined into the single CSS chunk — no separate font asset files, nothing to
+ * fetch. Each family is a single VARIABLE woff2 (latin subset) declared over a
+ * font-weight range, so 400/500/600 all resolve from one file.
+ * ------------------------------------------------------------------------- */
+
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('../fonts/inter.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Fraunces';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('../fonts/fraunces.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url('../fonts/jetbrains-mono.woff2') format('woff2');
+}
 
 /* studio-editor layer — video-domain component CSS (timeline-rail,
  * clip-segment, waveform-strip) + the media-controls transport family. See
@@ -66,6 +105,43 @@ html, body, #root {
   font-family: var(--font-display);
 }
 
+/* Token-driven modal scrim (Launcher rebuild — fixes launcher-nontoken-black-
+ * overlay). Derived from the sunken surface so it follows the active theme /
+ * mode instead of the raw bg-black/60 the old trust modal used. */
+:root {
+  --overlay: color-mix(in srgb, var(--bg-sunken) 78%, transparent);
+}
+
+/* faint warm desk grain — texture, not a hero gradient (concept L-A). */
+.launcher-desk {
+  background-image: radial-gradient(
+    circle at 1px 1px,
+    hsl(36 30% 90% / 0.018) 1px,
+    transparent 0
+  );
+  background-size: 7px 7px;
+}
+
+/* recents skeleton shimmer (aria-busy loading state). */
+@keyframes launcher-shimmer {
+  from { background-position: 180% 0; }
+  to { background-position: -40% 0; }
+}
+.launcher-sk {
+  background: linear-gradient(
+    100deg,
+    var(--bg-raised) 20%,
+    color-mix(in srgb, var(--primary-soft) 50%, var(--bg-raised)) 40%,
+    var(--bg-raised) 60%
+  );
+  background-size: 220% 100%;
+  border-radius: var(--radius-sm, 4px);
+  animation: launcher-shimmer 1.4s ease infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .launcher-sk { animation: none; }
+}
+
 #root {
   position: relative;
   isolation: isolate;
@@ -97,22 +173,6 @@ html, body, #root {
   font-family: var(--font-mono);
   font-size: 0.85rem;
 }
-
-.studio-scaffold__mode {
-  margin: 1rem 0 0;
-  padding: 0.25rem 0.6rem;
-  border-radius: 999px;
-  border: 1px solid var(--border-soft);
-  background: var(--bg-raised);
-  color: var(--fg-faint);
-  font-family: var(--font-mono);
-  font-size: 0.7rem;
-  letter-spacing: 0.04em;
-}
-
-.studio-scaffold__mode[data-mode='shell']      { color: var(--live); }
-.studio-scaffold__mode[data-mode='standalone'] { color: var(--achievement); }
-.studio-scaffold__mode[data-mode='connecting'] { color: var(--fg-faint); }
 
 /* ---------------------------------------------------------------------------
  * NowRenderingBeacon (commit 12) — the pinging rendering-status dot. The ring
@@ -149,7 +209,7 @@ html, body, #root {
   [role='button'], [role='tab'], [role='slider'],
   [tabindex]:not([tabindex='-1'])
 ):where(:not(.composition-frame *)):focus-visible {
-  outline: 2px solid var(--info, #5bb3e0);
+  outline: 2px solid var(--info);
   outline-offset: 2px;
 }
 
@@ -163,4 +223,98 @@ html, body, #root {
 @media (prefers-reduced-motion: reduce) {
   .beacon-ping { animation: none; }
   .animate-ping, .animate-pulse { animation: none !important; }
+}
+
+/* ---------------------------------------------------------------------------
+ * Border-color utilities + default (founder-reported "extra thick borders").
+ *
+ * The @theme map names these tokens --color-border-soft/--color-border, so
+ * Tailwind v4 would only generate `border-border-soft` — the `border-soft`
+ * class the views have used since WP-07 generated NO rule, and Tailwind v4's
+ * default border color is currentColor, so every border rendered 1px in the
+ * near-white fg (reads as thick/bright on Dusk Wood). Define the intended
+ * utilities explicitly, and restore a token default for bare `border`.
+ * ------------------------------------------------------------------------- */
+
+@utility border-soft {
+  border-color: var(--border-soft);
+}
+@utility border-strong {
+  border-color: var(--border-strong, var(--border));
+}
+
+@layer base {
+  *, ::after, ::before, ::backdrop, ::file-selector-button {
+    border-color: var(--border-soft);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Draggable pane dividers (components/Split.tsx).
+ *
+ * The divider element fills the 8px GUTTER grid track (the hit target); the
+ * visible line is a 1px ::before hairline centered inside it. Hover / active
+ * thickens the hairline to 2px and warms it to --border-strong. Cursor is
+ * col-resize (axis x) / row-resize (axis y). Token-only colours; the
+ * focus-visible ring uses --info to match the pane focus ring.
+ *
+ * `.pane-drag-overlay` is mounted only while dragging: a fixed full-viewport
+ * layer that keeps the resize cursor global and stops pane content (or any
+ * nested iframe) from eating the pointer or flashing hover states mid-drag.
+ * ------------------------------------------------------------------------- */
+
+.pane-divider {
+  position: relative;
+  align-self: stretch;
+  justify-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  z-index: 5;
+  touch-action: none;
+}
+.pane-divider[data-axis='x'] { cursor: col-resize; }
+.pane-divider[data-axis='y'] { cursor: row-resize; }
+
+.pane-divider::before {
+  content: '';
+  display: block;
+  background: var(--border-soft);
+  border-radius: 1px;
+  transition: background var(--motion-fast, 120ms) var(--ease-calm, ease),
+    width var(--motion-fast, 120ms) var(--ease-calm, ease),
+    height var(--motion-fast, 120ms) var(--ease-calm, ease);
+}
+.pane-divider[data-axis='x']::before { width: 1px; height: 100%; }
+.pane-divider[data-axis='y']::before { width: 100%; height: 1px; }
+
+.pane-divider:hover::before,
+.pane-divider[data-dragging]::before {
+  background: var(--border-strong, var(--border));
+}
+.pane-divider[data-axis='x']:hover::before,
+.pane-divider[data-axis='x'][data-dragging]::before { width: 2px; }
+.pane-divider[data-axis='y']:hover::before,
+.pane-divider[data-axis='y'][data-dragging]::before { height: 2px; }
+
+.pane-divider:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: -2px;
+  border-radius: 2px;
+}
+
+.pane-drag-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  user-select: none;
+}
+.pane-drag-overlay[data-axis='x'] { cursor: col-resize; }
+.pane-drag-overlay[data-axis='y'] { cursor: row-resize; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pane-divider::before { transition: none; }
 }

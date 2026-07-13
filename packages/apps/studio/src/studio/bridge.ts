@@ -24,13 +24,11 @@
 // helper becomes a no-op or returns mocked values. This is what lets
 // `pnpm dev` boot the iframe in a plain browser tab without a shell.
 
-import {
-  App,
-  applyDocumentTheme,
-  applyHostStyleVariables,
-  applyHostFonts,
-  type McpUiHostContext,
-} from '@modelcontextprotocol/ext-apps';
+// NOTE: the ext-apps theme helpers (applyDocumentTheme / applyHostStyleVariables
+// / applyHostFonts) are intentionally NOT imported. Studio owns its theme via
+// the parent-mirror in theme.ts; applyDocumentTheme wrote data-theme='light'|
+// 'dark' and clobbered the Dusk Wood palette (Wave 0 root-cause fix).
+import { App, type McpUiHostContext } from '@modelcontextprotocol/ext-apps';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 // ─── Host-context contract ────────────────────────────────────────────────
@@ -140,7 +138,8 @@ export function connectBridge(opts: {
 
     app.onhostcontextchanged = (ctx: McpUiHostContext) => {
       const typed = ctx as StudioHostContext;
-      applyContext(typed);
+      // Theme is NOT applied here anymore (theme.ts owns it via parent-mirror);
+      // we only fan out activeFeature / supabaseJwt / etc. to view listeners.
       for (const fn of _contextListeners) fn(typed);
     };
 
@@ -148,7 +147,6 @@ export function connectBridge(opts: {
 
     await app.connect();
     const ctx = app.getHostContext() as StudioHostContext | undefined;
-    if (ctx) applyContext(ctx);
 
     _app = app;
     const connection: BridgeConnection = { mode: 'shell', hostContext: ctx };
@@ -157,14 +155,6 @@ export function connectBridge(opts: {
   })();
 
   return _connectionPromise;
-}
-
-/** Apply theme + CSS vars + fonts from a hostContext snapshot. Idempotent;
- *  safe to call from both initial connect and `onhostcontextchanged`. */
-function applyContext(ctx: StudioHostContext): void {
-  if (ctx.theme) applyDocumentTheme(ctx.theme);
-  if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
-  if (ctx.styles?.css?.fonts) applyHostFonts(ctx.styles.css.fonts);
 }
 
 /** Subscribe to hostContext changes (theme flips, royaltiSuite.activeFeature
@@ -298,15 +288,33 @@ export function openFolder(): Promise<HostCallResult> {
   return callHostTool('host.openFolder', {});
 }
 
-/** Publish a sidebar menu to the shell. Items: [{ id, label, icon?, badge? }].
- *  Click feedback arrives back through `hostContext.royaltiSuite.activeFeature`
- *  on the next `onhostcontextchanged`. */
-export function setMenu(items: Array<{
+/** A published sidebar-menu item. Mirrors the shell's `PkgMenuItem`
+ *  (shell/src/lib/pkg/pkg-menu-store.ts) 1:1 so the M-A "production ledger"
+ *  menu can publish sections / badges / a `kind:'seg'` layout strip /
+ *  disabled+active state — the shell renders all of these; the pkg only
+ *  publishes the data. Keep this in lockstep with the shell contract. */
+export interface PublishedMenuItem {
   id: string;
   label: string;
-  icon?: string;
-  badge?: string;
-}>): Promise<HostCallResult> {
+  icon?: string | null;
+  badge?: string | number | null;
+  /** Consecutive items sharing a `section` render under one heading; items with
+   *  no section form the implicit first group. Order is preserved as published. */
+  section?: string | null;
+  /** Renders dimmed + non-interactive (project-header row, inert states). */
+  disabled?: boolean;
+  /** Explicit active-highlight; overrides the shell's last-clicked fallback so
+   *  view rows can track the FOCUSED pane's view independent of last click. */
+  active?: boolean;
+  /** `'seg'` renders an inline Segmented pill strip (layout presets); each
+   *  option's id is published back as activeFeature on click. */
+  kind?: 'item' | 'seg';
+  options?: Array<{ id: string; label: string; active?: boolean }>;
+}
+
+/** Publish a sidebar menu to the shell. Click feedback arrives back through
+ *  `hostContext.royaltiSuite.activeFeature` on the next `onhostcontextchanged`. */
+export function setMenu(items: PublishedMenuItem[]): Promise<HostCallResult> {
   return callHostTool('host.pkg.setMenu', { items });
 }
 

@@ -74,7 +74,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 
 import { rungDir, type Cell, type Project } from '@ikenga/studio-schema';
@@ -478,6 +478,7 @@ import {
   listExportQueue,
   markExportDone,
   markExportStarted,
+  mimeForPath,
 } from './queue.js';
 import type { ExportQueueRow } from './db.js';
 import { randomUUID } from 'node:crypto';
@@ -561,6 +562,23 @@ export class ExportRunner {
 
   list(projectId?: string): { ok: true; exports: ExportRecordView[] } {
     return { ok: true, exports: listExportQueue(this.db, projectId).map(toExportView) };
+  }
+
+  /** Read a finished export's MP4 off disk, base64-encoded, for in-pane
+   *  composed playback (same bytes-over-bridge → blob seam as render.readBytes). */
+  readBytes(exportId: string):
+    | { ok: true; base64: string; mime: string; sizeBytes: number; path: string }
+    | { ok: false; error: string; message?: string } {
+    const row = getExport(this.db, exportId);
+    if (!row) return { ok: false, error: 'export-record-not-found', message: exportId };
+    if (!row.output_path) return { ok: false, error: 'export-not-done', message: 'no output on disk yet' };
+    if (!existsSync(row.output_path)) return { ok: false, error: 'export-output-missing', message: row.output_path };
+    try {
+      const buf = readFileSync(row.output_path);
+      return { ok: true, base64: buf.toString('base64'), mime: mimeForPath(row.output_path), sizeBytes: buf.length, path: row.output_path };
+    } catch (e) {
+      return { ok: false, error: 'export-read-failed', message: (e as Error).message };
+    }
   }
 
   private outputPathFor(projectRoot: string, override?: string): string {

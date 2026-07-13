@@ -188,6 +188,17 @@ export interface EnqueueParams {
   options: unknown;
 }
 
+/** Best-effort MIME from a media file extension (for bytes-over-bridge preview). */
+export function mimeForPath(p: string): string {
+  const ext = p.slice(p.lastIndexOf('.')).toLowerCase();
+  if (ext === '.mp4' || ext === '.m4v') return 'video/mp4';
+  if (ext === '.webm') return 'video/webm';
+  if (ext === '.mov') return 'video/quicktime';
+  if (ext === '.png') return 'image/png';
+  if (ext === '.jpg' || ext === '.jpeg') return 'image/jpeg';
+  return 'application/octet-stream';
+}
+
 export function enqueue(db: Db, params: EnqueueParams): void {
   db.prepare(
     `INSERT INTO render_queue

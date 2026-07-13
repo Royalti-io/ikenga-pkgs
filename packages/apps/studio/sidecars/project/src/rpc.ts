@@ -128,7 +128,10 @@ function parseError(): void {
 const EXTENDED_METHODS = new Set<string>([
   'storyboard.read',
   'storyboard.read_cell',
+  'storyboard.read_fountain',
   'storyboard.write_cell',
+  'storyboard.read_cell_content',
+  'storyboard.write_cell_content',
   'storyboard.create_cell',
   'storyboard.delete_cell',
   'storyboard.list_cells',
@@ -149,9 +152,12 @@ const EXTENDED_METHODS = new Set<string>([
   'render.cancel',
   'render.list',
   'render.list_engines',
+  'render.read_bytes',
   'export.compose',
   'export.status',
   'export.list',
+  'export.read_bytes',
+  'export.check_bed',
 ]);
 
 export function startRpcLoop(handlers: RpcHandlers): { close(): void } {
@@ -237,13 +243,15 @@ export function startRpcLoop(handlers: RpcHandlers): { close(): void } {
   };
 }
 
-// Helper used by index.ts when building a `ProjectSummary` from a row.
+// Helper used by index.ts when building a `ProjectSummary` from a row. The
+// `exists` field is computed by the caller (index.ts owns the fs check), so
+// this pure mapper returns everything BUT `exists`.
 export function toProjectSummary(row: {
   project_id: string;
   path: string;
   name: string;
   last_opened: number;
-}): ProjectSummary {
+}): Omit<ProjectSummary, 'exists'> {
   return {
     projectId: row.project_id,
     path: row.path,

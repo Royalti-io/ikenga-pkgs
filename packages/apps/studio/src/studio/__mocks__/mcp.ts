@@ -335,6 +335,26 @@ function callMockTool(
       return { ok: true };
     }
 
+    case 'storyboard.create_cell': {
+      const cell = args.cell as Cell;
+      MOCK_CELLS.push(cell);
+      queueMicrotask(() => emit(hub, 'cells/changed', {
+        project_id: MOCK_PROJECT_ID,
+        changed_uids: [cell.uid],
+      }));
+      return { cell };
+    }
+    case 'storyboard.delete_cell': {
+      const uid = args.cell_uid as string;
+      const idx = MOCK_CELLS.findIndex((c) => c.uid === uid);
+      if (idx !== -1) MOCK_CELLS.splice(idx, 1);
+      queueMicrotask(() => emit(hub, 'cells/changed', {
+        project_id: MOCK_PROJECT_ID,
+        changed_uids: [uid],
+      }));
+      return { cellId: uid };
+    }
+
     // ─── composition ───────────────────────────────────────────────
     case 'composition.render': {
       const cellUid = (args.cell_uid as string) ?? MOCK_CELLS[0].uid;
@@ -427,6 +447,20 @@ function callMockTool(
       };
     }
     case 'export.list': return { exports: [] };
+    case 'export.read_bytes':
+      // No real mp4 on disk in mock mode → empty bytes; the viewer falls back
+      // to the poster/status preview.
+      return { base64: '', mime: 'video/mp4', sizeBytes: 0, path: 'mock://exports/latest.mp4' };
+    case 'export.check_bed': {
+      const preset = (args.music_preset as string) ?? 'none';
+      const byDesign = preset === 'none' || preset === 'silent';
+      // No bundled beds in the fixture — ambient/upbeat report silent honestly.
+      return { has_bed: false, will_be_silent: true, by_design: byDesign };
+    }
+
+    // ─── render bytes (no real mp4 in mock) ────────────────────────
+    case 'render.read_bytes':
+      return { base64: '', mime: 'video/mp4', sizeBytes: 0, path: 'mock://renders/latest.mp4' };
 
     default:
       throw new Error(`[studio:mock] unimplemented MCP method: ${name}`);

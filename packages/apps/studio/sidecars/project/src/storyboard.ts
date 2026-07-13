@@ -13,8 +13,8 @@
  * directly here (see storyboard-fs.ts) to avoid double-emit.
  */
 
-import { existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 
 import {
   CellSchema,
@@ -71,6 +71,84 @@ export function listCells(
   if (filter.beat_id) cells = cells.filter((c) => c.beat_id === filter.beat_id);
   if (filter.rung) cells = cells.filter((c) => c.rung === filter.rung);
   return { result: { ok: true, cells } };
+}
+
+/** Absolute on-disk path of a cell's authored source (content_path is stored
+ *  relative to the project root; render-runner.ts uses the same resolution). */
+function absContentPath(projectRoot: string, cell: Cell): string {
+  return isAbsolute(cell.content_path) ? cell.content_path : resolve(projectRoot, cell.content_path);
+}
+
+/**
+ * Read a cell's authored source file (the HF/Remotion/Excalidraw markup at
+ * `content_path`). The Cell record itself carries only the pointer; this is the
+ * seam the Cell-view editor uses to load the REAL content instead of a fixture.
+ * `exists:false` (empty html) is a legitimate state for a freshly-created cell
+ * whose author hasn't written the source yet — not an error.
+ */
+export function readCellContent(projectRoot: string, cellId: string): StoryboardResult {
+  const project = readProject(projectRoot);
+  const cell = project.cells.find((c) => c.uid === cellId);
+  if (!cell) {
+    return { result: { ok: false, error: 'cell-not-found', message: cellId } };
+  }
+  const abs = absContentPath(projectRoot, cell);
+  const exists = existsSync(abs);
+  const html = exists ? readFileSync(abs, 'utf8') : '';
+  return { result: { ok: true, cellId, content_path: cell.content_path, exists, html } };
+}
+
+/**
+ * Write a cell's authored source file (the save seam for the Cell-view editor).
+ * Persists the FULL edited html to `content_path` (creating the cell dir if
+ * needed) and bumps `last_edited` on the record so Canvas / records reflect the
+ * save. This is the durable counterpart the old blur-persist path was missing —
+ * the render runner reads the same file, so a saved edit renders next time.
+ */
+export function writeCellContent(
+  projectRoot: string,
+  cellId: string,
+  html: unknown,
+): StoryboardResult {
+  if (typeof html !== 'string') {
+    return { result: { ok: false, error: 'invalid-args', message: 'html must be a string' } };
+  }
+  const project = readProject(projectRoot);
+  const idx = project.cells.findIndex((c) => c.uid === cellId);
+  if (idx < 0) {
+    return { result: { ok: false, error: 'cell-not-found', message: cellId } };
+  }
+  const cell = project.cells[idx];
+  const abs = absContentPath(projectRoot, cell);
+  mkdirSync(dirname(abs), { recursive: true });
+  writeFileSync(abs, html, 'utf8');
+  // Bump last_edited so the storyboard doc + Canvas freshness track the save.
+  const cells = project.cells.slice();
+  cells[idx] = { ...cell, last_edited: new Date().toISOString() };
+  const next = writeProjectAtomic(projectRoot, { ...project, cells });
+  return {
+    result: {
+      ok: true,
+      cellId,
+      content_path: cell.content_path,
+      bytes: Buffer.byteLength(html, 'utf8'),
+    },
+    project: next,
+  };
+}
+
+/**
+ * Read the project's Fountain screenplay source at `<projectRoot>/script.fountain`.
+ * Same shape/contract as readCellContent: `exists:false` (empty text) is a
+ * legitimate state for a project with no `.fountain` on disk (not an error) —
+ * the Script view's Fountain mode renders the real text when present and an
+ * honest "no script.fountain" note when absent, rather than faking a screenplay.
+ */
+export function readFountain(projectRoot: string): StoryboardResult {
+  const abs = join(projectRoot, 'script.fountain');
+  const exists = existsSync(abs);
+  const text = exists ? readFileSync(abs, 'utf8') : '';
+  return { result: { ok: true, exists, text } };
 }
 
 // ─── mutations ──────────────────────────────────────────────────────────────

@@ -80,16 +80,31 @@ async function raw(name: string, args: Record<string, unknown>): Promise<Record<
 
 // ─── result-shape mappers ────────────────────────────────────────────────
 
-/** SQLite render_queue row (snake_case) → UI RenderRecord (schema shape). */
+/** epoch-ms number (or numeric string) → ISO-8601, else undefined. The sidecar
+ *  stores render/export timestamps as `Date.now()` integers; the schema wants
+ *  ISO strings, and the records table formats them relative-to-now. */
+function toIso(v: unknown): string | undefined {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v ? Number(v) : NaN;
+  return Number.isFinite(n) && n > 0 ? new Date(n).toISOString() : undefined;
+}
+
+/** SQLite render_queue row (snake_case) → UI RenderRecord (schema shape).
+ *  Carries the started_at/finished_at timestamps (the C-C records table needs
+ *  "finished" per cell) which the older mapper dropped. */
 function toRenderRecord(row: Record<string, unknown>): RenderRecord {
   const outputPath = (row.output_path ?? row.outputPath) as string | undefined;
+  const startedAt = toIso(row.started_at ?? row.startedAt);
+  const finishedAt = toIso(row.finished_at ?? row.finishedAt);
   return {
     id: (row.record_id ?? row.recordId ?? row.id ?? '') as string,
     cell_uid: (row.cell_id ?? row.cellId ?? row.cell_uid ?? '') as string,
     engine: (row.engine ?? 'hf') as string,
     variant: (row.variant ?? 'default') as string,
     status: (row.status ?? 'queued') as RenderRecord['status'],
-    output: outputPath ? { uri: outputPath } : { uri: '' },
+    ...(outputPath ? { output: { uri: outputPath } } : {}),
+    ...(startedAt ? { started_at: startedAt } : {}),
+    ...(finishedAt ? { finished_at: finishedAt } : {}),
+    error: (row.error as string | undefined) ?? undefined,
     metadata: (row.metadata as Record<string, unknown>) ?? {},
   };
 }
@@ -194,8 +209,24 @@ export function createRealMcpClient(): McpClient {
         return { closed: true };
       }
       case 'project.list': {
+        // The sidecar returns `ProjectSummary[]` (camelCase: projectId / name /
+        // path / lastOpened), NOT the full Project schema — it has no archetype
+        // / aspect / cell-count for a project that isn't open. Normalize to the
+        // snake shape the Launcher consumes and pass through ONLY what's real.
         const body = await raw('project.list', {});
-        return { projects: (body.projects as Project[]) ?? [] };
+        const rows = (body.projects as Array<Record<string, unknown>>) ?? [];
+        return {
+          projects: rows.map((r) => ({
+            project_id: (r.projectId ?? r.project_id ?? r.slug ?? '') as string,
+            name: (r.name ?? r.title ?? '') as string,
+            path: (r.path ?? '') as string,
+            lastOpened: (r.lastOpened ?? r.last_opened) as number | undefined,
+            // exists: cheap fs check the sidecar performs at list-time. Absent
+            // on older sidecars → leave undefined so the Launcher treats the
+            // row as present rather than dimming it.
+            exists: (r.exists as boolean | undefined),
+          })),
+        };
       }
       case 'project.info': {
         const body = await raw('project.info', { projectId: args.project_id });
@@ -217,6 +248,50 @@ export function createRealMcpClient(): McpClient {
         const cell = body.cell as Cell;
         if (cell) cellCache.set(cell.uid, cell);
         return cell;
+      }
+      // Fountain read seam (Wave 5) — the Script view's Fountain mode reads the
+      // REAL <root>/script.fountain. projectId injected from the active project.
+      case 'storyboard.read_fountain': {
+        const a = requireActive('storyboard.read_fountain');
+        const body = await raw('storyboard.read_fountain', { projectId: a.projectId });
+        return {
+          exists: Boolean(body.exists),
+          text: (body.text as string) ?? '',
+        };
+      }
+      // Cell-content seams (Wave 3) — the editor reads/writes the REAL authored
+      // source file at the cell's content_path (the Cell record only points to
+      // it). projectId is injected from the active project.
+      case 'storyboard.read_cell_content': {
+        const a = requireActive('storyboard.read_cell_content');
+        const body = await raw('storyboard.read_cell_content', {
+          projectId: a.projectId,
+          cellId: args.cell_uid,
+        });
+        return {
+          html: (body.html as string) ?? '',
+          content_path: (body.content_path as string) ?? '',
+          exists: Boolean(body.exists),
+        };
+      }
+      case 'storyboard.write_cell_content': {
+        const a = requireActive('storyboard.write_cell_content');
+        const body = await raw('storyboard.write_cell_content', {
+          projectId: a.projectId,
+          cellId: args.cell_uid,
+          html: args.html,
+        });
+        return {
+          content_path: (body.content_path as string) ?? '',
+          bytes: (body.bytes as number) ?? 0,
+        };
+      }
+      // anchor.list needs the active projectId injected (the default
+      // fall-through passes args verbatim, which the sidecar would reject).
+      case 'anchor.list': {
+        const a = requireActive('anchor.list');
+        const body = await raw('anchor.list', { projectId: a.projectId });
+        return { anchors: (body.anchors as unknown[]) ?? [] };
       }
       case 'storyboard.write_cell': {
         const a = requireActive('storyboard.write_cell');
@@ -254,6 +329,24 @@ export function createRealMcpClient(): McpClient {
           approved: args.approved,
         });
         return { ok: true };
+      }
+      // Cell add/delete (Canvas "New cell" + per-tile delete). The UI passes a
+      // full Cell (create) or a uid (delete); projectId is injected from the
+      // active project. delete_cell removes the storyboard.json record only —
+      // the on-disk cell dir is left in place (sidecar deleteCell).
+      case 'storyboard.create_cell': {
+        const a = requireActive('storyboard.create_cell');
+        const body = await raw('storyboard.create_cell', { projectId: a.projectId, cell: args.cell });
+        const cell = body.cell as Cell | undefined;
+        if (cell) cellCache.set(cell.uid, cell);
+        return { cell };
+      }
+      case 'storyboard.delete_cell': {
+        const a = requireActive('storyboard.delete_cell');
+        const uid = args.cell_uid as string;
+        const body = await raw('storyboard.delete_cell', { projectId: a.projectId, cellId: uid });
+        cellCache.delete(uid);
+        return { cellId: (body.cellId as string) ?? uid };
       }
 
       // ─── composition / render ─────────────────────────────────────────
@@ -306,6 +399,15 @@ export function createRealMcpClient(): McpClient {
         if (args.cell_uid) records = records.filter((r) => r.cell_uid === args.cell_uid);
         return { records };
       }
+      case 'render.read_bytes': {
+        const body = await raw('render.read_bytes', { recordId: args.record_id });
+        return {
+          base64: (body.base64 as string) ?? '',
+          mime: (body.mime as string) ?? 'video/mp4',
+          sizeBytes: (body.sizeBytes as number) ?? 0,
+          path: (body.path as string) ?? '',
+        };
+      }
 
       // ─── export ───────────────────────────────────────────────────────
       case 'export.compose': {
@@ -339,6 +441,25 @@ export function createRealMcpClient(): McpClient {
         const body = await raw('export.list', { projectId: active?.projectId });
         return { exports: (body.exports as unknown[]) ?? [] };
       }
+      case 'export.read_bytes': {
+        const body = await raw('export.read_bytes', { exportId: args.export_id });
+        return {
+          base64: (body.base64 as string) ?? '',
+          mime: (body.mime as string) ?? 'video/mp4',
+          sizeBytes: (body.sizeBytes as number) ?? 0,
+          path: (body.path as string) ?? '',
+        };
+      }
+      case 'export.check_bed': {
+        const projectId = (args.project_id as string) ?? requireActive('export.check_bed').projectId;
+        const body = await raw('export.check_bed', { projectId, music_preset: args.music_preset });
+        return {
+          has_bed: Boolean(body.hasBed ?? body.has_bed),
+          will_be_silent: body.willBeSilent === undefined ? !(body.hasBed ?? body.has_bed) : Boolean(body.willBeSilent),
+          by_design: Boolean(body.byDesign ?? body.by_design),
+          path: (body.path as string | undefined) ?? undefined,
+        };
+      }
 
       // ─── archetype ────────────────────────────────────────────────────
       case 'archetype.list': {
@@ -364,8 +485,20 @@ export function createRealMcpClient(): McpClient {
       }
       case 'archetype.save_custom': {
         const a = requireActive('archetype.save_custom');
+        // The catalog writer (catalog.writeCustomArchetype) keys the on-disk
+        // archetype dir off `archetype_id`/`id`; omitting it makes the write
+        // throw `archetype.archetype_id is required`. Thread the caller's id
+        // (under both keys so either lookup resolves) and persist the full
+        // ArchetypeChainEntry shape ({block_id,bindings}) so archetype.get
+        // round-trips and archetype.instantiate_into_project can consume it.
         const body = await raw('archetype.save_custom', {
-          archetype: { name: args.name, chain: args.chain, description: args.description },
+          archetype: {
+            archetype_id: args.archetype_id,
+            id: args.archetype_id,
+            name: args.name,
+            chain: args.chain,
+            description: args.description,
+          },
           project_id: a.projectId,
         });
         return { archetype_id: (body.archetype_id ?? body.archetypeId) as string };

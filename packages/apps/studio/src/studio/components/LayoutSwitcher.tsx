@@ -6,6 +6,8 @@
 // one calls layoutStore.setLayout. Icons are inline SVG so the harness needs
 // no icon dependency.
 
+import { useRef } from 'react';
+
 import { LAYOUT_ORDER, LAYOUTS, type LayoutId } from '../routes';
 import { useLayoutStore, selectLayout } from '../layout-store';
 
@@ -47,26 +49,52 @@ function LayoutGlyph({ id }: { id: LayoutId }) {
 export function LayoutSwitcher() {
   const layout = useLayoutStore(selectLayout);
   const setLayout = useLayoutStore((s) => s.setLayout);
+  const btnRefs = useRef<Array<HTMLButtonElement | null>>([]);
+
+  // Roving-tabindex radiogroup: only the checked radio is in the tab order, and
+  // Arrow / Home / End move selection *and* focus (WAI-ARIA radiogroup pattern).
+  function onKeyDown(e: React.KeyboardEvent) {
+    const len = LAYOUT_ORDER.length;
+    const idx = LAYOUT_ORDER.indexOf(layout);
+    let next = idx;
+    switch (e.key) {
+      case 'ArrowRight':
+      case 'ArrowDown': next = (idx + 1) % len; break;
+      case 'ArrowLeft':
+      case 'ArrowUp':   next = (idx - 1 + len) % len; break;
+      case 'Home':      next = 0; break;
+      case 'End':       next = len - 1; break;
+      default: return;
+    }
+    e.preventDefault();
+    setLayout(LAYOUT_ORDER[next]);
+    btnRefs.current[next]?.focus();
+  }
 
   return (
     <div
       className="flex items-center gap-0.5 rounded-md border border-soft bg-sunken p-0.5"
       role="radiogroup"
       aria-label="Layout preset"
+      onKeyDown={onKeyDown}
     >
-      {LAYOUT_ORDER.map((id) => {
+      {LAYOUT_ORDER.map((id, i) => {
         const active = id === layout;
         return (
           <button
             key={id}
+            ref={(el) => { btnRefs.current[i] = el; }}
             type="button"
             role="radio"
             aria-checked={active}
             aria-label={LAYOUTS[id].label}
             title={LAYOUTS[id].label}
+            tabIndex={active ? 0 : -1}
             onClick={() => setLayout(id)}
             className={
               'flex h-6 w-7 items-center justify-center rounded transition-colors '
+              + 'focus-visible:outline-none focus-visible:ring-2 '
+              + 'focus-visible:ring-[color-mix(in_oklab,var(--info)_55%,transparent)] '
               + (active
                 ? 'bg-raised text-fg'
                 : 'text-fg-faint hover:text-fg-muted hover:bg-raised/60')

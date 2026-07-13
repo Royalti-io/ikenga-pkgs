@@ -20,6 +20,13 @@ export default defineConfig({
   build: {
     target: 'es2022',
     sourcemap: true,
+    // Inline EVERY static asset (fonts) as a base64 data: URI into the single
+    // CSS chunk. The shell srcdoc-inlines this pane and WebKitGTK drops HTTP
+    // fetches from a srcdoc iframe (Tauri #12767), so a separate .woff2 asset
+    // file would never load in-shell — the fonts must ride inside the inlined
+    // CSS. 512 KB comfortably clears the largest woff2 (Inter, ~48 KB). This
+    // limit does NOT affect the entry JS/CSS chunks (never inlined this way).
+    assetsInlineLimit: 512 * 1024,
     // FLAT dist (WP-13 delivery fix). The manifest's ui.routes source is
     // `dist/index.html` — the served HTML's own directory IS the dist root,
     // exactly like the working `com.ikenga.research` pkg. This dodges the
