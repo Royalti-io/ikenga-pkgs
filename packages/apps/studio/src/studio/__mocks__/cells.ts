@@ -11,7 +11,7 @@
 // imports getCellByUid + SAMPLE_HTML to populate the editor + preview when a
 // canvas selection drives the cell view.
 
-import type { Rung } from '../mcp-types';
+import type { Cell, Rung } from '../mcp-types';
 
 export type CellColor = 'amber' | 'rose' | 'emerald' | 'sky' | 'violet' | 'neutral';
 
@@ -24,6 +24,12 @@ export interface MockCell {
   block_id?: string;
   /** present iff a render is in flight; bottom-edge progress bar + corner % */
   progress?: number;
+  /** The raw schema cell (storyboard-store's `toDisplayCell` sets this for REAL
+   *  cells only — prompt / anchors / seed / shot_type live here). Absent on the
+   *  static MOCK_CELLS fixture, which carries no such authored data — Canvas
+   *  gates the per-shot generation surface on this being present so it never
+   *  fabricates a prompt/anchor/seed the fixture doesn't have. */
+  raw?: Cell;
 }
 
 export const MOCK_CELLS: MockCell[] = [

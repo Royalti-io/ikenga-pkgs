@@ -28,6 +28,7 @@ import {
   Canvas,
   type CanvasHandle,
   type ItemId,
+  type ItemRenderState,
   type Placement,
   type Viewport,
 } from '@ikenga/contract/canvas';
@@ -45,12 +46,28 @@ import {
   selectHasRealCells,
   selectHydratedProject,
   selectRenderStatus,
+  selectRenderRecords,
   toDisplayCell,
 } from '../storyboard-store';
 import { useLayoutStore } from '../layout-store';
-import { getMcpClient, storyboardApi } from '../mcp-client';
+import {
+  getMcpClient,
+  storyboardApi,
+  compositionApi,
+  renderApi,
+  anchorApi,
+  exportApi,
+} from '../mcp-client';
 import { SafeZoneBands } from '../media-controls';
-import type { AspectRatio, Cell, RenderStatus, Rung } from '../mcp-types';
+import type {
+  Anchor,
+  AspectRatio,
+  Cell,
+  PromptPlatform,
+  RenderRecord,
+  RenderStatus,
+  Rung,
+} from '../mcp-types';
 import { rungDir } from '../mcp-types';
 import {
   MOCK_CELLS,
@@ -67,13 +84,18 @@ import { EmptyState } from '../components/EmptyState';
 const asItemId = (s: string): ItemId => s as ItemId;
 
 const COLUMN_X = (col: number) => col * 200;
-const ROW_Y: Record<Rung, number> = {
-  '2_hifi':       0,
-  '1_lofi':       180,
-  '0_beat_sheet': 360,
-};
 const CELL_W = 176; // ~w-44 in the design
 const CELL_H = 132; // 96 thumb + ~36 footer
+// hi-fi cells carry the per-shot generation card (engine picker / generate /
+// status / anchors / approve-reject) — a real cell needs more room than the
+// plain lofi/beat-sheet tile. Row gutters below are sized off this.
+const HIFI_CELL_H = 292;
+const ROW_GAP = 48;
+const ROW_Y: Record<Rung, number> = {
+  '2_hifi':       0,
+  '1_lofi':       HIFI_CELL_H + ROW_GAP,
+  '0_beat_sheet': HIFI_CELL_H + ROW_GAP + CELL_H + ROW_GAP,
+};
 
 // Bias each beat to its own column so the storyboard reads left→right per rung.
 function columnsByBeat(cells: MockCell[]): Record<string, number> {
@@ -263,6 +285,9 @@ export function CanvasView() {
   const hasRealCells = useStoryboardStore(selectHasRealCells);
   const projectDoc = useStoryboardStore(selectHydratedProject);
   const renderStatusMap = useStoryboardStore(selectRenderStatus);
+  const renderRecords = useStoryboardStore(selectRenderRecords);
+  const refreshRenders = useStoryboardStore((s) => s.refreshRenders);
+  const bumpActivePoll = useStoryboardStore((s) => s.bumpActivePoll);
   const refetchStoryboard = useStoryboardStore((s) => s.refetch);
   const displayCells = useMemo<MockCell[]>(
     () => (hasRealCells ? hydratedCells.map(toDisplayCell) : MOCK_CELLS),
@@ -285,6 +310,146 @@ export function CanvasView() {
 
   useEffect(() => { void refetchStoryboard(); }, [refetchStoryboard]);
 
+  // ── per-shot generation (hi-fi cells only) ──────────────────────────────
+  // Anchors resolve id → name/kind for the shot tile's ref chips. Best-effort:
+  // an unreachable anchor.list just leaves chips showing the raw id.
+  const [anchors, setAnchors] = useState<Anchor[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const client = await getMcpClient();
+        const { anchors: list } = await anchorApi.list(client);
+        if (!cancelled) setAnchors(list ?? []);
+      } catch {
+        // anchor.list unreachable — chips fall back to the raw anchor id.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [project?.project_id]);
+  const anchorById = useMemo(() => {
+    const m: Record<string, Anchor> = {};
+    for (const a of anchors) m[a.id] = a;
+    return m;
+  }, [anchors]);
+
+  // Latest render record per cell — for the cost/error/model readout. Prefers
+  // the record whose status matches the folded renderStatus (the canonical
+  // one per foldRenderStatus's active-wins rule); falls back to the last seen.
+  const recordByUid = useMemo(() => {
+    const m: Record<string, RenderRecord> = {};
+    for (const r of renderRecords) {
+      if (!r || typeof r.cell_uid !== 'string' || !r.cell_uid) continue;
+      const prev = m[r.cell_uid];
+      if (!prev || r.status === renderStatusMap[r.cell_uid]) m[r.cell_uid] = r;
+    }
+    return m;
+  }, [renderRecords, renderStatusMap]);
+  const totalSpend = useMemo(
+    () => Object.values(recordByUid).reduce((sum, r) => sum + (r.cost_actual ?? r.cost_estimate ?? 0), 0),
+    [recordByUid],
+  );
+  const fmtCost = (n: number) => `$${n.toFixed(2)}`;
+
+  // Per-cell engine choice — Track A (fal, direct API render) vs Track B
+  // (handoff — no API, prompt-package + ingest_external round trip). UI-local:
+  // it isn't a persisted Cell field, just which generation path the Generate
+  // button takes.
+  const FAL_MODELS = ['ltx-video', 'flux', 'flux-i2v'] as const;
+  const HANDOFF_PLATFORMS: PromptPlatform[] = ['higgsfield', 'flow', 'veo', 'generic'];
+  interface GenChoice { mode: 'fal' | 'handoff'; model: string; platform: PromptPlatform; }
+  const DEFAULT_GEN_CHOICE: GenChoice = { mode: 'fal', model: FAL_MODELS[0], platform: 'higgsfield' };
+  const [genChoice, setGenChoiceMap] = useState<Record<string, GenChoice>>({});
+  const [genBusy, setGenBusy] = useState<Record<string, boolean>>({});
+  const [genError, setGenErrorMap] = useState<Record<string, string>>({});
+  const [dropPath, setDropPath] = useState<Record<string, string>>({});
+  const [copiedUid, setCopiedUid] = useState<string | null>(null);
+
+  const choiceFor = (uid: string): GenChoice => genChoice[uid] ?? DEFAULT_GEN_CHOICE;
+  const patchChoice = (uid: string, patch: Partial<GenChoice>) =>
+    setGenChoiceMap((prev) => ({ ...prev, [uid]: { ...choiceFor(uid), ...patch } }));
+  const setGenErrorFor = (uid: string, message: string | null) =>
+    setGenErrorMap((prev) => {
+      const next = { ...prev };
+      if (message) next[uid] = message;
+      else delete next[uid];
+      return next;
+    });
+
+  async function generateShot(uid: string) {
+    if (genBusy[uid]) return;
+    setGenBusy((prev) => ({ ...prev, [uid]: true }));
+    setGenErrorFor(uid, null);
+    try {
+      const client = await getMcpClient();
+      await compositionApi.render(client, {
+        project_id: project?.project_id ?? '',
+        cell_uid: uid,
+        engine: 'fal',
+      });
+      bumpActivePoll();
+      await Promise.all([refetchStoryboard(), refreshRenders()]);
+    } catch (err) {
+      setGenErrorFor(uid, `Generate failed — ${(err as Error).message}`);
+    } finally {
+      setGenBusy((prev) => ({ ...prev, [uid]: false }));
+    }
+  }
+
+  async function cancelShot(uid: string) {
+    const recordId = recordByUid[uid]?.id;
+    if (!recordId) return;
+    try {
+      const client = await getMcpClient();
+      await renderApi.cancel(client, recordId);
+      await refreshRenders();
+    } catch (err) {
+      setGenErrorFor(uid, `Cancel failed — ${(err as Error).message}`);
+    }
+  }
+
+  async function setApproval(uid: string, approved: boolean) {
+    try {
+      const client = await getMcpClient();
+      await storyboardApi.set_approved(client, uid, approved);
+      await refetchStoryboard();
+    } catch (err) {
+      setGenErrorFor(uid, `Couldn't ${approved ? 'approve' : 'reject'} — ${(err as Error).message}`);
+    }
+  }
+
+  async function copyPromptPackage(uid: string, platform: PromptPlatform) {
+    try {
+      const client = await getMcpClient();
+      const pkg = await exportApi.prompt_package(client, { cell_id: uid, platform });
+      const entry = pkg.packages.find((p) => p.cellId === uid) ?? pkg.packages[0];
+      if (entry && typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(entry.prompt);
+      }
+      setCopiedUid(uid);
+      window.setTimeout(() => setCopiedUid((u) => (u === uid ? null : u)), 2000);
+    } catch (err) {
+      setGenErrorFor(uid, `Couldn't build the prompt package — ${(err as Error).message}`);
+    }
+  }
+
+  async function dropClip(uid: string, platform: PromptPlatform) {
+    const path = (dropPath[uid] ?? '').trim();
+    if (!path || genBusy[uid]) return;
+    setGenBusy((prev) => ({ ...prev, [uid]: true }));
+    setGenErrorFor(uid, null);
+    try {
+      const client = await getMcpClient();
+      await renderApi.ingest_external(client, { cell_id: uid, file_path: path, engine: platform });
+      await Promise.all([refetchStoryboard(), refreshRenders()]);
+      setDropPath((prev) => ({ ...prev, [uid]: '' }));
+    } catch (err) {
+      setGenErrorFor(uid, `Couldn't attach the clip — ${(err as Error).message}`);
+    } finally {
+      setGenBusy((prev) => ({ ...prev, [uid]: false }));
+    }
+  }
+
   const items = useMemo<Item[]>(() => {
     const cells: Item[] = displayCells.map((c) => ({ ...c, kind: 'cell' as const }));
     return [...RUNG_LABELS, ...cells];
@@ -299,7 +464,7 @@ export function CanvasView() {
         x: COLUMN_X(colByBeat[c.beat] ?? 0),
         y: ROW_Y[c.rung],
         w: CELL_W,
-        h: CELL_H,
+        h: c.rung === '2_hifi' ? HIFI_CELL_H : CELL_H,
       };
     }
     for (const l of RUNG_LABELS) {
@@ -425,6 +590,324 @@ export function CanvasView() {
     );
   }
 
+  // Per-shot generation card — rendered for a real hi-fi cell (`item.raw`
+  // present, see MockCell.raw doc). Plain closure fn (not a component) so it
+  // shares every handler/selector declared above without re-plumbing props.
+  function renderShotCard(
+    item: MockCell & { kind: 'cell' },
+    raw: Cell,
+    state: ItemRenderState,
+    tstate: TileState,
+    sMeta: { label: string; varName: string },
+    dur: number | undefined,
+  ) {
+    const choice = choiceFor(item.uid);
+    const record = recordByUid[item.uid];
+    const busy = genBusy[item.uid] ?? false;
+    const shotError = genError[item.uid];
+    const isTrackA = choice.mode === 'fal';
+    const hoverLinked = hoverBeat === item.uid;
+    const scrubActive = !state.isSelected && activeAtPlayheadUid === item.uid;
+    const cost =
+      record?.cost_actual != null
+        ? fmtCost(record.cost_actual)
+        : record?.cost_estimate != null
+          ? `est. ${fmtCost(record.cost_estimate)}`
+          : isTrackA
+            ? '—'
+            : 'no fal cost';
+    const failedReason = tstate === 'failed' ? (record?.error ?? shotError) : undefined;
+
+    const openInCellView = () => {
+      setCellUid(item.uid);
+      const { focusedPane, setPaneView } = useLayoutStore.getState();
+      setPaneView(focusedPane, 'cell');
+    };
+
+    return (
+      <div
+        role="button"
+        tabIndex={state.isSelected ? 0 : -1}
+        onMouseEnter={() => setHoverBeat(item.uid)}
+        onMouseLeave={() => setHoverBeat(null)}
+        onClick={() => setCellUid(item.uid)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            setCellUid(item.uid);
+          }
+        }}
+        className={[
+          'cell-card group relative flex flex-col overflow-y-auto rounded-md text-left transition-shadow',
+          'border border-[var(--border)] bg-surface hover:shadow-lg',
+          state.isSelected
+            ? 'outline-2 outline outline-offset-2 outline-[var(--achievement)]'
+            : scrubActive
+              ? 'outline-2 outline outline-offset-2 outline-[var(--info)]'
+              : '',
+          state.isEditMode
+            ? 'ring-1 ring-dashed ring-[color-mix(in_oklab,var(--achievement)_50%,transparent)]'
+            : '',
+          hoverLinked ? ' is-hover-link' : '',
+        ].join(' ')}
+        style={{ height: HIFI_CELL_H, borderTop: `2px solid var(${isTrackA ? '--agent' : '--fg-faint'})` }}
+      >
+        {/* delete (hover / focus revealed) — real storyboard.delete_cell */}
+        <button
+          type="button"
+          aria-label={`Delete cell ${item.beat}`}
+          title="Delete cell"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            setError(null);
+            setConfirmDelete({ uid: item.uid, beat: item.beat });
+          }}
+          className="absolute right-1 top-1 z-10 hidden h-5 w-5 items-center justify-center rounded border border-[var(--border)] bg-surface text-[11px] leading-none text-fg-faint hover:border-[var(--danger)] hover:text-[var(--danger)] group-hover:flex focus-visible:flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_oklab,var(--danger)_45%,transparent)]"
+        >
+          <span aria-hidden>✕</span>
+        </button>
+
+        {/* header — index / uid / shot type */}
+        <div className="flex items-center justify-between gap-1 border-b border-soft px-2 py-1">
+          <span className="font-mono text-[9px] text-fg-faint">{String(raw.index + 1).padStart(2, '0')}</span>
+          <span className="truncate font-mono text-[9.5px] text-fg-muted">{item.uid}</span>
+          <span className="rounded border border-soft bg-raised px-1 font-mono text-[9px] uppercase text-fg-muted">
+            {raw.shot_type}
+          </span>
+        </div>
+
+        {/* status thumb */}
+        <div className="relative flex h-12 items-center justify-center border-b border-soft bg-sunken">
+          <span
+            className="flex items-center gap-1 font-mono text-[9px]"
+            style={{ color: `var(${sMeta.varName})` }}
+          >
+            {tstate === 'rendered' ? (
+              <span aria-hidden>✓</span>
+            ) : (
+              <span
+                className={'h-1.5 w-1.5 rounded-full' + (tstate === 'rendering' ? ' animate-pulse' : '')}
+                style={{ background: `var(${sMeta.varName})` }}
+              />
+            )}
+            {sMeta.label}
+          </span>
+          {dur != null && <span className="ml-1 font-mono text-[8px] text-fg-faint">{fmtDuration(dur)}</span>}
+        </div>
+
+        {/* beat + approved + prompt preview */}
+        <div className="px-2 pt-1">
+          <div className="flex items-center justify-between gap-1">
+            <span className="truncate text-[11px] font-medium text-fg">{item.beat}</span>
+            {raw.approved && (
+              <span aria-label="approved" className="font-mono text-[10px] text-[var(--live)]">
+                ✓
+              </span>
+            )}
+          </div>
+          {raw.prompt && (
+            <p className="mt-0.5 truncate text-[10px] text-fg-muted" title={raw.prompt}>
+              {raw.prompt}
+            </p>
+          )}
+        </div>
+
+        {/* anchor-ref chips */}
+        {raw.anchors.length > 0 && (
+          <div className="flex flex-wrap gap-1 px-2 pt-1">
+            {raw.anchors.map((aid) => {
+              const a = anchorById[aid];
+              const dotVar =
+                a?.kind === 'character' ? '--agent' : a?.kind === 'location' ? '--info' : '--fg-faint';
+              return (
+                <span
+                  key={aid}
+                  className="flex items-center gap-1 rounded-full border border-soft bg-raised px-1.5 py-px font-mono text-[9px] text-fg-muted"
+                  title={aid}
+                >
+                  <span className="h-1 w-1 rounded-full" style={{ background: `var(${dotVar})` }} />
+                  {a?.name ?? aid}
+                </span>
+              );
+            })}
+          </div>
+        )}
+
+        {/* engine picker — Track A (fal, direct render) vs Track B (handoff, no API) */}
+        <div className="mt-1 flex items-center gap-1 px-2">
+          <select
+            value={choice.mode}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            onChange={(e) => patchChoice(item.uid, { mode: e.target.value as GenChoice['mode'] })}
+            className="rounded border border-soft bg-raised px-1 py-0.5 font-mono text-[9.5px] text-fg"
+            aria-label="Generation path"
+          >
+            <option value="fal">fal</option>
+            <option value="handoff">handoff</option>
+          </select>
+          {isTrackA ? (
+            <select
+              value={choice.model}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => patchChoice(item.uid, { model: e.target.value })}
+              className="min-w-0 flex-1 rounded border border-soft bg-raised px-1 py-0.5 font-mono text-[9.5px] text-fg"
+              aria-label="fal model"
+            >
+              {FAL_MODELS.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+          ) : (
+            <select
+              value={choice.platform}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => patchChoice(item.uid, { platform: e.target.value as PromptPlatform })}
+              className="min-w-0 flex-1 rounded border border-soft bg-raised px-1 py-0.5 font-mono text-[9.5px] text-fg"
+              aria-label="Handoff platform"
+            >
+              {HANDOFF_PLATFORMS.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          )}
+        </div>
+
+        {/* actions */}
+        <div className="mt-1 flex flex-col gap-1 px-2">
+          {isTrackA ? (
+            tstate === 'rendering' ? (
+              <button
+                type="button"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); void cancelShot(item.uid); }}
+                className="rounded border border-soft bg-raised px-2 py-1 text-[10px] text-fg hover:bg-sunken"
+              >
+                Cancel
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={busy}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); void generateShot(item.uid); }}
+                className={[
+                  'rounded px-2 py-1 text-[10px] font-medium disabled:opacity-50',
+                  tstate === 'rendered' || tstate === 'failed'
+                    ? 'border border-soft bg-raised text-fg hover:bg-sunken'
+                    : 'bg-[var(--achievement)] text-[var(--bg-base)]',
+                ].join(' ')}
+              >
+                {busy
+                  ? 'Queuing…'
+                  : tstate === 'rendered'
+                    ? 'Regenerate'
+                    : tstate === 'failed'
+                      ? 'Retry'
+                      : 'Generate'}
+              </button>
+            )
+          ) : (
+            <>
+              <button
+                type="button"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); void copyPromptPackage(item.uid, choice.platform); }}
+                className="rounded border border-soft bg-raised px-2 py-1 text-[10px] text-fg hover:bg-sunken"
+              >
+                {copiedUid === item.uid ? 'Copied ✓' : 'Copy prompt package'}
+              </button>
+              <div className="flex gap-1">
+                <input
+                  type="text"
+                  value={dropPath[item.uid] ?? ''}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => setDropPath((prev) => ({ ...prev, [item.uid]: e.target.value }))}
+                  placeholder="returned clip path…"
+                  className="min-w-0 flex-1 rounded border border-soft bg-sunken px-1.5 py-1 font-mono text-[9.5px] text-fg outline-none focus:border-[var(--info)]"
+                />
+                <button
+                  type="button"
+                  disabled={busy || !(dropPath[item.uid] ?? '').trim()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => { e.stopPropagation(); void dropClip(item.uid, choice.platform); }}
+                  className="shrink-0 rounded border border-soft bg-raised px-2 py-1 text-[10px] text-fg hover:bg-sunken disabled:opacity-50"
+                >
+                  Attach
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* approve / reject */}
+        <div className="mt-1 flex gap-1 px-2">
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); void setApproval(item.uid, true); }}
+            className={[
+              'flex-1 rounded border px-2 py-0.5 text-[10px]',
+              raw.approved
+                ? 'border-[var(--live)] bg-[color-mix(in_oklab,var(--live)_16%,var(--bg-raised))] text-[var(--live)]'
+                : 'border-soft bg-raised text-fg-muted hover:text-fg',
+            ].join(' ')}
+          >
+            Approve
+          </button>
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); void setApproval(item.uid, false); }}
+            className="flex-1 rounded border border-soft bg-raised px-2 py-0.5 text-[10px] text-fg-muted hover:text-[var(--danger)]"
+          >
+            Reject
+          </button>
+        </div>
+
+        {/* status row — dot/label + cost */}
+        <div className="mt-1 flex items-center justify-between px-2 pb-1 font-mono text-[9.5px] text-fg-muted">
+          <span style={{ color: `var(${sMeta.varName})` }}>{sMeta.label}</span>
+          <span>{cost}</span>
+        </div>
+
+        {/* seed-lock footer note */}
+        {raw.seed != null && (
+          <div className="px-2 pb-1 font-mono text-[9px] text-fg-faint">seed locked · {raw.seed}</div>
+        )}
+
+        {/* failed reason + retry / edit prompt */}
+        {failedReason && (
+          <div className="mx-2 mb-1.5 rounded border border-dashed border-[var(--danger)] bg-[color-mix(in_oklab,var(--danger)_10%,var(--bg-sunken))] px-1.5 py-1 text-[10px] text-[var(--danger)]">
+            <p className="truncate" title={failedReason}>{failedReason}</p>
+            <div className="mt-1 flex gap-1">
+              <button
+                type="button"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); void generateShot(item.uid); }}
+                className="rounded border border-[var(--danger)] px-1.5 py-0.5 text-[9.5px] text-[var(--danger)] hover:bg-[color-mix(in_oklab,var(--danger)_18%,transparent)]"
+              >
+                Retry
+              </button>
+              <button
+                type="button"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); openInCellView(); }}
+                className="rounded border border-soft px-1.5 py-0.5 text-[9.5px] text-fg-muted hover:text-fg"
+              >
+                Edit prompt
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <div className="relative flex h-full flex-col bg-base text-fg">
       {/* Top chrome — folder path + archetype chip + viewport/add actions. */}
@@ -439,6 +922,10 @@ export function CanvasView() {
           <span className="font-mono text-fg">{project?.archetype_id ?? '—'}</span>
         </div>
         <div className="flex items-center gap-1">
+          <span className="mr-1 font-mono text-[10px] text-fg-muted">
+            spend <span className="text-[var(--achievement)]">{fmtCost(totalSpend)}</span>
+          </span>
+          <span className="mx-0.5 h-4 w-px bg-[var(--border-soft)]" aria-hidden />
           <button
             type="button"
             onClick={() => nudgeZoom('out')}
@@ -556,6 +1043,15 @@ export function CanvasView() {
             const mockProgress =
               !hasRealCells && item.progress != null && item.progress < 1 ? item.progress : null;
             const dur = durationByUid[item.uid];
+
+            // Real hi-fi cells get the per-shot generation card (engine picker,
+            // Generate/Regenerate/Cancel, approve/reject, anchor chips, spend).
+            // Lofi/beat-sheet cells and mock-fixture rows (no `raw`) keep the
+            // plain tile below — there's no authored prompt/anchors/seed to back
+            // a generation surface for those.
+            if (item.rung === '2_hifi' && item.raw) {
+              return renderShotCard(item, item.raw, state, tstate, sMeta, dur);
+            }
 
             const hoverLinked = hoverBeat === item.uid;
             const scrubActive = !state.isSelected && activeAtPlayheadUid === item.uid;

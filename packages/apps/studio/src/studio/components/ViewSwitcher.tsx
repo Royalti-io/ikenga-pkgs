@@ -4,7 +4,7 @@
 // sub-view (Canvas / Cell / Composition / Script / Archetype); the active
 // view is highlighted. Clicking a chip swaps that pane's view via
 // layoutStore.setPaneView — it never touches shared state, so the cursor /
-// playhead survive a view swap. The 1–5 keyboard shortcut (a11y-keyboard.html)
+// playhead survive a view swap. The 1–9 keyboard shortcut (a11y-keyboard.html)
 // is wired in commit 15 against the focused pane; the chip's `key` digit is
 // shown as a hint here.
 

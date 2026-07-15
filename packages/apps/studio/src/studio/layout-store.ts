@@ -42,7 +42,7 @@ export interface LayoutStoreState {
   /** View shown in each pane slot. Indices beyond the active layout's pane
    *  count are retained so switching layouts restores prior choices. */
   paneViews: Record<PaneIndex, ViewId>;
-  /** Which pane currently has keyboard focus (for the 1–5 view-switcher
+  /** Which pane currently has keyboard focus (for the 1–9 view-switcher
    *  shortcut + the V-split focus trap, commit 15). */
   focusedPane: PaneIndex;
   /** Per-preset divider ratios (draggable pane resizing). Each entry is the

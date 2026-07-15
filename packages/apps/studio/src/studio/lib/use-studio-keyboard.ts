@@ -7,9 +7,11 @@
 // This hook only handles the bindings that are the shell's responsibility and
 // must work regardless of which view a pane shows:
 //
-//   1–5        switch the FOCUSED pane's view (Canvas/Cell/Composition/Script/
-//              Archetype) — only when a pane-chrome element (not a text field)
-//              holds focus. Digit→view comes from routes.VIEWS[id].key.
+//   1–9        switch the FOCUSED pane's view (Canvas/Cell/Composition/Script/
+//              Archetype/Cast & World/Breakdown/Ledger/Handoff) — only when a
+//              pane-chrome element (not a text field) holds focus. Digit→view
+//              comes from routes.VIEWS[id].key (derived from VIEW_IDS, so new
+//              views need no edit here — only a free key digit in routes.ts).
 //   F6 / Ctrl+`  cycle focus to the next pane (Shift → previous), and move DOM
 //              focus into that pane's chrome. Writes ui-only focusedPane, never
 //              the shared-state model (a11y-keyboard.html §"Focus-trap").
@@ -64,7 +66,7 @@ export function useStudioKeyboard() {
     const onKeyDown = (e: KeyboardEvent) => {
       const active = document.activeElement;
 
-      // ── 1–5 · view switcher on the focused pane ──────────────────────────
+      // ── 1–9 · view switcher on the focused pane ──────────────────────────
       if (
         !e.ctrlKey && !e.metaKey && !e.altKey &&
         DIGIT_TO_VIEW[e.key] &&

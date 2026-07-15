@@ -27,7 +27,7 @@
 // is a UI-local cell-editor concept — see `views/Cell.tsx`'s own local
 // `RenderState` — and never belonged on the wire type; it is NOT re-added.
 
-import type { BeatStatus, AspectRatio, Rung } from '@ikenga/studio-schema';
+import type { BeatStatus, AspectRatio, Rung, ShotType, CameraMove } from '@ikenga/studio-schema';
 
 export type {
   // Enums / brands
@@ -89,6 +89,52 @@ export interface EngineCapability {
   max_duration_ms: number;
   supported_codecs: string[];
   requires_network: boolean;
+  // G2 capability booleans (renderers/types.ts `RendererAdapter.capabilities`).
+  // On the real registry row these live NESTED under `.capabilities`; real-mcp's
+  // `render.list_engines` case flattens them up so the UI reads `engine.still`
+  // etc. the same in mock and real mode. Optional so the mock's flat rows (and
+  // older sidecars) still satisfy the type. Lets the UI gate on, e.g., fal's
+  // still-vs-video support.
+  still?: boolean;
+  video?: boolean;
+  interactive?: boolean;
+  range?: boolean;
+  combine?: boolean;
+}
+
+// ─── Prompt-package handoff (export.prompt_package — WF-1) ───────────────
+//
+// Platform-shaped prompt bundle for a target generator with no API (Higgsfield,
+// Google Flow, Veo, generic). Shape inferred from mcp/src/tools/export.ts +
+// sidecars/project/src/prompt-package.ts. NOTE the per-cell element keys `cellId`
+// (camelCase) — real-mcp passes the sidecar's `packages[]` through verbatim, so
+// this is the exact wire shape the views receive. The returned clip comes back
+// via render.ingest_external.
+
+export type PromptPlatform = 'higgsfield' | 'flow' | 'veo' | 'generic';
+
+/** One cell's shaped prompt entry (the element of `PromptPackage.packages`). */
+export interface PromptPackageEntry {
+  cellId: string;
+  platform: PromptPlatform;
+  prompt: string;
+  ref_image_uri: string | null;
+  aspect_ratio: AspectRatio;
+  duration_ms: number;
+  camera: {
+    shot_type: ShotType;
+    camera_move: CameraMove;
+    camera_text?: string;
+  };
+}
+
+/** The full bundle returned by `export.prompt_package` (also written to
+ *  `<root>/prompts/<platform>/<cellId|'all'>.json` sidecar-side). */
+export interface PromptPackage {
+  platform: PromptPlatform;
+  path: string;
+  count: number;
+  packages: PromptPackageEntry[];
 }
 
 // ─── Event payloads ─────────────────────────────────────────────────────

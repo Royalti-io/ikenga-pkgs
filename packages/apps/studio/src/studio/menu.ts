@@ -58,6 +58,10 @@ const ICON = {
   archetype: 'package',
   launcher: 'sun',
   recent: 'folder',
+  castWorld: 'folder',
+  breakdown: 'trending-up',
+  ledger: 'check-check',
+  handoff: 'send',
 } as const;
 
 // Layout glyphs for the seg strip (founder call 2026-07-12: icons, not text).
@@ -176,6 +180,20 @@ function buildProjectMenu(project: OpenProjectSummary): PublishedMenuItem[] {
       section: 'Compose',
       active: focusedView === 'script',
     },
+    {
+      id: 'cast-world',
+      label: 'Cast & World',
+      icon: ICON.castWorld,
+      section: 'Compose',
+      active: focusedView === 'cast-world',
+    },
+    {
+      id: 'breakdown',
+      label: 'Breakdown',
+      icon: ICON.breakdown,
+      section: 'Compose',
+      active: focusedView === 'breakdown',
+    },
     // Deliver
     {
       id: 'composition',
@@ -184,6 +202,20 @@ function buildProjectMenu(project: OpenProjectSummary): PublishedMenuItem[] {
       section: 'Deliver',
       active: focusedView === 'composition',
       badge: compBadge,
+    },
+    {
+      id: 'ledger',
+      label: 'Ledger',
+      icon: ICON.ledger,
+      section: 'Deliver',
+      active: focusedView === 'ledger',
+    },
+    {
+      id: 'handoff',
+      label: 'Handoff',
+      icon: ICON.handoff,
+      section: 'Deliver',
+      active: focusedView === 'handoff',
     },
     // Library
     {

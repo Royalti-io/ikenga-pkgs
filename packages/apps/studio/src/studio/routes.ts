@@ -2,14 +2,24 @@
 //
 // "Routes" here are in-iframe panes, not URL routes — the iframe owns one
 // shell route (/pkg/com.ikenga.studio/) and switches panes internally. Four
-// layout presets lifted from Pattern C; five sub-views; the Launcher is a
+// layout presets lifted from Pattern C; nine sub-views; the Launcher is a
 // full-bleed pre-project state that pre-empts the layout entirely (G25).
 
 import type { ComponentType } from 'react';
 
 // ─── Views ──────────────────────────────────────────────────────────────
 
-export const VIEW_IDS = ['canvas', 'cell', 'composition', 'script', 'archetype'] as const;
+export const VIEW_IDS = [
+  'canvas',
+  'cell',
+  'composition',
+  'script',
+  'archetype',
+  'cast-world',
+  'breakdown',
+  'ledger',
+  'handoff',
+] as const;
 export type ViewId = (typeof VIEW_IDS)[number];
 
 export interface ViewMeta {
@@ -18,7 +28,7 @@ export interface ViewMeta {
   /** lucide icon name — rendered by the ViewSwitcher chip. */
   icon: string;
   /** kbd digit that selects this view in the focused pane (a11y-keyboard.html). */
-  key: '1' | '2' | '3' | '4' | '5';
+  key: '1' | '2' | '3' | '4' | '5' | '6' | '7' | '8' | '9';
 }
 
 export const VIEWS: Record<ViewId, ViewMeta> = {
@@ -27,6 +37,10 @@ export const VIEWS: Record<ViewId, ViewMeta> = {
   composition: { id: 'composition', label: 'Composition', icon: 'film',         key: '3' },
   script:      { id: 'script',      label: 'Script',      icon: 'pen-line',     key: '4' },
   archetype:   { id: 'archetype',   label: 'Archetype',   icon: 'package',      key: '5' },
+  'cast-world': { id: 'cast-world', label: 'Cast & World', icon: 'users',       key: '6' },
+  breakdown:   { id: 'breakdown',   label: 'Breakdown',    icon: 'list-checks', key: '7' },
+  ledger:      { id: 'ledger',      label: 'Ledger',       icon: 'check-check', key: '8' },
+  handoff:     { id: 'handoff',     label: 'Handoff',      icon: 'send',        key: '9' },
 };
 
 export const VIEW_ORDER: ViewId[] = [...VIEW_IDS];

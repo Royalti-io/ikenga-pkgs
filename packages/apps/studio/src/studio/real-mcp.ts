@@ -41,7 +41,7 @@
 import { callPkgTool } from './bridge';
 import type { McpClient } from './mcp-client';
 import type {
-  Project, Cell, Beat, RenderRecord, Archetype, AspectRatio,
+  Project, Cell, Beat, RenderRecord, Archetype, AspectRatio, Anchor,
   StudioEventName, StudioEventPayloadMap,
 } from './mcp-types';
 
@@ -293,6 +293,31 @@ export function createRealMcpClient(): McpClient {
         const body = await raw('anchor.list', { projectId: a.projectId });
         return { anchors: (body.anchors as unknown[]) ?? [] };
       }
+      // anchor.generate (WF-1) — fal still → project anchor. projectId injected;
+      // kind/name/prompt/seed/model already share the sidecar's names. Sidecar
+      // returns { ok, anchor } (via create()); the UI wants the created Anchor.
+      case 'anchor.generate': {
+        const projectId = (args.project_id as string) ?? requireActive('anchor.generate').projectId;
+        const body = await raw('anchor.generate', {
+          projectId,
+          kind: args.kind,
+          name: args.name,
+          prompt: args.prompt,
+          seed: args.seed,
+          model: args.model,
+        });
+        return body.anchor as Anchor;
+      }
+      case 'anchor.create': {
+        const a = requireActive('anchor.create');
+        const body = await raw('anchor.create', { projectId: a.projectId, anchor: args.anchor });
+        return body.anchor as Anchor;
+      }
+      case 'anchor.delete': {
+        const a = requireActive('anchor.delete');
+        const body = await raw('anchor.delete', { projectId: a.projectId, anchorId: args.anchor_id });
+        return { anchorId: (body.anchorId as string) ?? (args.anchor_id as string) };
+      }
       case 'storyboard.write_cell': {
         const a = requireActive('storyboard.write_cell');
         const uid = args.cell_uid as string;
@@ -378,7 +403,17 @@ export function createRealMcpClient(): McpClient {
       }
       case 'render.list_engines': {
         const body = await raw('render.list_engines', {});
-        return { engines: (body.engines as unknown[]) ?? [] };
+        // The real registry row nests the G2 matrix under `.capabilities`
+        // ({ id, capabilities: { still, video, aspect_ratios, … } }) while the
+        // mock/UI EngineCapability contract is flat. Spread the caps up so the
+        // views read `engine.still` / `engine.aspect_ratios` identically in both
+        // modes (defensive: an already-flat row passes through unchanged).
+        const rows = (body.engines as Array<Record<string, unknown>>) ?? [];
+        const engines = rows.map((e) => {
+          const { capabilities, ...rest } = e as { capabilities?: Record<string, unknown> };
+          return { ...(capabilities ?? {}), ...rest };
+        });
+        return { engines };
       }
       case 'render.status': {
         const body = await raw('render.status', { recordId: args.record_id });
@@ -407,6 +442,24 @@ export function createRealMcpClient(): McpClient {
           sizeBytes: (body.sizeBytes as number) ?? 0,
           path: (body.path as string) ?? '',
         };
+      }
+      // render.ingest_external (WF-1) — attach an externally-produced clip to a
+      // cell as a done render row (return leg of export.prompt_package).
+      // projectId injected; snake args renamed to the sidecar's shape. Sidecar
+      // returns { ok, recordId, engine, outputPath, record }; reuse
+      // toRenderRecord() to reshape `record` into the UI RenderRecord.
+      case 'render.ingest_external': {
+        const projectId = (args.project_id as string) ?? requireActive('render.ingest_external').projectId;
+        const body = await raw('render.ingest_external', {
+          projectId,
+          cellId: args.cell_id,
+          filePath: args.file_path,
+          engine: args.engine,
+          model_id: args.model_id,
+          cost_actual: args.cost_actual,
+        });
+        const record = (body.record as Record<string, unknown>) ?? body;
+        return toRenderRecord(record);
       }
 
       // ─── export ───────────────────────────────────────────────────────
@@ -458,6 +511,25 @@ export function createRealMcpClient(): McpClient {
           will_be_silent: body.willBeSilent === undefined ? !(body.hasBed ?? body.has_bed) : Boolean(body.willBeSilent),
           by_design: Boolean(body.byDesign ?? body.by_design),
           path: (body.path as string | undefined) ?? undefined,
+        };
+      }
+      // export.prompt_package (WF-1) — platform-shaped prompt bundle for an
+      // API-less generator. projectId injected; cell_id → cellId. The sidecar's
+      // `packages[]` elements (cellId/prompt/ref_image_uri/aspect_ratio/
+      // duration_ms/camera) pass through verbatim — the UI PromptPackage type
+      // matches that wire shape.
+      case 'export.prompt_package': {
+        const projectId = (args.project_id as string) ?? requireActive('export.prompt_package').projectId;
+        const body = await raw('export.prompt_package', {
+          projectId,
+          cellId: args.cell_id,
+          platform: args.platform,
+        });
+        return {
+          platform: body.platform as string,
+          path: (body.path as string) ?? '',
+          count: (body.count as number) ?? 0,
+          packages: (body.packages as unknown[]) ?? [],
         };
       }
 

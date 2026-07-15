@@ -58,11 +58,12 @@ import {
   compositionApi,
   anchorApi,
   renderApi,
+  exportApi,
 } from '../mcp-client';
 import { pollRenderUntilDone } from '../lib/render-poll';
-import { recordByUid, fmtRelative, base64ToBlob } from './composition/format';
+import { recordByUid, fmtRelative, base64ToBlob, copyText, engineLabel } from './composition/format';
 import type { CellVideoAvailability } from './composition/CellVideo';
-import type { Rung, AspectRatio, Anchor, RenderStatus } from '../mcp-types';
+import type { Rung, AspectRatio, Anchor, RenderStatus, EngineCapability, PromptPackage, RenderRecord } from '../mcp-types';
 import { EmptyState } from '../components/EmptyState';
 import { SafeZoneBands } from '../media-controls';
 
@@ -222,7 +223,7 @@ function useRenderLifecycle(
     abortRef.current.aborted = true;
   }, []);
 
-  const trigger = useCallback(async () => {
+  const trigger = useCallback(async (opts?: { engine?: string }) => {
     if (state === 'queued' || state === 'running') return;
     cancel();
     abortRef.current = { aborted: false };
@@ -235,6 +236,7 @@ function useRenderLifecycle(
         const { record_id } = await compositionApi.render(client, {
           project_id: real.projectId,
           cell_uid: cellUid,
+          engine: opts?.engine,
         });
         hooksRef.current.onEnqueued?.();
         const rec = await pollRenderUntilDone(client, record_id, {
@@ -287,6 +289,22 @@ function useRenderLifecycle(
 // Nominal narration window for the excerpt highlight (P1 stand-in for real
 // per-word timing when sync is on).
 const NARRATION_WINDOW_MS = 3200;
+
+// ─── Generate tab (production-desk graft) ────────────────────────────────
+//
+// Seed prompt text for a cell that has never been authored (Cell.prompt is
+// empty) — an editable starting point, not fabricated "real" render data.
+// Mirrors the concept fixture ("The Forge" · sc1_sh2 · Adaora at the anvil).
+const FIXTURE_PROMPT_SEED =
+  "Adaora at the anvil, hammer raised overhead, firelight catching the sweat on her brow — " +
+  'mid-strike stillness before the blow. Ember-noir lighting, warm orange key against deep ' +
+  'shadow, cinematic shallow depth of field. The Workshop behind her, forge glowing.';
+
+const HANDOFF_ENGINE_ID = 'higgsfield';
+
+function randomSeed(): number {
+  return Math.floor(100_000 + Math.random() * 899_999);
+}
 
 // ─── View ───────────────────────────────────────────────────────────────
 
@@ -472,6 +490,204 @@ export function CellView() {
     // the doc change flows through CodeEditor.onChange → onEditorChange (dirty).
   };
 
+  // ── editor rail tab: source vs generate (CE-A editor kept intact; Generate
+  // is an added tab, never a replacement) ──
+  const [editorTab, setEditorTab] = useState<'source' | 'generate'>('source');
+
+  // ── focus/review toggle: collapses the editor rail to a full-width
+  // cinema-stage preview for keeper-picking ──
+  const [focusMode, setFocusMode] = useState(false);
+
+  // ── Generate tab: prompt / anchor refs / engine / seed ──
+  const [genPrompt, setGenPrompt] = useState('');
+  const [genSeed, setGenSeed] = useState<number>(() => randomSeed());
+  const [genSeedLocked, setGenSeedLocked] = useState(false);
+  const [genAnchorIds, setGenAnchorIds] = useState<string[]>([]);
+  const [refPickerOpen, setRefPickerOpen] = useState(false);
+  const [engines, setEngines] = useState<EngineCapability[]>([]);
+  const [genEngine, setGenEngine] = useState<string>(HANDOFF_ENGINE_ID);
+  const [genPatchDirty, setGenPatchDirty] = useState(false);
+
+  // Load the render-engine capability matrix once (real or mock — cheap probe).
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const client = await getMcpClient();
+        const { engines: list } = await renderApi.list_engines(client);
+        if (!cancelled) setEngines(list ?? []);
+      } catch {
+        if (!cancelled) setEngines([]);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Track-A candidates: engines that actually report video (or still, as a
+  // fallback) generation capability. If the server reports none (e.g. the
+  // mock's two flat rows), fall back to whatever the server DOES report
+  // rather than fabricating a fal row that isn't really there.
+  const videoEngines = useMemo(() => engines.filter((e) => e.video === true), [engines]);
+  const trackAEngines = videoEngines.length > 0 ? videoEngines : engines;
+
+  const engineDisplayName = useCallback((id: string): string => {
+    if (id === HANDOFF_ENGINE_ID) return 'Higgsfield';
+    if (id.includes('fal') || id.includes('ltx')) return `fal ▸ ${id}`;
+    return engineLabel(id);
+  }, []);
+
+  // Sync the Generate tab's local fields from the active cell whenever the
+  // selection changes — real Cell.prompt/seed/anchors when present, an
+  // editable fixture seed when the cell has never been authored.
+  useEffect(() => {
+    if (!cellUid) return;
+    setGenPrompt(rawCell?.prompt || FIXTURE_PROMPT_SEED);
+    setGenSeed(rawCell?.seed ?? randomSeed());
+    setGenSeedLocked(rawCell?.seed != null);
+    setGenAnchorIds(rawCell?.anchors ?? []);
+    setGenPatchDirty(false);
+    setRefPickerOpen(false);
+  }, [cellUid, rawCell?.prompt, rawCell?.seed, rawCell?.anchors]);
+
+  // Default the engine pick once the capability matrix (or the cell's last
+  // engine) is known.
+  useEffect(() => {
+    if (trackAEngines.length === 0) return;
+    setGenEngine((cur) => (cur === HANDOFF_ENGINE_ID || trackAEngines.some((e) => e.id === cur)
+      ? cur
+      : trackAEngines[0].id));
+  }, [trackAEngines]);
+
+  const refAnchors = useMemo(
+    () => drawerAnchors.filter((a) => genAnchorIds.includes(a.id)),
+    [drawerAnchors, genAnchorIds],
+  );
+  const toggleGenAnchor = (id: string) => {
+    setGenAnchorIds((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
+    setGenPatchDirty(true);
+  };
+
+  // Persist prompt/seed/anchors to the Cell doc (real mode only — the Cell
+  // schema carries these fields directly; mock/standalone has no disk to
+  // write them to, so the fixture just holds the in-memory edit).
+  const persistGenPatch = useCallback(async () => {
+    if (!hasRealCells || !cellUid) return;
+    try {
+      const client = await getMcpClient();
+      await storyboardApi.write_cell(client, cellUid, {
+        prompt: genPrompt,
+        seed: genSeed,
+        anchors: genAnchorIds,
+      });
+      setGenPatchDirty(false);
+      await refetchStoryboard();
+    } catch {
+      // keep the buffer + dirty flag — surfaced by the generate-button state
+    }
+  }, [hasRealCells, cellUid, genPrompt, genSeed, genAnchorIds, refetchStoryboard]);
+
+  // A/B variants — every render record polled for this cell (real mode only;
+  // mock/standalone has no render.list poll, so an honest empty tray).
+  const variantsForCell: RenderRecord[] = useMemo(() => {
+    if (!hasRealCells || !cellUid) return [];
+    return renderRecords
+      .filter((r) => r.cell_uid === cellUid)
+      .slice()
+      .sort((a, b) => {
+        const ta = Date.parse(a.finished_at ?? a.started_at ?? '') || 0;
+        const tb = Date.parse(b.finished_at ?? b.started_at ?? '') || 0;
+        return tb - ta;
+      });
+  }, [hasRealCells, cellUid, renderRecords]);
+
+  // Which variant is the "keeper" shown in the living preview. Defaults to
+  // recordByUid's best-record pick; a click in the tray can override it
+  // in-view (there is no dedicated server-side "keeper" field — this is a
+  // local pick of which existing render to preview, not a fabricated one).
+  const [keeperOverrideId, setKeeperOverrideId] = useState<string | null>(null);
+  useEffect(() => { setKeeperOverrideId(null); }, [cellUid]);
+
+  // ── Higgsfield handoff (Track B — no API; prompt package + return leg) ──
+  const [handoffPkg, setHandoffPkg] = useState<PromptPackage | null>(null);
+  const [handoffBusy, setHandoffBusy] = useState(false);
+  const [handoffError, setHandoffError] = useState<string | null>(null);
+  const [handoffCopied, setHandoffCopied] = useState(false);
+  const [ingestPath, setIngestPath] = useState('');
+  const [ingestBusy, setIngestBusy] = useState(false);
+  const [ingestError, setIngestError] = useState<string | null>(null);
+
+  const runHandoffPackage = useCallback(async () => {
+    if (!cellUid) return;
+    setHandoffBusy(true);
+    setHandoffError(null);
+    try {
+      await persistGenPatch();
+      const client = await getMcpClient();
+      const pkg = await exportApi.prompt_package(client, {
+        project_id: pid ?? undefined,
+        cell_id: cellUid,
+        platform: 'higgsfield',
+      });
+      setHandoffPkg(pkg);
+    } catch (err) {
+      setHandoffError((err as Error).message);
+    } finally {
+      setHandoffBusy(false);
+    }
+  }, [cellUid, pid, persistGenPatch]);
+
+  const copyHandoffPrompt = useCallback(async () => {
+    const entry = handoffPkg?.packages.find((p) => p.cellId === cellUid) ?? handoffPkg?.packages[0];
+    if (!entry) return;
+    const ok = await copyText(entry.prompt);
+    if (ok) {
+      setHandoffCopied(true);
+      setTimeout(() => setHandoffCopied(false), 1500);
+    }
+  }, [handoffPkg, cellUid]);
+
+  const runIngest = useCallback(async () => {
+    if (!cellUid || !ingestPath.trim()) return;
+    setIngestBusy(true);
+    setIngestError(null);
+    try {
+      const client = await getMcpClient();
+      const rec = await renderApi.ingest_external(client, {
+        project_id: pid ?? undefined,
+        cell_id: cellUid,
+        file_path: ingestPath.trim(),
+        engine: HANDOFF_ENGINE_ID,
+      });
+      setKeeperOverrideId(rec.id);
+      setIngestPath('');
+      await refetchStoryboard();
+      await refreshRenders();
+    } catch (err) {
+      setIngestError((err as Error).message);
+    } finally {
+      setIngestBusy(false);
+    }
+  }, [cellUid, pid, ingestPath, refetchStoryboard, refreshRenders]);
+
+  // ── Approve / reject (storyboardApi.set_approved) ──
+  const [approveBusy, setApproveBusy] = useState(false);
+  const [approveError, setApproveError] = useState<string | null>(null);
+  const cellApproved = hasRealCells ? rawCell?.approved ?? false : false;
+  const runSetApproved = useCallback(async (approved: boolean) => {
+    if (!cellUid || !hasRealCells) return;
+    setApproveBusy(true);
+    setApproveError(null);
+    try {
+      const client = await getMcpClient();
+      await storyboardApi.set_approved(client, cellUid, approved);
+      await refetchStoryboard();
+    } catch (err) {
+      setApproveError((err as Error).message);
+    } finally {
+      setApproveBusy(false);
+    }
+  }, [cellUid, hasRealCells, refetchStoryboard]);
+
   // ── render lifecycle + preview record ──
   const { state: renderState, progress: renderProgress, trigger: triggerRender } = useRenderLifecycle(
     cellUid,
@@ -487,9 +703,25 @@ export function CellView() {
     [hasRealCells, renderRecords],
   );
   const activeRecord = cellUid ? recByUid[cellUid] : undefined;
-  const activeRecordId = activeRecord?.status === 'done' ? activeRecord.id : null;
+  // A/B variants tray click overrides which existing render is previewed.
+  const keeperRecord = keeperOverrideId
+    ? variantsForCell.find((r) => r.id === keeperOverrideId) ?? activeRecord
+    : activeRecord;
+  const activeRecordId = keeperRecord?.status === 'done' ? keeperRecord.id : null;
   const [videoState, setVideoState] = useState<CellVideoAvailability>('unavailable');
   useEffect(() => { setVideoState('unavailable'); }, [activeRecordId]);
+
+  // Generate = persist the prompt/seed/anchors + fire the render (Track A) or
+  // package the prompt for an external generator (Track B / handoff).
+  const runGenerate = useCallback(async () => {
+    if (genEngine === HANDOFF_ENGINE_ID) {
+      await runHandoffPackage();
+      return;
+    }
+    if (!genSeedLocked) setGenSeed(randomSeed());
+    await persistGenPatch();
+    await triggerRender({ engine: genEngine });
+  }, [genEngine, genSeedLocked, persistGenPatch, triggerRender, runHandoffPackage]);
 
   const storeStatus: RenderStatus | undefined = cellUid ? renderStatus[cellUid] : undefined;
   const stripStatus = useCallback(
@@ -705,7 +937,7 @@ export function CellView() {
               </button>
               <button
                 type="button"
-                onClick={triggerRender}
+                onClick={() => void triggerRender()}
                 disabled={renderState === 'queued' || renderState === 'running'}
                 className={
                   'flex items-center gap-1.5 rounded px-2 py-1 ring-1 ring-inset ' +
@@ -722,8 +954,65 @@ export function CellView() {
                 {renderState === 'done' && <span>↻ Re-render</span>}
                 {renderState === 'failed' && <span>! Retry render</span>}
               </button>
+
+              {/* approve / reject (storyboardApi.set_approved) — honest no-op in mock */}
+              <div className="flex items-center gap-1" role="group" aria-label="Approve or reject this cell">
+                <button
+                  type="button"
+                  onClick={() => void runSetApproved(true)}
+                  disabled={!hasRealCells || approveBusy || cellApproved}
+                  aria-pressed={cellApproved}
+                  title={hasRealCells ? 'Approve this cell' : 'Approve is disabled in standalone/mock mode'}
+                  className={
+                    'flex items-center gap-1.5 rounded px-2 py-1 ring-1 ring-inset disabled:cursor-not-allowed disabled:opacity-50 ' +
+                    (cellApproved
+                      ? 'ring-[color-mix(in_oklab,var(--live)_45%,transparent)]'
+                      : 'bg-raised text-fg-muted ring-[var(--border)] hover:text-fg')
+                  }
+                  style={cellApproved ? { color: 'var(--live)', background: 'var(--live-soft)' } : undefined}
+                >
+                  ✓ {cellApproved ? 'Approved' : 'Approve'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void runSetApproved(false)}
+                  disabled={!hasRealCells || approveBusy || !cellApproved}
+                  title={hasRealCells ? 'Reject / unapprove this cell' : 'Reject is disabled in standalone/mock mode'}
+                  className="flex items-center gap-1.5 rounded px-2 py-1 text-fg-muted ring-1 ring-inset ring-[var(--border)] hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  ✕ Reject
+                </button>
+              </div>
+
+              {/* focus/review toggle — collapses the editor rail to a full-width stage */}
+              <button
+                type="button"
+                onClick={() => setFocusMode((f) => !f)}
+                aria-pressed={focusMode}
+                title={focusMode ? 'Back to the split editor' : 'Focus: full-width preview for keeper-picking'}
+                className={
+                  'flex items-center gap-1.5 rounded px-2 py-1 ring-1 ring-inset ' +
+                  (focusMode ? 'bg-raised text-fg ring-[var(--border)]' : 'text-fg-muted ring-[var(--border-soft)] hover:text-fg')
+                }
+              >
+                {focusMode ? '‹ Editor' : '⛶ Focus'}
+              </button>
             </div>
           </div>
+
+          {approveError && (
+            <div
+              role="alert"
+              className="border-b px-3 py-1.5 text-[11px]"
+              style={{
+                background: 'var(--danger-soft)',
+                borderColor: 'color-mix(in oklab, var(--danger) 40%, var(--border))',
+                color: 'color-mix(in oklab, var(--danger) 55%, var(--fg))',
+              }}
+            >
+              Couldn't update approval — {approveError}
+            </div>
+          )}
 
           {/* error banner (save failure — keeps the buffer, offers retry) */}
           {saveState === 'error' && (
@@ -813,50 +1102,116 @@ export function CellView() {
             </div>
           )}
 
-          {/* ═══ split: editor | living preview ═══ */}
+          {/* ═══ split: editor rail (Source | Generate) | living preview ═══
+                Focus mode collapses the rail entirely for full-width keeper-picking. */}
           <div className="flex min-h-0 flex-1">
-            {/* editor */}
-            <div className="flex min-h-0 flex-1 flex-col border-r border-soft bg-sunken">
-              <div className="flex items-center gap-2 border-b border-soft bg-surface px-3 py-1.5 text-[11px] text-fg-muted">
-                <span>Source</span>
-                <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">{contentPath.split('/').pop() ?? 'content.html'}</span>
-                <div className="flex-1" />
-                <button
-                  type="button"
-                  onClick={() => setAnchorDrawerOpen((o) => !o)}
-                  aria-expanded={anchorDrawerOpen}
-                  className={
-                    'flex items-center gap-1.5 rounded px-2 py-0.5 ' +
-                    (anchorDrawerOpen ? 'bg-raised text-fg' : 'text-fg-muted hover:bg-raised hover:text-fg')
-                  }
-                >
-                  <span>✦ Anchors</span>
-                  <span className="font-mono text-[10px] text-fg-faint">{drawerAnchors.length}</span>
-                </button>
-              </div>
-              <div className="relative min-h-0 flex-1">
-                <CodeEditor
-                  ref={editorRef}
-                  value={value}
-                  onChange={onEditorChange}
-                  readOnly={contentState !== 'ready'}
-                  language="html"
-                  ariaLabel={`Cell ${cell.uid} HTML editor`}
-                  className="h-full min-h-0"
-                />
-                {contentState === 'loading' && (
-                  <div
-                    className="absolute inset-0 grid place-items-center font-mono text-[10px] uppercase tracking-wider text-fg-faint"
-                    style={{ background: 'color-mix(in oklab, var(--bg-sunken) 70%, transparent)' }}
+            {/* editor rail */}
+            {!focusMode && (
+              <div className="flex min-h-0 flex-1 flex-col border-r border-soft bg-sunken">
+                <div className="flex items-center gap-1 border-b border-soft bg-surface px-2 pt-1.5 text-[11px] text-fg-muted">
+                  <button
+                    type="button"
+                    onClick={() => setEditorTab('source')}
+                    aria-pressed={editorTab === 'source'}
+                    className={
+                      'rounded-t px-2.5 py-1 ' +
+                      (editorTab === 'source' ? 'bg-sunken text-fg' : 'text-fg-muted hover:text-fg')
+                    }
                   >
-                    loading source…
+                    Source
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditorTab('generate')}
+                    aria-pressed={editorTab === 'generate'}
+                    className={
+                      'rounded-t px-2.5 py-1 ' +
+                      (editorTab === 'generate' ? 'bg-sunken' : 'text-fg-muted hover:text-fg')
+                    }
+                    style={editorTab === 'generate' ? { color: 'var(--agent)' } : undefined}
+                  >
+                    ✦ Generate
+                  </button>
+                  <div className="flex-1" />
+                  {editorTab === 'source' && (
+                    <>
+                      <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">{contentPath.split('/').pop() ?? 'content.html'}</span>
+                      <button
+                        type="button"
+                        onClick={() => setAnchorDrawerOpen((o) => !o)}
+                        aria-expanded={anchorDrawerOpen}
+                        className={
+                          'ml-2 flex items-center gap-1.5 rounded px-2 py-0.5 mb-1 ' +
+                          (anchorDrawerOpen ? 'bg-raised text-fg' : 'text-fg-muted hover:bg-raised hover:text-fg')
+                        }
+                      >
+                        <span>✦ Anchors</span>
+                        <span className="font-mono text-[10px] text-fg-faint">{drawerAnchors.length}</span>
+                      </button>
+                    </>
+                  )}
+                </div>
+
+                {editorTab === 'source' ? (
+                  <div className="relative min-h-0 flex-1">
+                    <CodeEditor
+                      ref={editorRef}
+                      value={value}
+                      onChange={onEditorChange}
+                      readOnly={contentState !== 'ready'}
+                      language="html"
+                      ariaLabel={`Cell ${cell.uid} HTML editor`}
+                      className="h-full min-h-0"
+                    />
+                    {contentState === 'loading' && (
+                      <div
+                        className="absolute inset-0 grid place-items-center font-mono text-[10px] uppercase tracking-wider text-fg-faint"
+                        style={{ background: 'color-mix(in oklab, var(--bg-sunken) 70%, transparent)' }}
+                      >
+                        loading source…
+                      </div>
+                    )}
                   </div>
+                ) : (
+                  <GenerateTab
+                    genPrompt={genPrompt}
+                    setGenPrompt={(v) => { setGenPrompt(v); setGenPatchDirty(true); }}
+                    refAnchors={refAnchors}
+                    drawerAnchors={drawerAnchors}
+                    genAnchorIds={genAnchorIds}
+                    toggleGenAnchor={toggleGenAnchor}
+                    refPickerOpen={refPickerOpen}
+                    setRefPickerOpen={setRefPickerOpen}
+                    trackAEngines={trackAEngines}
+                    genEngine={genEngine}
+                    setGenEngine={setGenEngine}
+                    engineDisplayName={engineDisplayName}
+                    genSeed={genSeed}
+                    setGenSeed={setGenSeed}
+                    genSeedLocked={genSeedLocked}
+                    setGenSeedLocked={setGenSeedLocked}
+                    onGenerate={() => void runGenerate()}
+                    generating={rendering || handoffBusy}
+                    isHandoff={genEngine === HANDOFF_ENGINE_ID}
+                    handoffPkg={handoffPkg}
+                    handoffError={handoffError}
+                    handoffCopied={handoffCopied}
+                    onCopyHandoffPrompt={() => void copyHandoffPrompt()}
+                    ingestPath={ingestPath}
+                    setIngestPath={setIngestPath}
+                    ingestBusy={ingestBusy}
+                    ingestError={ingestError}
+                    onIngest={() => void runIngest()}
+                    hasRealCells={hasRealCells}
+                    genPatchDirty={genPatchDirty}
+                    COLOR_VAR={COLOR_VAR}
+                  />
                 )}
               </div>
-            </div>
+            )}
 
             {/* living preview — the REAL rendered cell */}
-            <div className="flex w-[46%] min-h-0 flex-col bg-base">
+            <div className={'flex min-h-0 flex-col bg-base ' + (focusMode ? 'w-full' : 'w-[46%]')}>
               <div className="flex items-center gap-2 border-b border-soft bg-surface px-3 py-1.5 text-[11px] text-fg-muted">
                 <span>Preview</span>
                 <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">
@@ -913,7 +1268,7 @@ export function CellView() {
                           <div className="text-[13px] text-fg-muted">Render failed</div>
                           <button
                             type="button"
-                            onClick={triggerRender}
+                            onClick={() => void triggerRender()}
                             className="rounded px-2 py-1 text-[11px] ring-1 ring-inset ring-[var(--border)] text-fg hover:bg-raised"
                           >
                             ↻ Try again
@@ -937,7 +1292,7 @@ export function CellView() {
                           <div className="text-[13px] text-fg-muted">Not rendered yet</div>
                           <button
                             type="button"
-                            onClick={triggerRender}
+                            onClick={() => void triggerRender()}
                             className="rounded px-3 py-1 text-[11px] ring-1 ring-inset"
                             style={{
                               background: 'color-mix(in oklab, var(--primary) 60%, transparent)',
@@ -957,6 +1312,90 @@ export function CellView() {
                     </div>
                   )}
                 </div>
+              </div>
+
+              {/* ═══ A/B variants tray — every polled render for this cell, pick the keeper ═══ */}
+              <div className="border-t border-soft bg-surface">
+                <div className="flex items-center gap-2 px-3 pt-2 text-[11px] text-fg-muted">
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">Variants</span>
+                  <span className="font-mono text-[10px] text-fg-faint">
+                    {hasRealCells
+                      ? `${variantsForCell.length} render${variantsForCell.length === 1 ? '' : 's'}`
+                      : 'unavailable in standalone/mock mode'}
+                  </span>
+                  <div className="flex-1" />
+                  {variantsForCell.length > 0 && <span className="font-mono text-[10px] text-fg-faint">click to pick the keeper</span>}
+                </div>
+                {!hasRealCells ? (
+                  <div className="px-3 py-3 text-[11px] text-fg-faint">
+                    Variants need a real render backend — generate on a real project to see them here.
+                  </div>
+                ) : variantsForCell.length === 0 ? (
+                  <div className="px-3 py-3 text-[11px] text-fg-muted">
+                    No renders yet — Generate above to create the first variant.
+                  </div>
+                ) : (
+                  <div className="flex gap-2 overflow-x-auto px-3 py-2.5">
+                    {variantsForCell.map((r, i) => {
+                      const isKeeper = r.id === activeRecordId;
+                      const seed = typeof r.metadata?.seed === 'number' ? r.metadata.seed : undefined;
+                      const cost = r.cost_actual ?? r.cost_estimate;
+                      return (
+                        <button
+                          type="button"
+                          key={r.id}
+                          onClick={() => setKeeperOverrideId(r.id)}
+                          title={`seed ${seed ?? '—'} · ${r.status}`}
+                          className="relative w-[132px] flex-none rounded-md border p-1.5 text-left"
+                          style={{
+                            borderColor: isKeeper ? 'var(--achievement)' : 'var(--border)',
+                            background: 'var(--bg-raised)',
+                            boxShadow: isKeeper ? 'inset 0 0 0 1px var(--achievement)' : undefined,
+                          }}
+                        >
+                          {isKeeper && (
+                            <span
+                              className="absolute left-1.5 top-1.5 z-10 rounded px-1.5 py-0.5 font-mono text-[9px] font-bold uppercase tracking-wider"
+                              style={{ background: 'var(--achievement)', color: 'var(--bg-sunken)' }}
+                            >
+                              Keeper
+                            </span>
+                          )}
+                          <div
+                            className="relative flex aspect-video items-center justify-center overflow-hidden rounded"
+                            style={{ background: 'var(--bg-sunken)' }}
+                          >
+                            {r.status === 'running' || r.status === 'queued' ? (
+                              <span
+                                className="h-5 w-5 animate-spin rounded-full border-2"
+                                style={{ borderColor: 'var(--border)', borderTopColor: 'var(--agent)' }}
+                              />
+                            ) : r.status === 'failed' ? (
+                              <span style={{ color: 'var(--danger)' }}>!</span>
+                            ) : (
+                              <span className="text-fg-faint">▷</span>
+                            )}
+                          </div>
+                          <div className="mt-1 grid gap-0.5">
+                            <span className="font-mono text-[10px] text-fg-muted">seed {seed ?? '—'}</span>
+                            <span className="font-mono text-[9px] text-fg-faint">
+                              {cost != null ? `$${cost.toFixed(2)} · ` : ''}v{variantsForCell.length - i}
+                            </span>
+                          </div>
+                        </button>
+                      );
+                    })}
+                    <button
+                      type="button"
+                      onClick={() => void runGenerate()}
+                      title="Generate another variant"
+                      className="flex aspect-video w-[132px] flex-none items-center justify-center rounded-md border border-dashed text-fg-faint hover:text-fg-muted"
+                      style={{ borderColor: 'var(--border)' }}
+                    >
+                      +
+                    </button>
+                  </div>
+                )}
               </div>
 
               {/* narration row (honest) */}
@@ -1028,4 +1467,336 @@ function StatusDot({ status }: { status: RenderStatus | undefined }) {
 function fmtHHMM(ms: number): string {
   const d = new Date(ms);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+// ─── Generate tab (production-desk graft) ────────────────────────────────
+//
+// Editable prompt + anchor refs + engine/seed + the Generate CTA. Track A
+// (a real engine reporting `.video`) fires compositionApi.render with that
+// engine id; Track B (Higgsfield — no API) packages the prompt via
+// export.prompt_package and offers a small "attach the returned clip" form
+// wired to render.ingest_external. Purely additive to the CE-A editor rail —
+// it lives behind its own tab, never displacing Source.
+
+type DrawerAnchor = { id: string; name: string; kind: string; color: CellColor };
+
+function GenerateTab(props: {
+  genPrompt: string;
+  setGenPrompt: (v: string) => void;
+  refAnchors: DrawerAnchor[];
+  drawerAnchors: DrawerAnchor[];
+  genAnchorIds: string[];
+  toggleGenAnchor: (id: string) => void;
+  refPickerOpen: boolean;
+  setRefPickerOpen: (v: boolean | ((o: boolean) => boolean)) => void;
+  trackAEngines: EngineCapability[];
+  genEngine: string;
+  setGenEngine: (id: string) => void;
+  engineDisplayName: (id: string) => string;
+  genSeed: number;
+  setGenSeed: (n: number) => void;
+  genSeedLocked: boolean;
+  setGenSeedLocked: (v: boolean | ((o: boolean) => boolean)) => void;
+  onGenerate: () => void;
+  generating: boolean;
+  isHandoff: boolean;
+  handoffPkg: PromptPackage | null;
+  handoffError: string | null;
+  handoffCopied: boolean;
+  onCopyHandoffPrompt: () => void;
+  ingestPath: string;
+  setIngestPath: (v: string) => void;
+  ingestBusy: boolean;
+  ingestError: string | null;
+  onIngest: () => void;
+  hasRealCells: boolean;
+  genPatchDirty: boolean;
+  COLOR_VAR: Record<CellColor, string>;
+}) {
+  const {
+    genPrompt, setGenPrompt, refAnchors, drawerAnchors, genAnchorIds, toggleGenAnchor,
+    refPickerOpen, setRefPickerOpen, trackAEngines, genEngine, setGenEngine, engineDisplayName,
+    genSeed, setGenSeed, genSeedLocked, setGenSeedLocked, onGenerate, generating, isHandoff,
+    handoffPkg, handoffError, handoffCopied, onCopyHandoffPrompt, ingestPath, setIngestPath,
+    ingestBusy, ingestError, onIngest, hasRealCells, genPatchDirty, COLOR_VAR,
+  } = props;
+
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto p-4">
+      <div className="grid gap-4">
+
+        {/* prompt */}
+        <div className="grid gap-1.5">
+          <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-wider text-fg-faint">
+            <span>Prompt</span>
+            <span className="normal-case tracking-normal text-fg-faint">editable{genPatchDirty ? ' · unsaved' : ''}</span>
+          </div>
+          <textarea
+            value={genPrompt}
+            onChange={(e) => setGenPrompt(e.target.value)}
+            spellCheck={false}
+            rows={5}
+            className="w-full resize-y rounded-lg border border-[var(--border)] bg-raised px-3 py-2.5 text-[13px] leading-relaxed text-fg outline-none focus:border-[var(--agent)]"
+            style={{ boxShadow: 'none' }}
+            aria-label="Shot generation prompt"
+          />
+        </div>
+
+        {/* anchor refs */}
+        <div className="grid gap-1.5">
+          <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-wider text-fg-faint">
+            <span>Anchor references</span>
+            <span className="normal-case tracking-normal text-fg-faint">seed-locked cast &amp; world</span>
+          </div>
+          <div className="relative flex flex-wrap gap-2">
+            {refAnchors.length === 0 && (
+              <span className="text-[11px] text-fg-faint">No anchors referenced yet.</span>
+            )}
+            {refAnchors.map((a) => (
+              <span
+                key={a.id}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[var(--border)] bg-raised py-1 pl-1.5 pr-2.5 text-[11.5px] text-fg"
+              >
+                <span
+                  className="grid h-5 w-5 place-items-center rounded"
+                  style={{ background: `var(${COLOR_VAR[a.color]})`, opacity: 0.85 }}
+                />
+                <span className="font-medium">{a.name}</span>
+                <button
+                  type="button"
+                  onClick={() => toggleGenAnchor(a.id)}
+                  aria-label={`Remove ${a.name} reference`}
+                  className="text-fg-faint hover:text-fg"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            <button
+              type="button"
+              onClick={() => setRefPickerOpen((o) => !o)}
+              aria-expanded={refPickerOpen}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-dashed border-[var(--border)] px-2.5 py-1 text-[11.5px] text-fg-muted hover:text-fg"
+            >
+              + Add anchor
+            </button>
+            {refPickerOpen && (
+              <div
+                className="absolute left-0 top-full z-10 mt-1 grid w-full max-w-xs gap-1 rounded-lg border border-[var(--border)] bg-surface p-2 shadow-lg"
+              >
+                {drawerAnchors.length === 0 ? (
+                  <span className="px-1 py-1 text-[11px] text-fg-muted">
+                    No anchors in this project yet — ask your Chi to generate one.
+                  </span>
+                ) : (
+                  drawerAnchors.map((a) => (
+                    <button
+                      type="button"
+                      key={a.id}
+                      onClick={() => toggleGenAnchor(a.id)}
+                      className="flex items-center justify-between rounded px-2 py-1 text-left text-[11.5px] hover:bg-raised"
+                    >
+                      <span className="flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full" style={{ background: `var(${COLOR_VAR[a.color]})` }} />
+                        {a.name}
+                      </span>
+                      {genAnchorIds.includes(a.id) && <span style={{ color: 'var(--achievement)' }}>✓</span>}
+                    </button>
+                  ))
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <hr className="border-t border-soft" />
+
+        {/* engine picker */}
+        <div className="grid gap-1.5">
+          <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-wider text-fg-faint">
+            <span>Engine</span>
+            <span className="normal-case tracking-normal text-fg-faint">generation track</span>
+          </div>
+          <div role="radiogroup" aria-label="Choose generation engine" className="grid gap-2">
+            {trackAEngines.length === 0 ? (
+              <div className="rounded-lg border border-[var(--border)] bg-raised px-3 py-2 text-[11.5px] text-fg-faint">
+                No render engines reported by this build.
+              </div>
+            ) : (
+              trackAEngines.map((e) => (
+                <label
+                  key={e.id}
+                  className="flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5"
+                  style={{
+                    borderColor: genEngine === e.id ? 'var(--agent)' : 'var(--border)',
+                    background: genEngine === e.id ? 'color-mix(in oklab, var(--agent-soft) 60%, var(--bg-raised))' : 'var(--bg-raised)',
+                  }}
+                >
+                  <input
+                    type="radio"
+                    name="gen-engine"
+                    checked={genEngine === e.id}
+                    onChange={() => setGenEngine(e.id)}
+                    style={{ accentColor: 'var(--agent)' }}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-fg">
+                      {engineDisplayName(e.id)}
+                      <span
+                        className="rounded px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-wider"
+                        style={{ background: 'var(--agent-soft)', color: 'var(--agent)' }}
+                      >
+                        Track A
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-fg-muted">
+                      Ikenga generates directly — cost + seed tracked here.
+                    </div>
+                  </div>
+                </label>
+              ))
+            )}
+            <label
+              className="flex cursor-pointer items-center gap-2.5 rounded-lg border px-3 py-2.5"
+              style={{
+                borderColor: isHandoff ? 'var(--agent)' : 'var(--border)',
+                background: isHandoff ? 'color-mix(in oklab, var(--agent-soft) 60%, var(--bg-raised))' : 'var(--bg-raised)',
+              }}
+            >
+              <input
+                type="radio"
+                name="gen-engine"
+                checked={isHandoff}
+                onChange={() => setGenEngine(HANDOFF_ENGINE_ID)}
+                style={{ accentColor: 'var(--agent)' }}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 text-[12.5px] font-medium text-fg">
+                  Higgsfield
+                  <span
+                    className="rounded border px-1.5 py-0.5 font-mono text-[9.5px] uppercase tracking-wider text-fg-muted"
+                    style={{ borderColor: 'var(--border-soft)', background: 'var(--bg-surface)' }}
+                  >
+                    Track B · handoff
+                  </span>
+                </div>
+                <div className="mt-0.5 text-[11px] text-fg-muted">
+                  Copy the prompt package, generate externally, drop the returned clip back in.
+                </div>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        {/* seed */}
+        {!isHandoff && (
+          <div className="grid gap-1.5">
+            <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-wider text-fg-faint">
+              <span>Seed</span>
+              <span className="normal-case tracking-normal text-fg-faint">locks the same visual roll</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                inputMode="numeric"
+                value={genSeed}
+                disabled={!genSeedLocked}
+                onChange={(e) => {
+                  const n = Number(e.target.value.replace(/[^0-9]/g, ''));
+                  if (Number.isFinite(n)) setGenSeed(n);
+                }}
+                aria-label="Seed value"
+                className="flex-1 rounded-lg border border-[var(--border)] bg-raised px-2.5 py-2 font-mono text-[13px] text-fg outline-none focus:border-[var(--agent)] disabled:text-fg-muted"
+              />
+              <button
+                type="button"
+                onClick={() => setGenSeedLocked((l) => !l)}
+                aria-pressed={genSeedLocked}
+                aria-label="Lock seed"
+                title={genSeedLocked ? 'Seed locked — Generate reuses it' : 'Seed unlocked — Generate randomizes it'}
+                className="grid h-[34px] w-[34px] flex-none place-items-center rounded-lg border"
+                style={{
+                  borderColor: genSeedLocked ? 'color-mix(in oklab, var(--achievement) 40%, var(--border))' : 'var(--border)',
+                  background: genSeedLocked ? 'var(--achievement-soft)' : 'var(--bg-raised)',
+                  color: genSeedLocked ? 'var(--achievement)' : 'var(--fg-muted)',
+                }}
+              >
+                {genSeedLocked ? '🔒' : '🔓'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* handoff package + return-leg (Track B) */}
+        {isHandoff && (
+          <div className="grid gap-2 rounded-lg border border-[var(--border-soft)] bg-raised p-3">
+            {!handoffPkg ? (
+              <div className="text-[11.5px] text-fg-muted">
+                Generate below to package this cell's prompt for Higgsfield.
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">
+                    prompt package · {handoffPkg.count} cell{handoffPkg.count === 1 ? '' : 's'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={onCopyHandoffPrompt}
+                    className="rounded px-2 py-1 text-[11px] text-fg-muted ring-1 ring-inset ring-[var(--border)] hover:text-fg"
+                  >
+                    {handoffCopied ? 'Copied ✓' : 'Copy prompt'}
+                  </button>
+                </div>
+                <div className="font-mono text-[10px] text-fg-faint">{handoffPkg.path}</div>
+              </>
+            )}
+            {handoffError && <div className="text-[11px]" style={{ color: 'var(--danger)' }}>Couldn't package — {handoffError}</div>}
+
+            <div className="mt-1 grid gap-1.5 border-t border-soft pt-2.5">
+              <div className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">Attach returned clip</div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="text"
+                  value={ingestPath}
+                  onChange={(e) => setIngestPath(e.target.value)}
+                  placeholder="/path/to/returned-clip.mp4"
+                  disabled={!hasRealCells}
+                  className="flex-1 rounded-lg border border-[var(--border)] bg-base px-2.5 py-1.5 font-mono text-[12px] text-fg outline-none focus:border-[var(--agent)] disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={onIngest}
+                  disabled={!hasRealCells || ingestBusy || !ingestPath.trim()}
+                  className="flex-none rounded-lg px-3 py-1.5 text-[11.5px] text-fg-muted ring-1 ring-inset ring-[var(--border)] hover:text-fg disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {ingestBusy ? 'Attaching…' : 'Attach'}
+                </button>
+              </div>
+              {ingestError && <div className="text-[11px]" style={{ color: 'var(--danger)' }}>{ingestError}</div>}
+              {!hasRealCells && <div className="text-[11px] text-fg-faint">Attaching a returned clip needs a real project.</div>}
+            </div>
+          </div>
+        )}
+
+        {/* generate CTA */}
+        <div className="grid gap-1.5">
+          <button
+            type="button"
+            onClick={onGenerate}
+            disabled={generating}
+            className="flex h-10 items-center justify-center gap-1.5 rounded-lg font-medium disabled:cursor-wait disabled:opacity-60"
+            style={{ background: 'var(--agent)', color: 'hsl(270,40%,97%)' }}
+          >
+            {generating ? '● Generating…' : isHandoff ? '✦ Package prompt' : '✦ Generate shot'}
+          </button>
+          <div className="text-center text-[11px] text-fg-faint">
+            {isHandoff
+              ? 'Packages the prompt for Higgsfield — nothing renders here directly.'
+              : 'Adds a new variant to the tray below — nothing is overwritten.'}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }

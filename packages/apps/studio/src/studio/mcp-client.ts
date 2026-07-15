@@ -137,7 +137,7 @@ import type {
   Archetype, ExportRecord, AspectRatio, Rung,
 } from './mcp-types';
 // Separate line (own domain) so the shared type import above stays untouched.
-import type { Anchor } from './mcp-types';
+import type { Anchor, PromptPackage } from './mcp-types';
 
 /** What `project.list` ACTUALLY returns, tolerant of the two real runtime
  *  shapes it resolves to (the "honesty rule" — this boundary genuinely drifts):
@@ -238,6 +238,27 @@ export interface FountainRead {
 export const anchorApi = {
   list: (c: McpClient) =>
     c.callTool<{ anchors: Anchor[] }>('anchor.list'),
+  /** Generate a reference plate via fal (still image) and store it as a project
+   *  anchor (character/location/style/image locking). Needs FAL_KEY in the
+   *  sidecar env. `project_id` is optional — real-mcp injects the active project;
+   *  pass it to be explicit. Resolves to the created Anchor. */
+  generate: (
+    c: McpClient,
+    args: {
+      project_id?: string;
+      kind: 'character' | 'location' | 'style' | 'image';
+      name: string;
+      prompt: string;
+      seed?: number;
+      model?: string;
+    },
+  ) => c.callTool<Anchor>('anchor.generate', args),
+  /** Create an anchor from a full Anchor record (no generation). */
+  create: (c: McpClient, anchor: Anchor) =>
+    c.callTool<Anchor>('anchor.create', { anchor }),
+  /** Delete an anchor by id. */
+  delete: (c: McpClient, anchor_id: string) =>
+    c.callTool<{ anchorId: string }>('anchor.delete', { anchor_id }),
 };
 
 export const compositionApi = {
@@ -281,6 +302,21 @@ export const renderApi = {
     c.callTool<{ records: RenderRecord[] }>('render.list', args ?? {}),
   read_bytes:   (c: McpClient, record_id: string) =>
     c.callTool<MediaBytes>('render.read_bytes', { record_id }),
+  /** Attach a filmmaker's externally-produced clip (mp4/png on disk) to a cell
+   *  as a done RenderRecord with manual provenance — the return leg of
+   *  export.prompt_package. `project_id` optional (real-mcp injects the active
+   *  project). Resolves to the created RenderRecord. */
+  ingest_external: (
+    c: McpClient,
+    args: {
+      project_id?: string;
+      cell_id: string;
+      file_path: string;
+      engine: string;
+      model_id?: string;
+      cost_actual?: number;
+    },
+  ) => c.callTool<RenderRecord>('render.ingest_external', args),
 };
 
 export const blockApi = {
@@ -314,4 +350,12 @@ export const exportApi = {
     c.callTool<MediaBytes>('export.read_bytes', { export_id }),
   check_bed:  (c: McpClient, args: { project_id: string; music_preset?: string }) =>
     c.callTool<BedCheck>('export.check_bed', args),
+  /** Produce a platform-shaped prompt bundle for a target generator that has no
+   *  API (Higgsfield / Google Flow / Veo / generic). Omit `cell_id` to package
+   *  every cell. `project_id` optional (real-mcp injects the active project).
+   *  Also writes prompts/<platform>/<cell_id|'all'>.json sidecar-side. */
+  prompt_package: (
+    c: McpClient,
+    args: { project_id?: string; cell_id?: string; platform: PromptPackage['platform'] },
+  ) => c.callTool<PromptPackage>('export.prompt_package', args),
 };

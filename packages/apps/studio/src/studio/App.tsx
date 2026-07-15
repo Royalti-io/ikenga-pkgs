@@ -28,6 +28,10 @@ import { CellView } from './views/Cell';
 import { CompositionView } from './views/Composition';
 import { ScriptView } from './views/Script';
 import { ArchetypeBuilderView } from './views/ArchetypeBuilder';
+import { CastWorldView } from './views/CastWorld';
+import { BreakdownView } from './views/Breakdown';
+import { LedgerView } from './views/Ledger';
+import { HandoffView } from './views/Handoff';
 import { LauncherView } from './views/Launcher';
 import { NowRenderingBeacon } from './components/NowRenderingBeacon';
 import { useStudioKeyboard } from './lib/use-studio-keyboard';
@@ -41,6 +45,10 @@ const VIEW_COMPONENTS: ViewComponentRegistry = {
   composition: CompositionView,
   script:      ScriptView,
   archetype:   ArchetypeBuilderView,
+  'cast-world': CastWorldView,
+  breakdown:   BreakdownView,
+  ledger:      LedgerView,
+  handoff:     HandoffView,
 };
 
 function Pane({ index }: { index: PaneIndex }) {
@@ -64,7 +72,7 @@ function Pane({ index }: { index: PaneIndex }) {
           : 'border-soft')
       }
       // Click OR keyboard focus entering the pane makes it the active pane
-      // (drives the 1–5 view shortcut + the focus trap).
+      // (drives the 1–9 view shortcut + the focus trap).
       onMouseDown={() => setFocusedPane(index)}
       onFocusCapture={() => setFocusedPane(index)}
       aria-current={focused ? 'true' : undefined}
