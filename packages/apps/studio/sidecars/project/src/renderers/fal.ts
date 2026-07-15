@@ -183,10 +183,17 @@ async function resolveImageRefUrl(
     if (/^https?:\/\//i.test(uri)) return uri;
 
     // Local file — resolve to an absolute path and upload for a fetchable url.
+    // An anchor's AssetRef.uri is the assets-relative id (e.g. 'images/x.png'),
+    // which lives under `<projectRoot>/assets/` per the assets.ts convention
+    // (resolveAsset prepends `assets/`). Try that first; fall back to a
+    // project-root-relative path for absolute-style refs.
     let abs: string;
     if (uri.startsWith('file://')) abs = fileURLToPath(uri);
     else if (isAbsolute(uri)) abs = uri;
-    else abs = resolve(ctx.projectRoot, uri);
+    else {
+      const underAssets = resolve(ctx.projectRoot, 'assets', uri);
+      abs = existsSync(underAssets) ? underAssets : resolve(ctx.projectRoot, uri);
+    }
     if (!existsSync(abs)) continue;
     try {
       const bytes = readFileSync(abs);
@@ -208,17 +215,24 @@ async function resolveImageRefUrl(
  */
 function buildVideoInput(args: {
   cell: Cell;
-  aspect: AspectRatio;
   imageUrl?: string;
 }): Record<string, unknown> {
-  const { cell, aspect, imageUrl } = args;
+  const { cell, imageUrl } = args;
   const input: Record<string, unknown> = { prompt: cell.prompt };
   const negative = readNegativePrompt(cell);
   if (negative) input.negative_prompt = negative;
   if (imageUrl) input.image_url = imageUrl;
-  input.aspect_ratio = aspect;
   if (typeof cell.seed === 'number') input.seed = cell.seed;
-  if (cell.duration_ms > 0) input.duration = cell.duration_ms / 1000;
+  // Model-specific extras (aspect_ratio / duration / num_frames / start_image_url …)
+  // differ per fal model and a *hard 422* on an unaccepted field is common — e.g.
+  // `fal-ai/ltx-video/image-to-video` rejects both aspect_ratio and duration (it
+  // derives framing from the image). So the default input stays lean
+  // (prompt + image_url + negative + seed); a cell opts a specific model's extra
+  // fields in verbatim via `metadata.fal_input`.
+  const extra = (cell.metadata as Record<string, unknown> | undefined)?.fal_input;
+  if (extra && typeof extra === 'object') {
+    Object.assign(input, extra as Record<string, unknown>);
+  }
   return input;
 }
 
@@ -295,7 +309,7 @@ export const falAdapter: RendererAdapter = {
     const model = resolveVideoModel(cell, opts);
     const aspect: AspectRatio = opts.aspect_ratio ?? ctx.aspectRatio;
     const imageUrl = await resolveImageRefUrl(cell, ctx);
-    const input = buildVideoInput({ cell, aspect, imageUrl });
+    const input = buildVideoInput({ cell, imageUrl });
 
     const outPath = resolveOutputPath(cell, ctx);
 
