@@ -61,6 +61,7 @@ import * as storyboard from './storyboard.js';
 import * as anchors from './anchors.js';
 import * as assets from './assets.js';
 import * as archetypes from './archetypes.js';
+import { buildPromptPackage } from './prompt-package.js';
 import { RenderRunner, type ProjectLookup } from './render-runner.js';
 import { ExportRunner, type ExportLookup, type MusicPreset } from './exporter.js';
 import { getAdapter, listEngines, resolveEngineWithRequest, EngineResolutionError } from './registry.js';
@@ -421,6 +422,17 @@ function buildHandlers(db: Db): RpcHandlers {
         if (r.project) syncOpenProject(params.projectId as string, r.project);
         return r.result;
       }
+      case 'anchor.generate': {
+        const r = await anchors.generate(root, {
+          kind: params.kind as 'character' | 'location' | 'style' | 'image',
+          name: params.name as string,
+          prompt: params.prompt as string,
+          seed: params.seed as number | undefined,
+          model: params.model as string | undefined,
+        });
+        if (r.project) syncOpenProject(params.projectId as string, r.project);
+        return r.result;
+      }
       case 'anchor.delete': {
         const r = anchors.remove(root, params.anchorId as string);
         if (r.project) syncOpenProject(params.projectId as string, r.project);
@@ -470,6 +482,13 @@ function buildHandlers(db: Db): RpcHandlers {
         return { ok: true, engines: listEngines() };
       case 'render.read_bytes':
         return runner.readBytes(params.recordId as string);
+      case 'render.ingest_external':
+        return runner.ingestExternal(params.projectId as string, params.cellId as string, {
+          filePath: params.filePath as string,
+          engine: params.engine as string,
+          model_id: params.model_id as string | undefined,
+          cost_actual: params.cost_actual as number | undefined,
+        });
 
       // ── export.* (WP-07c / G-38) ──
       case 'export.compose':
@@ -498,6 +517,13 @@ function buildHandlers(db: Db): RpcHandlers {
         const hasBed = existsSync(bed);
         return { ok: true, hasBed, willBeSilent: !hasBed, byDesign: false, path: hasBed ? bed : undefined };
       }
+
+      // ── export.* (Stage 4 / Track B — prompt handoff) ──
+      case 'export.prompt_package':
+        return buildPromptPackage(root, {
+          cellId: params.cellId as string | undefined,
+          platform: params.platform,
+        }).result;
 
       default:
         return { ok: false, error: 'method-not-implemented', message: method };

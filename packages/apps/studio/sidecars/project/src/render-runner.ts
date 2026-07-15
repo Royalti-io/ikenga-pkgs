@@ -16,8 +16,8 @@
  * it finishes each job.
  */
 
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import {
@@ -25,10 +25,12 @@ import {
   rungDir,
   type AspectRatio,
   type Cell,
+  type RenderRecord,
 } from '@ikenga/studio-schema';
 
 import {
   enqueue as dbEnqueue,
+  insertExternalDone,
   listQueue,
   markDone,
   markStarted,
@@ -74,6 +76,19 @@ export interface EnqueueOptions extends RenderOptions {
 
 export type EnqueueResult =
   | { ok: true; recordId: string; engine: string }
+  | { ok: false; error: string; message?: string };
+
+export interface IngestExternalOptions {
+  /** Path to the mp4/png the filmmaker produced and dropped on disk. */
+  filePath: string;
+  /** Provenance engine, e.g. 'higgsfield' | 'flow' | 'manual'. */
+  engine: string;
+  model_id?: string;
+  cost_actual?: number;
+}
+
+export type IngestExternalResult =
+  | { ok: true; recordId: string; engine: string; outputPath: string; record: RenderRecord }
   | { ok: false; error: string; message?: string };
 
 /**
@@ -245,6 +260,90 @@ export class RenderRunner {
     }
   }
 
+  /**
+   * Attach a filmmaker's externally-produced clip to a cell as a done
+   * RenderRecord (manual provenance — Track B, the return leg of the
+   * `export.prompt_package` handoff). Copies the file into
+   * `<rendersDir>/<engine>/<rungDir>/<cellUid>.<ext>` and writes a terminal
+   * `done` row so `render.list` surfaces it exactly like a completed real
+   * render for that project. The full RenderRecord (engine, model_id,
+   * variant, cost_actual, output) is persisted in the row's `options` blob so
+   * the manual provenance survives.
+   */
+  ingestExternal(projectId: string, cellId: string, opts: IngestExternalOptions): IngestExternalResult {
+    const root = this.lookup.projectRoot(projectId);
+    if (!root) {
+      return { ok: false, error: 'project-not-open', message: `projectId ${projectId} is not open` };
+    }
+    const cell = this.lookup.cell(projectId, cellId);
+    if (!cell) {
+      return { ok: false, error: 'cell-not-found', message: `cell ${cellId} not found in ${projectId}` };
+    }
+    if (typeof opts.filePath !== 'string' || opts.filePath.trim().length === 0) {
+      return { ok: false, error: 'invalid-args', message: 'filePath is required' };
+    }
+    if (typeof opts.engine !== 'string' || opts.engine.trim().length === 0) {
+      return { ok: false, error: 'invalid-args', message: 'engine is required' };
+    }
+    const srcAbs = isAbsolute(opts.filePath) ? opts.filePath : resolve(root, opts.filePath);
+    if (!existsSync(srcAbs)) {
+      return { ok: false, error: 'source-not-found', message: srcAbs };
+    }
+
+    const ext = extname(srcAbs).toLowerCase() || '.mp4';
+    const rendersDir = join(root, 'renders');
+    const destDir = join(rendersDir, opts.engine, rungDir(cell.rung));
+    if (!existsSync(destDir)) mkdirSync(destDir, { recursive: true });
+    let destPath = join(destDir, `${cell.uid}${ext}`);
+    if (existsSync(destPath)) {
+      // Don't clobber a prior ingest for the same cell — suffix a short uuid.
+      destPath = join(destDir, `${cell.uid}.${randomUUID().slice(0, 8)}${ext}`);
+    }
+    try {
+      copyFileSync(srcAbs, destPath);
+    } catch (e) {
+      return { ok: false, error: 'ingest-copy-failed', message: (e as Error).message };
+    }
+
+    const recordId = randomUUID();
+    const nowIso = new Date().toISOString();
+    const mime = mimeForPath(destPath);
+    const record: RenderRecord = {
+      id: recordId,
+      cell_uid: cell.uid,
+      engine: opts.engine,
+      model_id: opts.model_id,
+      variant: 'default',
+      status: 'done',
+      output: { uri: destPath, mime },
+      cost_actual: typeof opts.cost_actual === 'number' ? opts.cost_actual : undefined,
+      started_at: nowIso,
+      finished_at: nowIso,
+      metadata: { ingested: true, source_path: srcAbs },
+    };
+
+    insertExternalDone(this.db, {
+      recordId,
+      projectId,
+      cellId,
+      engine: opts.engine,
+      outputPath: destPath,
+      options: { ingested: true, record },
+    });
+
+    // Surface the new record live so the Composition pane's render list
+    // refreshes, mirroring the drain loop's terminal emit.
+    emitRenderDone(this.writer, projectId, {
+      recordId,
+      cellId,
+      engine: opts.engine,
+      status: 'done',
+      outputPath: destPath,
+    });
+
+    return { ok: true, recordId, engine: opts.engine, outputPath: destPath, record };
+  }
+
   /** Kick the drain loop (idempotent). */
   kick(): void {
     if (this.draining) return;
@@ -315,7 +414,10 @@ export class RenderRunner {
       rendersDir,
       aspectRatio: aspect,
       resolution,
-      vault: { get: async () => undefined }, // no vault outside the shell (P1 deterministic engines need none)
+      // Minimal env-based vault outside the shell: network adapters (fal) read
+      // their key here. For 'fal.key' return FAL_KEY from the env; else nothing.
+      // (In-shell the real Stronghold vault surface replaces this.)
+      vault: { get: async (key: string) => (key === 'fal.key' ? process.env.FAL_KEY : undefined) },
       emit: (event) => {
         // Forward the adapter's render.progress events onto the pkg event bus.
         const p = (event.payload ?? {}) as {

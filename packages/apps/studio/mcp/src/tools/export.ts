@@ -113,5 +113,33 @@ export function exportTools(sidecar: SidecarClient): ToolDef[] {
           music_preset: args.music_preset,
         }),
     },
+    {
+      name: 'export.prompt_package',
+      description:
+        "Produce a platform-shaped prompt bundle for a target generator that has no API (Higgsfield, Google Flow, Veo, or generic). Shapes the cell's prompt for the platform (camera-move phrasing for higgsfield, 'Ingredients'/reference framing for flow, audio-cue hints for veo, plain for generic), resolves the cell's first character/location/image anchor to a ref_image_uri, and carries aspect_ratio, duration_ms, and camera (shot_type + camera_move + camera_text). Omit cellId to package every cell. Also writes the bundle to prompts/<platform>/<cellId|'all'>.json. Returns { ok:true, platform, path, count, packages: [...] }. The returned clip comes back via render.ingest_external.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          projectId: { type: 'string' },
+          cellId: {
+            type: 'string',
+            description: 'Optional. Package a single cell; omit to package all cells.',
+          },
+          platform: {
+            type: 'string',
+            enum: ['higgsfield', 'flow', 'veo', 'generic'],
+            description: 'Target generator the prompt is shaped for.',
+          },
+        },
+        required: ['projectId', 'platform'],
+        additionalProperties: false,
+      },
+      handler: (args) =>
+        callSidecar(sidecar, 'export.prompt_package', {
+          projectId: args.projectId,
+          cellId: args.cellId,
+          platform: args.platform,
+        }),
+    },
   ];
 }

@@ -89,6 +89,7 @@ export type RpcMethod =
   // anchor.*
   | 'anchor.list'
   | 'anchor.create'
+  | 'anchor.generate'
   | 'anchor.delete'
   // asset.*
   | 'asset.list'
@@ -106,9 +107,12 @@ export type RpcMethod =
   | 'render.list'
   | 'render.list_engines'
   | 'render.read_bytes'
+  | 'render.ingest_external'
   // export.* (WP-07c / G-38)
   | 'export.compose'
   | 'export.status'
   | 'export.list'
   | 'export.read_bytes'
-  | 'export.check_bed';
+  | 'export.check_bed'
+  // export.* (Stage 4 / Track B — prompt handoff)
+  | 'export.prompt_package';

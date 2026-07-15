@@ -10,9 +10,16 @@
  * watcher emits `cells/changed` on the storyboard.json rename.
  */
 
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+
 import { AnchorSchema, type Project } from '@ikenga/studio-schema';
 
 import { readProject, writeProjectAtomic } from './storyboard-fs.js';
+import { importAsset } from './assets.js';
+import { generateStill } from './renderers/fal.js';
 
 export interface AnchorResult {
   result: Record<string, unknown>;
@@ -39,6 +46,93 @@ export function create(projectRoot: string, anchorInput: unknown): AnchorResult 
     anchors: [...project.anchors, anchor],
   });
   return { result: { ok: true, anchor }, project: next };
+}
+
+/**
+ * Input for `anchor.generate` (Stage 3 — reference plate generation).
+ * `kind` is the anchor-plate subset (character/location/style/image) — the
+ * other AnchorSchema kinds (video/audio/sketch) are not fal-still targets.
+ */
+export interface AnchorGenerateInput {
+  kind: 'character' | 'location' | 'style' | 'image';
+  name: string;
+  prompt: string;
+  seed?: number;
+  model?: string;
+}
+
+/**
+ * Generate a reference plate via fal and store it as a project anchor.
+ *
+ * Flow: run `generateStill()` (key resolved from `process.env.FAL_KEY`) into a
+ * temp file, import that file into the project's `assets/images/` dir via the
+ * shared `importAsset()` helper (atomic copy + mime guess + project-relative
+ * id), then mint an Anchor referencing the imported asset. The generation seed
+ * (and fal model / cost) land in `Anchor.metadata` so the plate can be re-run
+ * deterministically for character/location/style locking.
+ */
+export async function generate(
+  projectRoot: string,
+  input: AnchorGenerateInput,
+): Promise<AnchorResult> {
+  if (!input || typeof input.name !== 'string' || input.name.trim().length === 0) {
+    return { result: { ok: false, error: 'invalid-args', message: 'name is required' } };
+  }
+  if (typeof input.prompt !== 'string' || input.prompt.trim().length === 0) {
+    return { result: { ok: false, error: 'invalid-args', message: 'prompt is required' } };
+  }
+
+  const id = randomUUID();
+
+  // 1) Generate the still to a temp file (fal downloads the produced image).
+  const tmpDir = join(tmpdir(), 'ikenga-studio-anchor');
+  if (!existsSync(tmpDir)) mkdirSync(tmpDir, { recursive: true });
+  const tmpPath = join(tmpDir, `${id}.png`);
+
+  let still: { uri: string; model_id: string; cost?: number };
+  try {
+    still = await generateStill(
+      {
+        prompt: input.prompt,
+        model: input.model,
+        seed: input.seed,
+        // Key via env for headless / stdio-driven runs (no vault here).
+        keyGetter: async () => process.env.FAL_KEY,
+      },
+      tmpPath,
+    );
+  } catch (e) {
+    return { result: { ok: false, error: 'internal-error', message: (e as Error).message } };
+  }
+
+  // 2) Import the still into assets/images/ (reuses the shared importer).
+  const imported = await importAsset(projectRoot, still.uri, 'image');
+  try {
+    rmSync(tmpPath, { force: true });
+  } catch {
+    // best-effort temp cleanup — the imported copy is what matters
+  }
+  if (!imported.result.ok) {
+    return { result: imported.result };
+  }
+  const asset = imported.result.asset as { id: string; uri: string; mime?: string };
+
+  // 3) Mint the Anchor referencing the imported asset (create() re-validates,
+  //    checks id collision, and persists atomically).
+  const anchorInput = {
+    id,
+    name: input.name,
+    kind: input.kind,
+    asset: { uri: asset.uri, mime: asset.mime },
+    tags: [] as string[],
+    metadata: {
+      ...(typeof input.seed === 'number' ? { seed: input.seed } : {}),
+      prompt: input.prompt,
+      model_id: still.model_id,
+      ...(typeof still.cost === 'number' ? { cost: still.cost } : {}),
+    } as Record<string, unknown>,
+  };
+  return create(projectRoot, anchorInput);
 }
 
 export function remove(projectRoot: string, anchorId: string): AnchorResult {

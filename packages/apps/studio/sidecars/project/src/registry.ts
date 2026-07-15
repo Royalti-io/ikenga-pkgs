@@ -15,9 +15,10 @@
 
 import { hyperframesAdapter } from './renderers/hyperframes.js';
 import { excalidrawAdapter } from './renderers/excalidraw.js';
+import { falAdapter } from './renderers/fal.js';
 import type { RendererAdapter } from './renderers/types.js';
 
-const ADAPTERS: RendererAdapter[] = [hyperframesAdapter, excalidrawAdapter];
+const ADAPTERS: RendererAdapter[] = [hyperframesAdapter, excalidrawAdapter, falAdapter];
 
 const BY_ID = new Map<string, RendererAdapter>(ADAPTERS.map((a) => [a.id, a]));
 

@@ -140,6 +140,7 @@ const EXTENDED_METHODS = new Set<string>([
   'storyboard.set_approved',
   'anchor.list',
   'anchor.create',
+  'anchor.generate',
   'anchor.delete',
   'asset.list',
   'asset.import',
@@ -153,11 +154,13 @@ const EXTENDED_METHODS = new Set<string>([
   'render.list',
   'render.list_engines',
   'render.read_bytes',
+  'render.ingest_external',
   'export.compose',
   'export.status',
   'export.list',
   'export.read_bytes',
   'export.check_bed',
+  'export.prompt_package',
 ]);
 
 export function startRpcLoop(handlers: RpcHandlers): { close(): void } {

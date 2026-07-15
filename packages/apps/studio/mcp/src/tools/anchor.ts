@@ -37,6 +37,34 @@ export function anchorTools(sidecar: SidecarClient): ToolDef[] {
         callSidecar(sidecar, 'anchor.create', { projectId: args.projectId, anchor: args.anchor }),
     },
     {
+      name: 'anchor.generate',
+      description:
+        'Generate a reference plate via fal (still image) and store it as a project anchor ' +
+        '(character/location/style/image locking). Requires FAL_KEY in the sidecar env.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          projectId: { type: 'string' },
+          kind: { type: 'string', enum: ['character', 'location', 'style', 'image'] },
+          name: { type: 'string' },
+          prompt: { type: 'string' },
+          seed: { type: 'number' },
+          model: { type: 'string', description: 'Optional fal image model id override.' },
+        },
+        required: ['projectId', 'kind', 'name', 'prompt'],
+        additionalProperties: false,
+      },
+      handler: (args) =>
+        callSidecar(sidecar, 'anchor.generate', {
+          projectId: args.projectId,
+          kind: args.kind,
+          name: args.name,
+          prompt: args.prompt,
+          seed: args.seed,
+          model: args.model,
+        }),
+    },
+    {
       name: 'anchor.delete',
       description: 'Delete an anchor by id.',
       inputSchema: {

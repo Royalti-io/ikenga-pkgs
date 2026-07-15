@@ -214,6 +214,43 @@ export function enqueue(db: Db, params: EnqueueParams): void {
   );
 }
 
+export interface InsertExternalDoneParams {
+  recordId: string;
+  projectId: string;
+  cellId: string;
+  engine: string;
+  outputPath: string;
+  /** Provenance blob persisted in the `options` column (the full RenderRecord). */
+  options: unknown;
+}
+
+/**
+ * Insert an already-finished render row for an externally-produced clip
+ * (`render.ingest_external`). Unlike `enqueue` (which inserts a `queued` row
+ * for the worker to drain), this writes a terminal `done` row in one statement
+ * — the file already exists on disk, so there is nothing to run and no window
+ * for the drain loop to pick it up. `render.list` surfaces it exactly like a
+ * completed real render.
+ */
+export function insertExternalDone(db: Db, params: InsertExternalDoneParams): void {
+  const now = Date.now();
+  db.prepare(
+    `INSERT INTO render_queue
+       (record_id, project_id, cell_id, engine, options, status, created_at, started_at, finished_at, output_path)
+       VALUES (?, ?, ?, ?, ?, 'done', ?, ?, ?, ?)`,
+  ).run(
+    params.recordId,
+    params.projectId,
+    params.cellId,
+    params.engine,
+    JSON.stringify(params.options ?? {}),
+    now,
+    now,
+    now,
+    params.outputPath,
+  );
+}
+
 export function queueDepth(db: Db, projectId?: string): number {
   if (projectId) {
     const row = db

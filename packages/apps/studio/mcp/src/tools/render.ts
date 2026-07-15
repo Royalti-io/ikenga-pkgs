@@ -70,5 +70,38 @@ export function renderTools(sidecar: SidecarClient): ToolDef[] {
       },
       handler: (args) => callSidecar(sidecar, 'render.read_bytes', { recordId: args.recordId }),
     },
+    {
+      name: 'render.ingest_external',
+      description:
+        "Attach a filmmaker's externally-produced clip (mp4/png dropped on disk) to a cell as a done RenderRecord with manual provenance — the return leg of export.prompt_package. Copies the file into renders/<engine>/<rungDir>/<cellUid>.<ext> and writes a terminal 'done' render row so render.list surfaces it exactly like a completed real render. Returns { ok:true, recordId, engine, outputPath, record }.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          projectId: { type: 'string' },
+          cellId: { type: 'string' },
+          filePath: {
+            type: 'string',
+            description: 'Absolute or project-relative path to the mp4/png on disk to ingest.',
+          },
+          engine: {
+            type: 'string',
+            description: "Provenance engine, e.g. 'higgsfield' | 'flow' | 'manual'.",
+          },
+          model_id: { type: 'string', description: 'Optional. Model used to produce the clip.' },
+          cost_actual: { type: 'number', description: 'Optional. Actual spend, if known.' },
+        },
+        required: ['projectId', 'cellId', 'filePath', 'engine'],
+        additionalProperties: false,
+      },
+      handler: (args) =>
+        callSidecar(sidecar, 'render.ingest_external', {
+          projectId: args.projectId,
+          cellId: args.cellId,
+          filePath: args.filePath,
+          engine: args.engine,
+          model_id: args.model_id,
+          cost_actual: args.cost_actual,
+        }),
+    },
   ];
 }
