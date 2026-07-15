@@ -1,0 +1,43 @@
+{
+  "name": "@ikenga/studio-breakdown",
+  "version": "0.1.0",
+  "description": "Turn a script into a populated Studio storyboard in one pass — segment into shots (cells) and extract characters/locations/props as reusable seed-locked anchors. Agent-driven via the com.ikenga.studio MCP; generates nothing (no spend) — it proposes a board for the human to approve.",
+  "keywords": [
+    "claude",
+    "claude-code",
+    "agent-skills",
+    "skills",
+    "ikenga",
+    "studio",
+    "video",
+    "ai-filmmaking",
+    "script-breakdown",
+    "storyboard"
+  ],
+  "homepage": "https://ikenga.dev",
+  "bugs": {
+    "url": "https://github.com/Royalti-io/ikenga-pkgs/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "directory": "packages/skills/studio-breakdown"
+  },
+  "license": "Apache-2.0",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "manifest.json",
+    "skills",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "echo 'no build — content-only pkg'",
+    "typecheck": "echo 'no ts — content-only pkg'"
+  }
+}
