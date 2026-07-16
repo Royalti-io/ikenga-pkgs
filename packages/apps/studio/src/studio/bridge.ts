@@ -29,7 +29,10 @@
 // the parent-mirror in theme.ts; applyDocumentTheme wrote data-theme='light'|
 // 'dark' and clobbered the Dusk Wood palette (Wave 0 root-cause fix).
 import { App, type McpUiHostContext } from '@modelcontextprotocol/ext-apps';
+import { LoggingMessageNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+
+import type { StudioEventName, StudioEventPayloadMap } from './mcp-types';
 
 // ─── Host-context contract ────────────────────────────────────────────────
 //
@@ -145,6 +148,17 @@ export function connectBridge(opts: {
 
     app.onteardown = async () => ({});
 
+    // Host→iframe pkg-event relay (S7). The shell's Rust supervisor forwards
+    // every `notifications/message` (logging/message) frame our long-lived MCP
+    // server streams — the sidecar tunnels render/progress + render/done through
+    // that path (mcp/src/index.ts → server.sendLoggingMessage). Register the
+    // handler BEFORE connect so no early frame is missed. The params are the
+    // server's original logging params (`{ level, logger, data }`) where `data`
+    // is the sidecar's `{ topic, projectId, payload, ts }` event envelope.
+    app.setNotificationHandler(LoggingMessageNotificationSchema, (n) => {
+      dispatchIncomingLoggingNotification(n.params);
+    });
+
     await app.connect();
     const ctx = app.getHostContext() as StudioHostContext | undefined;
 
@@ -168,6 +182,96 @@ export function onHostContextChange(fn: (ctx: StudioHostContext) => void): () =>
  *  `connectBridge()` resolves and in standalone mode. */
 export function getHostContext(): StudioHostContext | undefined {
   return _connection?.hostContext ?? undefined;
+}
+
+// ─── Host→iframe pkg-event relay ───────────────────────────────────────────
+//
+// The shell relays our MCP server's outbound `logging/message` frames back into
+// this iframe (see the `setNotificationHandler` wiring in connectBridge). Each
+// frame carries the sidecar's event envelope; we demultiplex by topic and fan
+// out to typed subscribers. `real-mcp.ts`'s `subscribe()` delegates here, so a
+// view calling `client.subscribe('render/done', …)` receives a live push the
+// moment the render finishes — no polling round-trip. In standalone dev (no
+// parent window) no frames ever arrive, so subscribers simply never fire and
+// the views' poll fallback is the only signal, exactly as before.
+
+const STUDIO_TOPIC_PREFIX = 'pkg://com.ikenga.studio/';
+
+type StudioEventHandler = (payload: StudioEventPayloadMap[StudioEventName]) => void;
+const _studioEventListeners = new Map<StudioEventName, Set<StudioEventHandler>>();
+
+/** Subscribe to a relayed pkg event. Returns an unsubscribe fn. */
+export function subscribeStudioEvent<E extends StudioEventName>(
+  event: E,
+  handler: (payload: StudioEventPayloadMap[E]) => void,
+): () => void {
+  let set = _studioEventListeners.get(event);
+  if (!set) {
+    set = new Set();
+    _studioEventListeners.set(event, set);
+  }
+  set.add(handler as StudioEventHandler);
+  return () => {
+    _studioEventListeners.get(event)?.delete(handler as StudioEventHandler);
+  };
+}
+
+function fanOutStudioEvent<E extends StudioEventName>(
+  event: E,
+  payload: StudioEventPayloadMap[E],
+): void {
+  const set = _studioEventListeners.get(event);
+  if (!set) return;
+  for (const fn of set) {
+    try {
+      fn(payload);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(`[studio] studio-event handler threw for ${event}`, err);
+    }
+  }
+}
+
+/** Translate one incoming `logging/message` frame into a typed studio event and
+ *  fan it out. `params` is the MCP logging params (`{ level, logger, data }`);
+ *  `data` is the sidecar's `{ topic, projectId, payload, ts }` envelope. Field
+ *  names cross the camelCase (sidecar) → snake_case (studio type) boundary here.
+ */
+function dispatchIncomingLoggingNotification(params: unknown): void {
+  const data = (params as { data?: unknown } | undefined)?.data as
+    | { topic?: unknown; projectId?: unknown; payload?: unknown }
+    | undefined;
+  if (!data || typeof data.topic !== 'string') return;
+  if (!data.topic.startsWith(STUDIO_TOPIC_PREFIX)) return;
+  const name = data.topic.slice(STUDIO_TOPIC_PREFIX.length) as StudioEventName;
+  const p = (data.payload ?? {}) as Record<string, unknown>;
+  const str = (v: unknown): string => (typeof v === 'string' ? v : v == null ? '' : String(v));
+
+  switch (name) {
+    case 'cells/changed':
+      fanOutStudioEvent('cells/changed', {
+        project_id: str(data.projectId),
+        changed_uids: p.cellId != null ? [str(p.cellId)] : [],
+      });
+      break;
+    case 'render/progress':
+      fanOutStudioEvent('render/progress', {
+        record_id: str(p.recordId),
+        cell_uid: str(p.cellId),
+        frame: typeof p.progress === 'number' ? p.progress : 0,
+      });
+      break;
+    case 'render/done':
+      fanOutStudioEvent('render/done', {
+        record_id: str(p.recordId),
+        cell_uid: str(p.cellId),
+        output_uri: str(p.outputPath),
+      });
+      break;
+    default:
+      // Unknown topic under our namespace — ignore (forward-compat).
+      break;
+  }
 }
 
 // ─── Lazy Supabase getter ─────────────────────────────────────────────────

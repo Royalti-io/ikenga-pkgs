@@ -38,7 +38,7 @@
 // future event relay can drop straight into subscribe() without touching any
 // call site.
 
-import { callPkgTool } from './bridge';
+import { callPkgTool, subscribeStudioEvent } from './bridge';
 import type { McpClient } from './mcp-client';
 import type {
   Project, Cell, Beat, RenderRecord, Archetype, AspectRatio, Anchor,
@@ -665,14 +665,15 @@ export function createRealMcpClient(): McpClient {
       return (await dispatch(name, args)) as TResult;
     },
     subscribe<E extends StudioEventName>(
-      _event: E,
-      _handler: (payload: StudioEventPayloadMap[E]) => void,
+      event: E,
+      handler: (payload: StudioEventPayloadMap[E]) => void,
     ): () => void {
-      // No host→iframe pkg-event relay exists yet (Round-13 Finding). Real-mode
-      // progress is driven by POLLING in the views. This is intentionally a
-      // no-op so a future event relay can be wired here without changing any
-      // subscribe() call site.
-      return () => {};
+      // The host→iframe pkg-event relay is now live (S7): the shell forwards
+      // our MCP server's `logging/message` frames back into this iframe and
+      // bridge.ts demultiplexes them by topic. Delegate to that fan-out. The
+      // views' poll (use-render-poll) stays as a fallback for missed frames /
+      // standalone dev, but subscribers now get a low-latency push.
+      return subscribeStudioEvent(event, handler);
     },
   };
 }

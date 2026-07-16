@@ -20,6 +20,7 @@
 
 import { useEffect } from 'react';
 
+import { subscribeStudioEvent } from '../bridge';
 import { useProjectStore } from '../project-store';
 import {
   useStoryboardStore,
@@ -28,6 +29,12 @@ import {
 } from '../storyboard-store';
 
 const FAST_MS = 2_000;
+
+// Coalesce a burst of relayed render/progress + render/done frames into one
+// render.list refresh. Small enough to feel immediate (a finished render shows
+// in <0.25s vs the old 2s poll lag), large enough that a 20/s progress stream
+// can't fan out to 20 render.list calls/s.
+const RELAY_COALESCE_MS = 200;
 
 export function useRenderPoll(): void {
   const projectId = useProjectStore((s) => s.project?.project_id);
@@ -61,4 +68,27 @@ export function useRenderPoll(): void {
       if (timer) window.clearTimeout(timer);
     };
   }, [projectId, source, hasActive, activeUntil, refreshRenders]);
+
+  // Low-latency path: refresh immediately (coalesced) whenever the host relays
+  // a render/progress or render/done frame. This is additive to the adaptive
+  // poll above — the poll remains the fallback when no relay arrives (a dropped
+  // frame, standalone dev, or a frame that landed before this mounted).
+  useEffect(() => {
+    if (!projectId || source !== 'real') return;
+    let coalesce: number | undefined;
+    const trigger = () => {
+      if (coalesce !== undefined) return;
+      coalesce = window.setTimeout(() => {
+        coalesce = undefined;
+        void refreshRenders();
+      }, RELAY_COALESCE_MS);
+    };
+    const unsubProgress = subscribeStudioEvent('render/progress', trigger);
+    const unsubDone = subscribeStudioEvent('render/done', trigger);
+    return () => {
+      unsubProgress();
+      unsubDone();
+      if (coalesce !== undefined) window.clearTimeout(coalesce);
+    };
+  }, [projectId, source, refreshRenders]);
 }
