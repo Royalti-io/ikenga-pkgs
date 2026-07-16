@@ -298,6 +298,14 @@ export interface PublishedMenuItem {
   label: string;
   icon?: string | null;
   badge?: string | number | null;
+  /** Two-line context header. PRESENCE-SENSITIVE on both sides of the wire: the
+   *  shell keys off `'subtitle' in item`, so `null` is a header with no meta
+   *  line while an absent key stays a plain nav row. Publishing `undefined` is
+   *  therefore NOT the same as publishing `null` — an explicit `null` is the
+   *  only way to say "header, no meta". A header never dims, never clicks, and
+   *  drops `icon` / `badge`. Shells older than the header support ignore the key
+   *  and render the row vocabulary instead. */
+  subtitle?: string | null;
   /** Consecutive items sharing a `section` render under one heading; items with
    *  no section form the implicit first group. Order is preserved as published. */
   section?: string | null;

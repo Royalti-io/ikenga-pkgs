@@ -136,13 +136,29 @@ function buildProjectMenu(project: OpenProjectSummary): PublishedMenuItem[] {
   let compBadge: string | number | null = null;
   if (cellCount > 0) compBadge = running > 0 ? `${running} rendering` : `${done}/${cellCount}`;
 
+  // Empty string → null: no loaded meta means an honest single-line header, not
+  // an invented one (and on an old shell, no empty badge pill).
+  const meta = projectMeta(project) || null;
+
   return [
-    // Project header — a disabled row in the implicit first group (no section).
+    // Project header — the locked M-A two-line block in the implicit first group.
+    //
+    // `subtitle` and `badge` carry the SAME meta string on purpose, and the row
+    // vocabulary (`icon` / `disabled`) is published alongside a field that makes
+    // both moot. That redundancy is the version bridge, not an oversight: this
+    // pkg ships to npm and can be mounted by a shell older than the header
+    // support. A new shell keys off `subtitle`'s presence and renders the
+    // two-line header, ignoring icon/badge/disabled by design; an old shell
+    // ignores the unknown `subtitle` key and falls back to today's dimmed
+    // name+meta row. Progressive enhancement in both directions — no version
+    // pin, no breakage. Drop the row fields only once no supported shell
+    // predates the header.
     {
       id: 'project:header',
       label: project.name,
+      subtitle: meta,
       icon: ICON.project,
-      badge: projectMeta(project) || null,
+      badge: meta,
       disabled: true,
     },
     // Layout presets as the locked kind:'seg' strip (replaces the banner radios).
