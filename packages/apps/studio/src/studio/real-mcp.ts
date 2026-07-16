@@ -90,22 +90,43 @@ function toIso(v: unknown): string | undefined {
 
 /** SQLite render_queue row (snake_case) → UI RenderRecord (schema shape).
  *  Carries the started_at/finished_at timestamps (the C-C records table needs
- *  "finished" per cell) which the older mapper dropped. */
+ *  "finished" per cell) which the older mapper dropped. Also parses the
+ *  metadata column (JSON string from a DB row, or an object from an inline
+ *  RenderRecord like ingest_external) and surfaces model_id / cost_actual /
+ *  cost_estimate / seed onto the top-level RenderRecord fields the Ledger
+ *  reads (H1). */
 function toRenderRecord(row: Record<string, unknown>): RenderRecord {
-  const outputPath = (row.output_path ?? row.outputPath) as string | undefined;
+  const outputPath = (row.output_path ?? row.outputPath ??
+    (row.output as { uri?: string } | undefined)?.uri) as string | undefined;
   const startedAt = toIso(row.started_at ?? row.startedAt);
   const finishedAt = toIso(row.finished_at ?? row.finishedAt);
+  // H1 — parse metadata. From a DB row it's a JSON string; from an inline
+  // RenderRecord (ingest_external) it's already an object.
+  const rawMeta = row.metadata;
+  let metadata: Record<string, unknown> = {};
+  if (typeof rawMeta === 'string' && rawMeta.length > 0) {
+    try { metadata = JSON.parse(rawMeta) as Record<string, unknown>; } catch { metadata = {}; }
+  } else if (rawMeta && typeof rawMeta === 'object') {
+    metadata = rawMeta as Record<string, unknown>;
+  }
   return {
     id: (row.record_id ?? row.recordId ?? row.id ?? '') as string,
     cell_uid: (row.cell_id ?? row.cellId ?? row.cell_uid ?? '') as string,
     engine: (row.engine ?? 'hf') as string,
-    variant: (row.variant ?? 'default') as string,
+    model_id: (row.model_id ?? metadata.model_id) as string | undefined,
+    variant: (row.variant ?? metadata.variant ?? 'default') as string,
     status: (row.status ?? 'queued') as RenderRecord['status'],
     ...(outputPath ? { output: { uri: outputPath } } : {}),
     ...(startedAt ? { started_at: startedAt } : {}),
     ...(finishedAt ? { finished_at: finishedAt } : {}),
+    cost_actual: typeof row.cost_actual === 'number'
+      ? row.cost_actual
+      : metadata.cost_actual as number | undefined,
+    cost_estimate: typeof row.cost_estimate === 'number'
+      ? row.cost_estimate
+      : metadata.cost_estimate as number | undefined,
     error: (row.error as string | undefined) ?? undefined,
-    metadata: (row.metadata as Record<string, unknown>) ?? {},
+    metadata,
   };
 }
 
@@ -259,6 +280,19 @@ export function createRealMcpClient(): McpClient {
           text: (body.text as string) ?? '',
         };
       }
+      // Fountain write seam — persist the REAL <root>/script.fountain (UTF-8).
+      // The durable save for a future edit / Chi authoring flow. projectId injected.
+      case 'storyboard.write_fountain': {
+        const a = requireActive('storyboard.write_fountain');
+        const body = await raw('storyboard.write_fountain', {
+          projectId: a.projectId,
+          text: args.text,
+        });
+        return {
+          exists: Boolean(body.exists),
+          bytes: (body.bytes as number) ?? 0,
+        };
+      }
       // Cell-content seams (Wave 3) — the editor reads/writes the REAL authored
       // source file at the cell's content_path (the Cell record only points to
       // it). projectId is injected from the active project.
@@ -379,6 +413,8 @@ export function createRealMcpClient(): McpClient {
         // Real composition.render REQUIRES cellId — the UI's whole-composition
         // render (no cell_uid) is expressed per-cell by the caller; here a
         // missing cell_uid is a programming error surfaced as a throw.
+        // `variant` is forwarded so the fal adapter's resolveVideoModel picks
+        // up the user's model selection (H2 — Canvas engine picker).
         const projectId = (args.project_id as string) ?? requireActive('composition.render').projectId;
         if (!args.cell_uid) throw new Error('[studio] composition.render: cell_uid is required in real mode');
         const body = await raw('composition.render', {
@@ -386,6 +422,7 @@ export function createRealMcpClient(): McpClient {
           cellId: args.cell_uid,
           engine: args.engine,
           aspect_ratio: args.aspect_ratio,
+          variant: args.variant,
         });
         return { record_id: (body.recordId ?? body.record_id) as string };
       }
@@ -439,6 +476,15 @@ export function createRealMcpClient(): McpClient {
         return {
           base64: (body.base64 as string) ?? '',
           mime: (body.mime as string) ?? 'video/mp4',
+          sizeBytes: (body.sizeBytes as number) ?? 0,
+          path: (body.path as string) ?? '',
+        };
+      }
+      case 'render.read_poster': {
+        const body = await raw('render.read_poster', { recordId: args.record_id });
+        return {
+          base64: (body.base64 as string) ?? '',
+          mime: (body.mime as string) ?? 'image/png',
           sizeBytes: (body.sizeBytes as number) ?? 0,
           path: (body.path as string) ?? '',
         };

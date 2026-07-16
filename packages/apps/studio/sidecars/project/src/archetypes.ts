@@ -1,21 +1,26 @@
 /**
  * archetype.* RPC implementations (WP-03b) — instantiate_into_project.
  *
- * Scaffolds an archetype's beats + cells into an ALREADY-OPEN project. The
- * archetype definitions themselves ship in WP-09 (not yet present in this
- * tree). Resolution order for a definition:
+ * Scaffolds an archetype's beats + cells into an ALREADY-OPEN project.
+ * Resolution order for a definition:
  *   1. `<projectRoot>/archetypes/<archetypeId>.json` (project-custom)
- *   2. (future) bundled built-in archetypes — WP-09.
+ *   2. Built-in archetype skills — the `@ikenga/studio-archetypes` package
+ *      shipped in WP-17B/WP-22. Roots are resolved in the same precedence
+ *      as the MCP catalog (mcp/src/catalog.ts): materialized `<pkgRoot>/skills`,
+ *      the self-contained `<pkgRoot>/mcp/dist/skills` copy, node-module
+ *      resolution of `@ikenga/studio-archetypes`, then a workspace-relative
+ *      walk back to `packages/skills/studio-archetypes/skills`.
  *
  * If no definition is found we return an HONEST domain error
- * (`archetype-not-found`, message points at WP-09) — never
- * `sidecar-method-not-implemented`, because the method IS implemented; it is
- * the *data* that ships later. When a definition exists we materialize its
+ * (`archetype-not-found`) — never `sidecar-method-not-implemented`, because
+ * the method IS implemented. When a definition exists we materialize its
  * chain into the project's cells[] and persist atomically.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { dirname, join, resolve as resolvePath } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 
 import {
   ArchetypeSchema,
@@ -32,7 +37,74 @@ export interface ArchetypeResult {
   project?: Project;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Built-in archetype skill-root resolution (mirrors mcp/src/catalog.ts)
+// ─────────────────────────────────────────────────────────────────────────
+
+/** The studio pkg root (packages/apps/studio/), resolved from this module. */
+function studioPkgRoot(): string {
+  // dist: sidecars/project/dist/archetypes.js → up 3 → studio/
+  // src:  sidecars/project/src/archetypes.ts  → up 3 → studio/
+  const here = dirname(fileURLToPath(import.meta.url));
+  return resolvePath(here, '..', '..', '..');
+}
+
+/** Resolve the @ikenga/studio-archetypes package skills/ dir via node. */
+function resolveArchetypesPkgSkills(): string | null {
+  try {
+    const req = createRequire(import.meta.url);
+    const manifest = req.resolve('@ikenga/studio-archetypes/manifest.json');
+    return join(dirname(manifest), 'skills');
+  } catch {
+    return null;
+  }
+}
+
+/** Ordered candidate skills dirs that may hold built-in `archetype-` subdirs. */
+function builtinArchetypeRoots(): string[] {
+  const pkgRoot = studioPkgRoot();
+  const roots: string[] = [];
+  const push = (dir: string | null | undefined): void => {
+    if (dir && existsSync(dir) && !roots.includes(dir)) roots.push(dir);
+  };
+  // 1. Packaged / materialized-into-pkg.
+  push(join(pkgRoot, 'skills'));
+  // 1b. Self-contained MCP dist/skills copy (build.sh materializes it there).
+  push(join(pkgRoot, 'mcp', 'dist', 'skills'));
+  // 2a. Node resolution of the extracted @ikenga/studio-archetypes package.
+  push(resolveArchetypesPkgSkills());
+  // 2b. Workspace-relative: packages/apps/studio → packages/skills/studio-archetypes.
+  push(resolvePath(pkgRoot, '..', '..', 'skills', 'studio-archetypes', 'skills'));
+  return roots;
+}
+
+/**
+ * Walk built-in archetype roots for each `archetype-` subdir's
+ * `archetype.json` whose `id` (or `archetype_id`) matches. Returns the
+ * parsed JSON or undefined.
+ */
+function findBuiltinArchetype(archetypeId: string): unknown | undefined {
+  for (const skillsDir of builtinArchetypeRoots()) {
+    let skillNames: string[];
+    try { skillNames = readdirSync(skillsDir); } catch { continue; }
+    for (const skill of skillNames) {
+      if (!skill.startsWith('archetype-')) continue;
+      const file = join(skillsDir, skill, 'archetype.json');
+      if (!existsSync(file)) continue;
+      try {
+        const body = JSON.parse(readFileSync(file, 'utf8')) as Record<string, unknown>;
+        const id = (body.archetype_id ?? body.id) as string | undefined;
+        if (id === archetypeId) return body;
+      } catch {
+        continue;
+      }
+    }
+  }
+  return undefined;
+}
+
 function findArchetypeDefinition(projectRoot: string, archetypeId: string): unknown | undefined {
+  // 1. Project-custom (flat file).
   const projectCustom = join(projectRoot, 'archetypes', `${archetypeId}.json`);
   if (existsSync(projectCustom)) {
     try {
@@ -41,8 +113,8 @@ function findArchetypeDefinition(projectRoot: string, archetypeId: string): unkn
       return undefined;
     }
   }
-  // Built-in archetype definitions ship in WP-09; nothing to load yet.
-  return undefined;
+  // 2. Built-in archetype skills (@ikenga/studio-archetypes).
+  return findBuiltinArchetype(archetypeId);
 }
 
 export function instantiateIntoProject(
@@ -55,7 +127,7 @@ export function instantiateIntoProject(
       result: {
         ok: false,
         error: 'archetype-not-found',
-        message: 'archetype definitions ship in WP-09',
+        message: `archetype '${archetypeId}' not found in project or built-in catalog`,
       },
     };
   }

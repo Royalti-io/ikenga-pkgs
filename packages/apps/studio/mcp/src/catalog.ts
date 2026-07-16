@@ -19,6 +19,11 @@
  *      case. When the pkg is installed and its `requires` bundles have been
  *      materialized INTO the pkg dir (or in the pre-WP-17B monorepo layout),
  *      the content lives here. A materialized copy shadows the workspace source.
+ *   1b. <module-dir>/skills                     — SELF-CONTAINED dist copy.
+ *      mcp/build.sh copies the archetype skills next to the bundled MCP
+ *      (mcp/dist/skills) so an installed pkg resolves without the workspace
+ *      sibling. Resolved from import.meta.url (the module's own location), so
+ *      it is correct whether the module is src/catalog.ts or dist/index.js.
  *   2. @ikenga/studio-archetypes package skills/ — DEV / workspace case. In a
  *      dev checkout the MCP runs from packages/apps/studio/mcp/dist and must
  *      reach its sibling package. Resolved via (a) node module resolution then
@@ -96,6 +101,9 @@ export function archetypeSkillRoots(pkgRoot: string = studioPkgRoot()): string[]
   };
   // 1. Packaged / materialized-into-pkg (highest precedence).
   push(join(pkgRoot, 'skills'));
+  // 1b. Self-contained dist/skills copy (build.sh copies the archetype skills
+  //     next to the bundled MCP so installed pkgs resolve without the workspace).
+  push(join(dirname(fileURLToPath(import.meta.url)), 'skills'));
   // 2a. Node resolution of the extracted @ikenga/studio-archetypes package.
   push(resolveArchetypesPkgSkills());
   // 2b. Workspace-relative fallback: packages/apps/studio → packages/skills/studio-archetypes.
@@ -259,8 +267,13 @@ export class Catalog {
   private customArchetypesByProject = new Map<string, ArchetypeEntry[]>();
 
   constructor() {
+    const roots = archetypeSkillRoots();
     this.builtinBlocks = loadBuiltinBlocks();
     this.builtinArchetypes = loadBuiltinArchetypes();
+    process.stderr.write(
+      `[studio-mcp][catalog] roots=${roots.length} archetypes=${this.builtinArchetypes.length} blocks=${this.builtinBlocks.length}` +
+      `${roots.length ? ' from=' + roots.map((r) => r.replace(/.*packages\//, '')).join('|') : ''}\n`,
+    );
   }
 
   refreshForProject(projectId: string, projectRoot: string): void {

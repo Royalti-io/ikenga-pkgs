@@ -71,6 +71,18 @@ export function renderTools(sidecar: SidecarClient): ToolDef[] {
       handler: (args) => callSidecar(sidecar, 'render.read_bytes', { recordId: args.recordId }),
     },
     {
+      name: 'render.read_poster',
+      description:
+        "Read a finished render's poster PNG (extracted when the render finished) off disk, base64-encoded, so the Canvas grid + Composition timeline can show real thumbnails via bytes-over-bridge → blob: (file:// is unloadable from a sandboxed srcdoc pane). Returns { ok:true, base64, mime, sizeBytes, path } or { ok:false, error:'poster-not-found' } when no poster was extracted. Keyed on the render record id.",
+      inputSchema: {
+        type: 'object',
+        properties: { recordId: { type: 'string' } },
+        required: ['recordId'],
+        additionalProperties: false,
+      },
+      handler: (args) => callSidecar(sidecar, 'render.read_poster', { recordId: args.recordId }),
+    },
+    {
       name: 'render.ingest_external',
       description:
         "Attach a filmmaker's externally-produced clip (mp4/png dropped on disk) to a cell as a done RenderRecord with manual provenance — the return leg of export.prompt_package. Copies the file into renders/<engine>/<rungDir>/<cellUid>.<ext> and writes a terminal 'done' render row so render.list surfaces it exactly like a completed real render. Returns { ok:true, recordId, engine, outputPath, record }.",

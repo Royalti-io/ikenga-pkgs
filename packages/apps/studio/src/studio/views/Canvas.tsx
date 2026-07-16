@@ -59,6 +59,7 @@ import {
   exportApi,
 } from '../mcp-client';
 import { SafeZoneBands } from '../media-controls';
+import { CellPoster } from './composition/CellPoster';
 import type {
   Anchor,
   AspectRatio,
@@ -382,10 +383,14 @@ export function CanvasView() {
     setGenErrorFor(uid, null);
     try {
       const client = await getMcpClient();
+      // H2 — thread the user's fal model pick (ltx-video / flux / flux-i2v)
+      // as the render `variant`. The fal adapter's resolveVideoModel reads
+      // opts.variant first, so this is what makes the picker reach fal.
       await compositionApi.render(client, {
         project_id: project?.project_id ?? '',
         cell_uid: uid,
         engine: 'fal',
+        variant: choiceFor(uid).model,
       });
       bumpActivePoll();
       await Promise.all([refetchStoryboard(), refreshRenders()]);
@@ -677,10 +682,17 @@ export function CanvasView() {
           </span>
         </div>
 
-        {/* status thumb */}
+        {/* status thumb — done cells overlay a real poster frame (bytes-over-bridge). */}
         <div className="relative flex h-12 items-center justify-center border-b border-soft bg-sunken">
+          {tstate === 'rendered' && record?.id ? (
+            <CellPoster
+              recordId={record.id}
+              alt={item.beat}
+              className="absolute inset-0 h-full w-full object-cover"
+            />
+          ) : null}
           <span
-            className="flex items-center gap-1 font-mono text-[9px]"
+            className="relative z-[1] flex items-center gap-1 font-mono text-[9px]"
             style={{ color: `var(${sMeta.varName})` }}
           >
             {tstate === 'rendered' ? (
@@ -1101,7 +1113,8 @@ export function CanvasView() {
 
                 <div className="relative flex h-24 items-center justify-center overflow-hidden rounded-t-md border-b border-[var(--border)] bg-sunken">
                   {/* aspect-framed honest card — rung + render status + duration.
-                      No poster seam yet, so no image thumbnail is faked. */}
+                      Done cells overlay a real poster frame (bytes-over-bridge);
+                      non-done cells show the status text below. */}
                   <div
                     className={[
                       'relative flex items-center justify-center overflow-hidden',
@@ -1110,7 +1123,17 @@ export function CanvasView() {
                     ].join(' ')}
                     style={aspectFrameStyle(aspect)}
                   >
-                    <div className="flex flex-col items-center justify-center gap-1 px-1 text-center">
+                    {tstate === 'rendered' && (() => {
+                      const rid = recordByUid[item.uid]?.id;
+                      return rid ? (
+                        <CellPoster
+                          recordId={rid}
+                          alt={item.beat}
+                          className="absolute inset-0 h-full w-full object-cover"
+                        />
+                      ) : null;
+                    })()}
+                    <div className="relative z-[1] flex flex-col items-center justify-center gap-1 px-1 text-center">
                       <span className="font-mono text-[9px] uppercase tracking-wider text-fg-muted">
                         {rungLabel(item.rung)}
                       </span>

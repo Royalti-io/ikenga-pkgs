@@ -400,6 +400,15 @@ export function CastWorldView() {
 
   // Regenerate under the SAME id (see file header) so cell.anchors[]
   // references never dangle.
+  //
+  // M4 — safe delete/create sequencing. There is no anchor.update RPC, so a
+  // plate refresh is generate(temp) → delete(temp) → delete(old) →
+  // create(temp's fields under old id). The temp record has no cell refs (it
+  // was just minted), so deleting it first is harmless; the only dangerous
+  // delete is the original, whose id every cell.anchors[] points at. If the
+  // create-under-old-id step throws after the original is already gone, the
+  // inner catch best-effort recreates the original from the snapshot so the
+  // refs survive the failure (rather than leaving them dangling).
   const regenerate = useCallback(async (row: DisplayAnchor) => {
     if (!row.raw || !GENERATE_KINDS.includes(row.kind as GenerateKind)) return;
     setBusyId(row.id);
@@ -408,6 +417,7 @@ export function CastWorldView() {
       const client = await getMcpClient();
       const kind = row.kind as GenerateKind;
       const prompt = row.description || row.name;
+      const original = row.raw;
       const fresh = await anchorApi.generate(client, {
         project_id: project?.project_id,
         kind,
@@ -415,13 +425,22 @@ export function CastWorldView() {
         prompt,
         seed: row.seed,
       });
-      await anchorApi.delete(client, row.raw.id);
+      // Delete the temp record first (no cell refs → lossless), then the
+      // original, then re-create under the original id.
       await anchorApi.delete(client, fresh.id);
-      await anchorApi.create(client, {
-        ...fresh,
-        id: row.raw.id,
-        metadata: { ...fresh.metadata, locked: row.locked },
-      });
+      await anchorApi.delete(client, original.id);
+      try {
+        await anchorApi.create(client, {
+          ...fresh,
+          id: original.id,
+          metadata: { ...fresh.metadata, locked: row.locked },
+        });
+      } catch (createErr) {
+        // create under the original id failed — best-effort restore the
+        // original so cell.anchors[] refs aren't left dangling.
+        try { await anchorApi.create(client, original); } catch { /* original unrecoverable; surface the real error */ }
+        throw createErr;
+      }
       await refetchAnchors();
     } catch (err) {
       setRowError({ id: row.id, message: (err as Error).message });
@@ -432,6 +451,11 @@ export function CastWorldView() {
 
   // Lock (mints + pins a seed for an unseeded anchor) / unlock — same
   // delete→create(same id) pattern; there is no anchor.update.
+  //
+  // M4 — the original is deleted before the replacement is created (create()
+  // rejects a duplicate id). If that create throws, the inner catch
+  // best-effort recreates the original from the snapshot so cell.anchors[]
+  // references aren't left dangling.
   const toggleLock = useCallback(async (row: DisplayAnchor) => {
     if (!row.raw) return;
     setBusyId(row.id);
@@ -440,11 +464,19 @@ export function CastWorldView() {
       const client = await getMcpClient();
       const nextLocked = !row.locked;
       const seed = row.seed ?? (nextLocked ? Math.floor(Math.random() * 90_000) + 10_000 : undefined);
-      await anchorApi.delete(client, row.raw.id);
-      await anchorApi.create(client, {
-        ...row.raw,
-        metadata: { ...row.raw.metadata, locked: nextLocked, ...(seed != null ? { seed } : {}) },
-      });
+      const original = row.raw;
+      await anchorApi.delete(client, original.id);
+      try {
+        await anchorApi.create(client, {
+          ...original,
+          metadata: { ...original.metadata, locked: nextLocked, ...(seed != null ? { seed } : {}) },
+        });
+      } catch (createErr) {
+        // create under the original id failed — best-effort restore the
+        // original so cell.anchors[] refs aren't left dangling.
+        try { await anchorApi.create(client, original); } catch { /* original unrecoverable; surface the real error */ }
+        throw createErr;
+      }
       await refetchAnchors();
     } catch (err) {
       setRowError({ id: row.id, message: (err as Error).message });

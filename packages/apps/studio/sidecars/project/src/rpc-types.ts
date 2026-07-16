@@ -77,6 +77,7 @@ export type RpcMethod =
   | 'storyboard.read'
   | 'storyboard.read_cell'
   | 'storyboard.read_fountain'
+  | 'storyboard.write_fountain'
   | 'storyboard.read_cell_content'
   | 'storyboard.write_cell'
   | 'storyboard.write_cell_content'
@@ -107,6 +108,7 @@ export type RpcMethod =
   | 'render.list'
   | 'render.list_engines'
   | 'render.read_bytes'
+  | 'render.read_poster'
   | 'render.ingest_external'
   // export.* (WP-07c / G-38)
   | 'export.compose'

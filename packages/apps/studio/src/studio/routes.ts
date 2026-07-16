@@ -13,7 +13,6 @@ export const VIEW_IDS = [
   'canvas',
   'cell',
   'composition',
-  'script',
   'archetype',
   'cast-world',
   'breakdown',
@@ -35,7 +34,6 @@ export const VIEWS: Record<ViewId, ViewMeta> = {
   canvas:      { id: 'canvas',      label: 'Canvas',      icon: 'grid-3x3',     key: '1' },
   cell:        { id: 'cell',        label: 'Cell',        icon: 'code',         key: '2' },
   composition: { id: 'composition', label: 'Composition', icon: 'film',         key: '3' },
-  script:      { id: 'script',      label: 'Script',      icon: 'pen-line',     key: '4' },
   archetype:   { id: 'archetype',   label: 'Archetype',   icon: 'package',      key: '5' },
   'cast-world': { id: 'cast-world', label: 'Cast & World', icon: 'users',       key: '6' },
   breakdown:   { id: 'breakdown',   label: 'Breakdown',    icon: 'list-checks', key: '7' },
@@ -111,7 +109,7 @@ export type PaneIndex = 0 | 1 | 2;
 export const DEFAULT_PANE_VIEWS: Record<PaneIndex, ViewId> = {
   0: 'canvas',
   1: 'composition',
-  2: 'script',
+  2: 'breakdown',
 };
 
 /** The view-component registry. Views register their concrete component here

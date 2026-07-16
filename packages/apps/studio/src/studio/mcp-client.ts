@@ -196,6 +196,11 @@ export const storyboardApi = {
    *  `exists:false` (empty text) = the project has no .fountain on disk yet. */
   read_fountain: (c: McpClient) =>
     c.callTool<FountainRead>('storyboard.read_fountain'),
+  /** Persist the project's Fountain screenplay to <root>/script.fountain (UTF-8).
+   *  Replaces the file wholesale — the durable save seam for a future edit / Chi
+   *  authoring flow. */
+  write_fountain: (c: McpClient, text: string) =>
+    c.callTool<FountainWrite>('storyboard.write_fountain', { text }),
   /** Read the cell's REAL authored source file (the markup at its content_path).
    *  `exists:false` (empty html) = a cell with no source written yet. */
   read_cell_content: (c: McpClient, cell_uid: string) =>
@@ -235,6 +240,13 @@ export interface FountainRead {
   text: string;
 }
 
+/** Result of writing the project's Fountain screenplay (storyboard.write_fountain).
+ *  The file now exists on disk; `bytes` is the UTF-8 byte count written. */
+export interface FountainWrite {
+  exists: boolean;
+  bytes: number;
+}
+
 export const anchorApi = {
   list: (c: McpClient) =>
     c.callTool<{ anchors: Anchor[] }>('anchor.list'),
@@ -265,7 +277,11 @@ export const compositionApi = {
   // `cell_uid` scopes a render to a single cell (per-cell re-render / retry).
   // Omitting it renders the whole composition. The mock already keys off
   // `cell_uid`; the real WP-06 server honors the same arg.
-  render: (c: McpClient, args: { project_id: string; cell_uid?: string; engine?: string; aspect_ratio?: AspectRatio; rung?: Rung }) =>
+  // `variant` threads the user's model pick (Canvas engine picker —
+  // ltx-video / flux / flux-i2v for fal) through to the adapter: the fal
+  // renderer's resolveVideoModel reads opts.variant first, so this is what
+  // makes the picker's selection actually reach the generation call (H2).
+  render: (c: McpClient, args: { project_id: string; cell_uid?: string; engine?: string; aspect_ratio?: AspectRatio; variant?: string; rung?: Rung }) =>
     c.callTool<{ record_id: string }>('composition.render', args),
   preview: (c: McpClient, args: { project_id: string; engine?: string }) =>
     c.callTool<{ preview_uri: string }>('composition.preview', args),
@@ -302,6 +318,11 @@ export const renderApi = {
     c.callTool<{ records: RenderRecord[] }>('render.list', args ?? {}),
   read_bytes:   (c: McpClient, record_id: string) =>
     c.callTool<MediaBytes>('render.read_bytes', { record_id }),
+  /** Read the poster PNG (extracted when the render finished) as base64 for a
+   *  blob: thumbnail. Mirrors read_bytes; `base64` is empty in mock/standalone
+   *  mode → caller falls back to the status-text preview. */
+  read_poster:  (c: McpClient, record_id: string) =>
+    c.callTool<MediaBytes>('render.read_poster', { record_id }),
   /** Attach a filmmaker's externally-produced clip (mp4/png on disk) to a cell
    *  as a done RenderRecord with manual provenance — the return leg of
    *  export.prompt_package. `project_id` optional (real-mcp injects the active

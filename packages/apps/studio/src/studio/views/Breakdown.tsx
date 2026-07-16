@@ -258,8 +258,8 @@ export function BreakdownView() {
 
   useEffect(() => { void refetchStoryboard(); }, [refetchStoryboard]);
 
-  const archetype = hasRealCells ? (projectDoc?.script?.archetype ?? projectDoc?.archetype_id ?? '') : 'narrative';
-  const isNarrative = hasRealCells ? archetype === 'narrative' : true;
+  // archetype (projectDoc.script.archetype / archetype_id) drives the scene +
+  // dialogue parsing below; non-narrative formats have no dialogue by design.
   const title = hasRealCells ? (projectDoc?.script?.title ?? projectDoc?.title ?? 'script') : DEMO_TITLE;
 
   // ── anchors (real: anchor.list; mock: DEMO_ANCHORS) ──
@@ -303,7 +303,7 @@ export function BreakdownView() {
   }>({ loading: false, loaded: false, exists: false, text: '', error: null });
 
   useEffect(() => {
-    if (!(hasRealCells && isNarrative)) return;
+    if (!hasRealCells) return;
     let cancelled = false;
     setFountain((f) => ({ ...f, loading: true, error: null }));
     void (async () => {
@@ -316,7 +316,7 @@ export function BreakdownView() {
       }
     })();
     return () => { cancelled = true; };
-  }, [hasRealCells, isNarrative]);
+  }, [hasRealCells]);
 
   const scriptText = hasRealCells ? fountain.text : DEMO_FOUNTAIN;
   const scriptExists = hasRealCells ? fountain.exists : true;
@@ -393,11 +393,11 @@ export function BreakdownView() {
     );
   }
 
-  if (hasRealCells && !isNarrative) {
+  if (hasRealCells && fountain.loaded && !fountain.exists) {
     return (
-      <EmptyState glyph="✂" title="Breakdown needs a narrative script" hint={`this project is "${archetype || 'unknown'}"`}>
+      <EmptyState glyph="✂" title="Breakdown needs a script" hint="no script.fountain in this project">
         <p className="mt-1 max-w-xs text-[11px] leading-relaxed text-fg-faint">
-          Breakdown links a `.fountain` screenplay to shots. Non-narrative archetypes author their beats directly on the Script tab.
+          Breakdown links a `.fountain` screenplay to shots. Add one on the Script tab (Fountain) or ask your Chi to draft a screenplay, then the shot-by-shot breakdown appears here.
         </p>
       </EmptyState>
     );

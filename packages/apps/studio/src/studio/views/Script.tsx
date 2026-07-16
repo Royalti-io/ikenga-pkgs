@@ -4,10 +4,11 @@
 // parts/screens/script.md; no dedicated mockup). A scrollable, beat-ordered
 // dense-row list of ScriptBeat rows (VO / action text, beat-accent left
 // border, SFX + transition chips, mono duration readout via lib/time's
-// fmtClock), plus a native (lightweight, read-only) Fountain renderer for the
-// `narrative` archetype, toggled by a `.seg` mode switch that only appears
-// when the project's archetype is `narrative` (script.md §"Chrome &
-// Navigation"). Clicking a row publishes `cellUid` + `playheadMs` (snapped to
+// fmtClock), plus a native (lightweight, read-only) Fountain renderer
+// toggled by a `.seg` mode switch. The Fountain tab is available for EVERY
+// archetype (narrative, explainer, commercial, …) — any project may carry a
+// `<root>/script.fountain` source (script.md §"Chrome & Navigation").
+// Clicking a row publishes `cellUid` + `playheadMs` (snapped to
 // the beat's start) into the shared store; hovering publishes `hoverBeat`.
 // The active row (driven by `playheadMs` from the outside — e.g. Composition
 // scrub) gets an amber left accent, matching script.md's "Script follows
@@ -28,7 +29,7 @@
 // - VO/action editing is read-only (see above).
 //
 // Wave-5 (closes the deferred fountain read): Fountain mode for a real
-// narrative project now reads `<project>/script.fountain` over the
+// project of ANY archetype now reads `<project>/script.fountain` over the
 // `storyboard.read_fountain` MCP seam and renders the real screenplay
 // (read-only). When the project has no `.fountain` on disk it shows an honest
 // "no script.fountain" note instead of the mock screenplay. The mock sample is
@@ -233,7 +234,6 @@ export function ScriptView() {
   // Header + toggle metadata off the REAL script block when hydrated, else mock.
   const title = hasRealCells ? (projectDoc?.script?.title ?? projectDoc?.title ?? 'script') : SCRIPT_META.title;
   const archetype = hasRealCells ? (projectDoc?.script?.archetype ?? projectDoc?.archetype_id ?? '') : SCRIPT_META.archetype;
-  const isNarrative = archetype === 'narrative';
 
   const activeBeat = beatAtMs(rows, playheadMs);
 
@@ -253,7 +253,7 @@ export function ScriptView() {
   }>({ loading: false, loaded: false, exists: false, text: '', error: null });
 
   useEffect(() => {
-    if (!(hasRealCells && isNarrative && mode === 'fountain')) return;
+    if (!(hasRealCells && mode === 'fountain')) return;
     let cancelled = false;
     setFountain((f) => ({ ...f, loading: true, error: null }));
     void (async () => {
@@ -270,28 +270,12 @@ export function ScriptView() {
       }
     })();
     return () => { cancelled = true; };
-  }, [hasRealCells, isNarrative, mode]);
+  }, [hasRealCells, mode]);
 
   const realScenes = useMemo(
     () => (fountain.exists && fountain.text ? parseFountain(fountain.text) : []),
     [fountain.exists, fountain.text],
   );
-
-  if (rows.length === 0) {
-    return (
-      <EmptyState
-        glyph="✍"
-        title="No script yet"
-        hint="the beat list is written for you, not by hand"
-      >
-        <p className="mt-1 max-w-xs text-[11px] leading-relaxed text-fg-faint">
-          Ask your Chi in the chat dock to draft the script — try{' '}
-          <span className="font-mono text-fg-muted">"storyboard a 30s explainer"</span>.
-          It writes the beats straight into this project.
-        </p>
-      </EmptyState>
-    );
-  }
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-base text-fg">
@@ -305,28 +289,26 @@ export function ScriptView() {
             </>
           )}
         </div>
-        {isNarrative && (
-          <div className="seg" role="tablist" aria-label="Script mode">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === 'script'}
-              className={mode === 'script' ? 'is-on' : ''}
-              onClick={() => setMode('script')}
-            >
-              Script
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === 'fountain'}
-              className={mode === 'fountain' ? 'is-on' : ''}
-              onClick={() => setMode('fountain')}
-            >
-              Fountain
-            </button>
-          </div>
-        )}
+        <div className="seg" role="tablist" aria-label="Script mode">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'script'}
+            className={mode === 'script' ? 'is-on' : ''}
+            onClick={() => setMode('script')}
+          >
+            Script
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={mode === 'fountain'}
+            className={mode === 'fountain' ? 'is-on' : ''}
+            onClick={() => setMode('fountain')}
+          >
+            Fountain
+          </button>
+        </div>
       </div>
 
       {/* Read-only intent (closes the "why can't I type here" gap): edits round-
@@ -336,10 +318,10 @@ export function ScriptView() {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto">
-        {mode === 'fountain' && isNarrative ? (
+        {mode === 'fountain' ? (
           hasRealCells ? (
-            // Real narrative: render the REAL <project>/script.fountain (read-
-            // only) via storyboard.read_fountain; honest note when absent.
+            // Real project (any archetype): render the REAL <project>/script.fountain
+            // (read-only) via storyboard.read_fountain; honest note when absent.
             fountain.loading || !fountain.loaded ? (
               <div className="p-3">
                 <p className="font-mono text-[11px] text-fg-faint">Loading screenplay…</p>
@@ -374,6 +356,18 @@ export function ScriptView() {
               ))}
             </div>
           )
+        ) : rows.length === 0 ? (
+          <EmptyState
+            glyph="✍"
+            title="No script yet"
+            hint="the beat list is written for you, not by hand"
+          >
+            <p className="mt-1 max-w-xs text-[11px] leading-relaxed text-fg-faint">
+              Ask your Chi in the chat dock to draft the script — try{' '}
+              <span className="font-mono text-fg-muted">"storyboard a 30s explainer"</span>.
+              It writes the beats straight into this project.
+            </p>
+          </EmptyState>
         ) : (
           <ul role="list" className="divide-y divide-[var(--border-soft)]">
             {rows.map((beat) => (

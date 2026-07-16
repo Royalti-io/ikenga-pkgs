@@ -151,6 +151,28 @@ export function readFountain(projectRoot: string): StoryboardResult {
   return { result: { ok: true, exists, text } };
 }
 
+/**
+ * Write the project's Fountain screenplay source to `<projectRoot>/script.fountain`
+ * (UTF-8). Mirrors readFountain's seam: the durable save for the Script view's
+ * Fountain mode and the Chi authoring flow. Replaces the file wholesale (there
+ * is no patch-level edit for a Fountain source). The FS watcher emits
+ * `cells/changed` on the project root, so callers refetch as needed.
+ */
+export function writeFountain(projectRoot: string, text: unknown): StoryboardResult {
+  if (typeof text !== 'string') {
+    return { result: { ok: false, error: 'invalid-args', message: 'text must be a string' } };
+  }
+  const abs = join(projectRoot, 'script.fountain');
+  writeFileSync(abs, text, 'utf8');
+  return {
+    result: {
+      ok: true,
+      exists: true,
+      bytes: Buffer.byteLength(text, 'utf8'),
+    },
+  };
+}
+
 // ─── mutations ──────────────────────────────────────────────────────────────
 
 export function createCell(projectRoot: string, cellInput: unknown): StoryboardResult {

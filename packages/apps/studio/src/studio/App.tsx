@@ -26,7 +26,6 @@ import { PanePlaceholder } from './components/PanePlaceholder';
 import { CanvasView } from './views/Canvas';
 import { CellView } from './views/Cell';
 import { CompositionView } from './views/Composition';
-import { ScriptView } from './views/Script';
 import { ArchetypeBuilderView } from './views/ArchetypeBuilder';
 import { CastWorldView } from './views/CastWorld';
 import { BreakdownView } from './views/Breakdown';
@@ -43,7 +42,6 @@ const VIEW_COMPONENTS: ViewComponentRegistry = {
   canvas:      CanvasView,
   cell:        CellView,
   composition: CompositionView,
-  script:      ScriptView,
   archetype:   ArchetypeBuilderView,
   'cast-world': CastWorldView,
   breakdown:   BreakdownView,

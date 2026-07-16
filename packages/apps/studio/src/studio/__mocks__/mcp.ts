@@ -461,6 +461,10 @@ function callMockTool(
     // ─── render bytes (no real mp4 in mock) ────────────────────────
     case 'render.read_bytes':
       return { base64: '', mime: 'video/mp4', sizeBytes: 0, path: 'mock://renders/latest.mp4' };
+    case 'render.read_poster':
+      // No real poster on disk in mock mode → empty bytes; the tile falls back
+      // to the status-text preview.
+      return { base64: '', mime: 'image/png', sizeBytes: 0, path: 'mock://renders/latest.png' };
 
     default:
       throw new Error(`[studio:mock] unimplemented MCP method: ${name}`);

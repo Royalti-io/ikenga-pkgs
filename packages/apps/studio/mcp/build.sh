@@ -41,4 +41,17 @@ bun build $WATCH_FLAG \
 rm "$TMP"
 chmod +x "$OUTPUT"
 
+# Copy archetype + block skills into dist/skills so the MCP is self-contained.
+# An installed pkg cannot reach the workspace-relative source, so catalog.ts
+# also checks <module-dir>/skills — i.e. dist/skills — as a resolution tier.
+# This script cd's into mcp/ (dirname $0), so the workspace source is 3 levels up.
+SKILLS_SRC="../../../skills/studio-archetypes/skills"
+if [[ -d "$SKILLS_SRC" ]]; then
+  rm -rf dist/skills
+  cp -r "$SKILLS_SRC" dist/skills
+  echo "==> copied skills/ into dist/skills ($(find dist/skills -name '*.json' | wc -l) json files)"
+else
+  echo "==> WARN: $SKILLS_SRC not found — dist will not be self-contained"
+fi
+
 echo "==> done: $(du -h "$OUTPUT" | cut -f1) $OUTPUT"

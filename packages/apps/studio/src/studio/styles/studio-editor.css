@@ -398,6 +398,15 @@
   line-height: 1;
   z-index: 3;
 }
+.clip-segment__poster {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 1;
+  opacity: 0.85;
+}
 .clip-segment[data-accent="amber"]   { background: var(--beat-accent-amber-soft); }
 .clip-segment[data-accent="amber"]   .clip-segment__label { color: var(--beat-accent-amber); }
 .clip-segment[data-accent="rose"]    { background: var(--beat-accent-rose-soft); }

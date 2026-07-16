@@ -8,7 +8,7 @@
  *
  * G23 — content-path → engine auto-resolution. The order is fixed
  * (`.html → hyperframes`, `.excalidraw → excalidraw`, `.tsx → remotion`
- * [rejected as P2], else throw). This mirrors the MCP-layer RenderShim
+ * [rejected as P2], else → fal). This mirrors the MCP-layer RenderShim
  * resolution that WP-06 implemented in-MCP, but now lives at the sidecar
  * enqueue boundary so it is enforced regardless of caller.
  */
@@ -73,10 +73,11 @@ export function resolveEngine(contentPath: string): string {
     case 'tsx':
       throw new EngineResolutionError('engine-not-available-in-p1', 'remotion is P2');
     default:
-      throw new EngineResolutionError(
-        'unresolvable-engine',
-        `no adapter for extension ${ext || '(none)'}`,
-      );
+      // No file-backed content (or an unrecognized path) → fal, the network AI
+      // generation engine. fal drives from the cell's `prompt` (+ optional
+      // anchor image ref), not from on-disk source, so it is the correct
+      // resolution when there is no .html/.excalidraw content to render.
+      return 'fal';
   }
 }
 

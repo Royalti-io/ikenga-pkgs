@@ -37,6 +37,8 @@ export interface RenderQueueRow {
   finished_at: number | null;
   output_path: string | null;
   error: string | null;
+  metadata: string; // JSON — {model_id, cost_actual, cost_estimate, seed, …} (H1)
+  variant: string | null; // engine variant / model tag (H1)
 }
 
 /**
@@ -72,7 +74,9 @@ const MIGRATIONS: string[] = [
      started_at  INTEGER,
      finished_at INTEGER,
      output_path TEXT,
-     error       TEXT
+     error       TEXT,
+     metadata    TEXT DEFAULT '{}',
+     variant     TEXT
    );
    CREATE INDEX IF NOT EXISTS render_queue_status_idx  ON render_queue(status);
    CREATE INDEX IF NOT EXISTS render_queue_project_idx ON render_queue(project_id);
@@ -129,6 +133,19 @@ export async function openDb(dbPath?: string): Promise<Database> {
   for (const stmt of MIGRATIONS) {
     db.exec(stmt);
   }
+
+  // H1 — render provenance columns (metadata + variant). Fresh DBs get them
+  // from CREATE TABLE above; existing installs need an additive ALTER TABLE.
+  // SQLite has no IF NOT EXISTS on ADD COLUMN, so guard via PRAGMA table_info.
+  const renderCols = db.prepare(`PRAGMA table_info(render_queue)`).all() as Array<{ name: string }>;
+  const renderColNames = new Set(renderCols.map((c) => c.name));
+  if (!renderColNames.has('metadata')) {
+    db.exec(`ALTER TABLE render_queue ADD COLUMN metadata TEXT DEFAULT '{}'`);
+  }
+  if (!renderColNames.has('variant')) {
+    db.exec(`ALTER TABLE render_queue ADD COLUMN variant TEXT`);
+  }
+
   return db;
 }
 

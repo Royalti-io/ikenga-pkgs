@@ -31,7 +31,7 @@
  * complete server-side — we simply do not download its output.
  */
 
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
@@ -102,12 +102,16 @@ function resolveOutputPath(cell: Cell, ctx: RenderContext): string {
 /** Resolve the video model id (call override → cell metadata → env → default). */
 function resolveVideoModel(cell: Cell, opts: RenderOptions): string {
   const fromMeta = (cell.metadata as Record<string, unknown> | undefined)?.fal_model;
-  return (
+  const raw =
     opts.variant ||
     (typeof fromMeta === 'string' ? fromMeta : '') ||
     process.env.FAL_VIDEO_MODEL ||
-    FAL_VIDEO_MODEL_DEFAULT
-  );
+    FAL_VIDEO_MODEL_DEFAULT;
+  // The Canvas picker uses friendly short names (ltx-video, flux, …); fal's
+  // API requires the full <owner>/<app> id. Pass through anything already
+  // owner-qualified, otherwise prefix the default owner so e.g. "ltx-video"
+  // resolves to "fal-ai/ltx-video".
+  return raw.includes('/') ? raw : `fal-ai/${raw}`;
 }
 
 /** Extract a negative prompt from the cell's open metadata bag, if present. */
@@ -151,7 +155,6 @@ async function downloadTo(url: string, outPath: string): Promise<void> {
   const buf = Buffer.from(await res.arrayBuffer());
   const dir = dirname(outPath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  const { writeFileSync } = await import('node:fs');
   writeFileSync(outPath, buf);
 }
 
@@ -304,6 +307,10 @@ export const falAdapter: RendererAdapter = {
         '[fal] fal.key not set — provide it via the vault (`fal.key`) or the FAL_KEY env var',
       );
     }
+    // NOTE: fal.config mutates global SDK state. Safe today because the render
+    // queue drains serially (one render at a time), but under future concurrency
+    // this would need per-call credentials (e.g. a scoped client) to avoid
+    // clobbering an in-flight job's key.
     fal.config({ credentials: key });
 
     const model = resolveVideoModel(cell, opts);
@@ -331,11 +338,11 @@ export const falAdapter: RendererAdapter = {
       ctx.signal.addEventListener('abort', onAbort, { once: true });
     }
 
-    let lastMessage = -1;
+    let lastMessage = '';
     const emitProgress = (message: string): void => {
-      // De-dupe on message length changes to avoid a flood of identical lines.
-      if (message.length === lastMessage) return;
-      lastMessage = message.length;
+      // De-dupe on message content to avoid a flood of identical lines.
+      if (message === lastMessage) return;
+      lastMessage = message;
       ctx.emit({
         type: 'render.progress',
         payload: {
@@ -442,6 +449,9 @@ export async function generateStill(
       '[fal] fal.key not set — provide it via keyGetter (vault) or the FAL_KEY env var',
     );
   }
+  // NOTE: fal.config mutates global SDK state. Safe today because generateStill
+  // is called from the serial anchor-generation path (one at a time); under
+  // concurrency this would need a scoped client to avoid key clobbering.
   fal.config({ credentials: key });
 
   const model = opts.model || process.env.FAL_IMAGE_MODEL || FAL_IMAGE_MODEL_DEFAULT;

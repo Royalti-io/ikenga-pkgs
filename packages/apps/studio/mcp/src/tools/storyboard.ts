@@ -53,6 +53,25 @@ export function storyboardTools(sidecar: SidecarClient): ToolDef[] {
         callSidecar(sidecar, 'storyboard.read_fountain', { projectId: args.projectId }),
     },
     {
+      name: 'storyboard.write_fountain',
+      description:
+        "Persist the project's Fountain screenplay source to <root>/script.fountain (UTF-8). Replaces the file wholesale — there is no patch-level edit. This is the durable save seam for the Script view's Fountain mode and the Chi authoring flow. Returns { ok, exists, bytes }.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          projectId: { type: 'string' },
+          text: { type: 'string' },
+        },
+        required: ['projectId', 'text'],
+        additionalProperties: false,
+      },
+      handler: (args) =>
+        callSidecar(sidecar, 'storyboard.write_fountain', {
+          projectId: args.projectId,
+          text: args.text,
+        }),
+    },
+    {
       name: 'storyboard.read_cell_content',
       description:
         "Read a cell's authored source file (the markup at its content_path). Returns { html, content_path, exists }. `exists:false` (empty html) means the cell has no source written yet.",

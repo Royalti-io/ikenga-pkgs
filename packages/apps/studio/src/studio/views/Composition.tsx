@@ -58,6 +58,7 @@ import type { BedCheck } from '../mcp-client';
 import type { Cell } from '../mcp-types';
 import { pollRenderUntilDone, pollExportUntilDone } from '../lib/render-poll';
 import { CellVideo, type CellVideoAvailability } from './composition/CellVideo';
+import { CellPoster } from './composition/CellPoster';
 import { ComposedVideo } from './composition/ComposedVideo';
 import { ExportCard, type ExportUiState } from './composition/ExportCard';
 import { ExportPreflightDialog } from './composition/ExportPreflightDialog';
@@ -708,6 +709,16 @@ export function CompositionView() {
                       aria-hidden="true"
                     />
                   )}
+                  {st === 'done' && (() => {
+                    const rid = recByUid[c.uid]?.id;
+                    return rid ? (
+                      <CellPoster
+                        recordId={rid}
+                        alt={c.beat}
+                        className="clip-segment__poster"
+                      />
+                    ) : null;
+                  })()}
                   <span className="clip-segment__label">{c.beat}</span>
                   {glyph && <span className="clip-segment__glyph" aria-hidden="true">{glyph}</span>}
                 </div>

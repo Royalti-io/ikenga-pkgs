@@ -38,7 +38,6 @@ import {
   enqueue,
   hydrateProjectCells,
   queueDepth,
-  listQueue,
 } from './queue.js';
 import {
   logErr,
@@ -315,7 +314,7 @@ function buildHandlers(db: Db): RpcHandlers {
       rendersDir: join(r.root, 'renders'),
       aspectRatio: aspect,
       resolution: defaultResolution(p),
-      vault: { get: async () => undefined },
+      vault: { get: async (key: string) => (key === 'fal.key' ? process.env.FAL_KEY : undefined) },
       emit: () => {}, // preview/validate are cheap + synchronous-ish; no progress
       signal: new AbortController().signal,
     };
@@ -345,6 +344,7 @@ function buildHandlers(db: Db): RpcHandlers {
       'render.cancel',
       'render.list',
       'render.read_bytes',
+      'render.read_poster',
       'export.compose',
       'export.status',
       'export.list',
@@ -366,6 +366,8 @@ function buildHandlers(db: Db): RpcHandlers {
         return storyboard.readCell(root, params.cellId as string).result;
       case 'storyboard.read_fountain':
         return storyboard.readFountain(root).result;
+      case 'storyboard.write_fountain':
+        return storyboard.writeFountain(root, params.text).result;
       case 'storyboard.read_cell_content':
         return storyboard.readCellContent(root, params.cellId as string).result;
       case 'storyboard.write_cell_content': {
@@ -482,6 +484,8 @@ function buildHandlers(db: Db): RpcHandlers {
         return { ok: true, engines: listEngines() };
       case 'render.read_bytes':
         return runner.readBytes(params.recordId as string);
+      case 'render.read_poster':
+        return runner.readPoster(params.recordId as string);
       case 'render.ingest_external':
         return runner.ingestExternal(params.projectId as string, params.cellId as string, {
           filePath: params.filePath as string,
@@ -605,9 +609,6 @@ function buildHandlers(db: Db): RpcHandlers {
       const depth = queueDepth(db, projectId);
       // openCells = LRU entries scoped to this project.
       let openCells = 0;
-      for (const row of listQueue(db, projectId)) {
-        if (row) openCells; // no-op; we count via LRU below
-      }
       // Count LRU entries belonging to this project.
       // (CellLRU doesn't expose a project filter; do it via key scan.)
       const prefix = `${projectId}::`;

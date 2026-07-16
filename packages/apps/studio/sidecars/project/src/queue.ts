@@ -222,6 +222,10 @@ export interface InsertExternalDoneParams {
   outputPath: string;
   /** Provenance blob persisted in the `options` column (the full RenderRecord). */
   options: unknown;
+  /** JSON metadata blob — {model_id, cost_actual, provenance, …} (H1). */
+  metadata?: string;
+  /** Engine variant / model tag (H1). */
+  variant?: string;
 }
 
 /**
@@ -236,8 +240,8 @@ export function insertExternalDone(db: Db, params: InsertExternalDoneParams): vo
   const now = Date.now();
   db.prepare(
     `INSERT INTO render_queue
-       (record_id, project_id, cell_id, engine, options, status, created_at, started_at, finished_at, output_path)
-       VALUES (?, ?, ?, ?, ?, 'done', ?, ?, ?, ?)`,
+       (record_id, project_id, cell_id, engine, options, status, created_at, started_at, finished_at, output_path, metadata, variant)
+       VALUES (?, ?, ?, ?, ?, 'done', ?, ?, ?, ?, ?, ?)`,
   ).run(
     params.recordId,
     params.projectId,
@@ -248,6 +252,8 @@ export function insertExternalDone(db: Db, params: InsertExternalDoneParams): vo
     now,
     now,
     params.outputPath,
+    params.metadata ?? '{}',
+    params.variant ?? null,
   );
 }
 
@@ -292,17 +298,19 @@ export function markDone(
   db: Db,
   recordId: string,
   outcome: 'done' | 'failed' | 'cancelled',
-  fields: { outputPath?: string; error?: string } = {},
+  fields: { outputPath?: string; error?: string; metadata?: string; variant?: string } = {},
 ): void {
   db.prepare(
     `UPDATE render_queue
-        SET status = ?, finished_at = ?, output_path = ?, error = ?
+        SET status = ?, finished_at = ?, output_path = ?, error = ?, metadata = ?, variant = ?
       WHERE record_id = ?`,
   ).run(
     outcome,
     Date.now(),
     fields.outputPath ?? null,
     fields.error ?? null,
+    fields.metadata ?? null,
+    fields.variant ?? null,
     recordId,
   );
 }

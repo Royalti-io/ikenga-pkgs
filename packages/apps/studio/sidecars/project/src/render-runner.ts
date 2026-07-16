@@ -16,6 +16,7 @@
  * it finishes each job.
  */
 
+import { spawn } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -261,6 +262,38 @@ export class RenderRunner {
   }
 
   /**
+   * Read a finished render's poster PNG off disk and return it base64-encoded,
+   * mirroring readBytes. The poster is extracted by `extractPoster` when the
+   * render finishes (a single frame written next to the mp4 as `.png`). Used by
+   * the Canvas grid + Composition timeline to show real thumbnails via the same
+   * bytes-over-bridge → blob: seam (file:// fails in srcdoc). Keyed on the
+   * render record id so it can't read outside the queue's own outputs.
+   */
+  readPoster(recordId: string):
+    | { ok: true; base64: string; mime: string; sizeBytes: number; path: string }
+    | { ok: false; error: string; message?: string } {
+    const row = this.db
+      .prepare(`SELECT * FROM render_queue WHERE record_id = ?`)
+      .get(recordId) as RenderQueueRow | undefined;
+    if (!row) return { ok: false, error: 'render-record-not-found', message: recordId };
+    if (!row.output_path) return { ok: false, error: 'render-not-done', message: 'no output on disk yet' };
+    const posterPath = posterPathFor(row.output_path);
+    if (!existsSync(posterPath)) return { ok: false, error: 'poster-not-found', message: posterPath };
+    try {
+      const buf = readFileSync(posterPath);
+      return {
+        ok: true,
+        base64: buf.toString('base64'),
+        mime: mimeForPath(posterPath),
+        sizeBytes: buf.length,
+        path: posterPath,
+      };
+    } catch (e) {
+      return { ok: false, error: 'render-read-failed', message: (e as Error).message };
+    }
+  }
+
+  /**
    * Attach a filmmaker's externally-produced clip to a cell as a done
    * RenderRecord (manual provenance — Track B, the return leg of the
    * `export.prompt_package` handoff). Copies the file into
@@ -319,7 +352,9 @@ export class RenderRunner {
       cost_actual: typeof opts.cost_actual === 'number' ? opts.cost_actual : undefined,
       started_at: nowIso,
       finished_at: nowIso,
-      metadata: { ingested: true, source_path: srcAbs },
+      // H4 — provenance:'manual' so the Handoff/Ledger views label this as
+      // an ingested clip, not a rendered one.
+      metadata: { ingested: true, source_path: srcAbs, provenance: 'manual' },
     };
 
     insertExternalDone(this.db, {
@@ -329,6 +364,14 @@ export class RenderRunner {
       engine: opts.engine,
       outputPath: destPath,
       options: { ingested: true, record },
+      metadata: JSON.stringify({
+        model_id: opts.model_id,
+        cost_actual: typeof opts.cost_actual === 'number' ? opts.cost_actual : undefined,
+        provenance: 'manual',
+        ingested: true,
+        source_path: srcAbs,
+      }),
+      variant: record.variant,
     });
 
     // Surface the new record live so the Composition pane's render list
@@ -449,8 +492,27 @@ export class RenderRunner {
     try {
       const record = await adapter.render(cell, renderOpts, ctx);
       const outputPath = record.output?.uri;
-      markDone(this.db, row.record_id, 'done', { outputPath });
+      // H1 — serialize the full adapter provenance (model_id, cost, seed,
+      // request_id, elapsed_ms, …) into the metadata column so the UI Ledger
+      // surfaces real spend / model / seed instead of blanks.
+      markDone(this.db, row.record_id, 'done', {
+        outputPath,
+        metadata: JSON.stringify({
+          model_id: record.model_id,
+          cost_actual: record.cost_actual,
+          cost_estimate: record.cost_estimate,
+          ...record.metadata,
+        }),
+        variant: record.variant,
+      });
       this.emitDone(row, 'done', outputPath);
+      // Best-effort poster extraction (Issue 3): write a single PNG frame next
+      // to the mp4 so Canvas tiles + Composition clips can show a real
+      // thumbnail without loading the full video. Never fails the render — a
+      // missing poster just falls back to the status-text preview.
+      if (outputPath) {
+        try { await extractPoster(outputPath); } catch { /* best-effort */ }
+      }
     } catch (e) {
       const cancelled = (e as Error & { cancelled?: boolean }).cancelled === true || controller.signal.aborted;
       if (cancelled) {
@@ -490,4 +552,30 @@ function absContentPath(projectRoot: string, cell: Cell): string {
 /** Compute the expected output path for a hyperframes/excalidraw render (for smoke assertions). */
 export function expectedRenderPath(rendersDir: string, engine: string, cell: Cell): string {
   return join(rendersDir, engine, rungDir(cell.rung), `${cell.uid}.mp4`);
+}
+
+/** Poster path = same dir + basename as the mp4, with a `.png` extension. */
+function posterPathFor(outputPath: string): string {
+  const ext = extname(outputPath);
+  return ext ? outputPath.slice(0, -ext.length) + '.png' : outputPath + '.png';
+}
+
+/**
+ * Best-effort poster-frame extraction: spawn ffmpeg to grab one PNG frame from
+ * the finished mp4 and write it next to the output (`.png`). Seeks ~0.5s in to
+ * dodge a blank fade-in frame; if the clip is shorter ffmpeg still emits the
+ * last available frame. NEVER throws — a failed extraction resolves silently
+ * and the tile falls back to the status-text preview.
+ */
+function extractPoster(outputPath: string): Promise<void> {
+  return new Promise<void>((resolve) => {
+    const posterPath = posterPathFor(outputPath);
+    const child = spawn(
+      'ffmpeg',
+      ['-y', '-ss', '0.5', '-i', outputPath, '-frames:v', '1', posterPath],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    child.on('error', () => resolve());
+    child.on('close', () => resolve());
+  });
 }

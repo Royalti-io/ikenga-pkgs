@@ -174,13 +174,6 @@ function buildProjectMenu(project: OpenProjectSummary): PublishedMenuItem[] {
       badge: cellUid ?? null,
     },
     {
-      id: 'script',
-      label: 'Script',
-      icon: ICON.script,
-      section: 'Compose',
-      active: focusedView === 'script',
-    },
-    {
       id: 'cast-world',
       label: 'Cast & World',
       icon: ICON.castWorld,
