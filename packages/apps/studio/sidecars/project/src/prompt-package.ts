@@ -57,8 +57,6 @@ export interface ShapeInputs {
   duration_ms: number;
   aspect_ratio: AspectRatio;
   ref_image_uri: string | null;
-  /** Why the ref is / isn't usable (local file, missing, …) — shapers surface it. */
-  ref_note?: string | null;
   /** Optional audio-cue reference (from `Cell.audio_cue`) — used by the veo shaper. */
   audio_cue_uri: string | null;
 }
@@ -267,6 +265,9 @@ function packageCell(
   };
   const ref = resolveRefImage(projectRoot, cell, anchorsById);
   const audioCue = cell.audio_cue?.uri ?? null;
+  // ref.note is portability guidance for the FILMMAKER ("upload X before
+  // generating") — it belongs on the package, not inside the generation
+  // prompt text a shaper produces, so it isn't threaded into ShapeInputs.
   const inputs: ShapeInputs = {
     label: cell.label,
     prompt: cell.prompt,
@@ -274,7 +275,6 @@ function packageCell(
     duration_ms: cell.duration_ms,
     aspect_ratio: aspect,
     ref_image_uri: ref.uri,
-    ref_note: ref.note,
     audio_cue_uri: audioCue,
   };
   return {

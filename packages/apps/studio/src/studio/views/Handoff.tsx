@@ -508,6 +508,31 @@ export function HandoffView() {
                             {entry.ref_image_uri ? fileNameOf(entry.ref_image_uri) : 'no reference image'}
                           </span>
                         </div>
+                        {entry.ref_note && (
+                          entry.ref_image_uri ? (
+                            // Resolved-but-local: a routine instruction (upload before
+                            // generating), not a problem — muted hint, not a warning.
+                            <span className="text-[9.5px] leading-relaxed text-fg-faint">
+                              {entry.ref_note}
+                            </span>
+                          ) : (
+                            // Unresolved ref (e.g. orphaned/deleted anchor asset): the
+                            // shot silently degrades to text-to-video — this is real
+                            // breakage, styled like Composition's silent-bed notice.
+                            <div
+                              role="status"
+                              className="flex items-start gap-1.5 rounded px-2 py-1.5 text-[9.5px] leading-relaxed"
+                              style={{
+                                background: 'var(--beat-accent-amber-soft)',
+                                border: '1px solid var(--beat-accent-amber-border)',
+                                color: 'var(--fg)',
+                              }}
+                            >
+                              <span aria-hidden="true" style={{ color: 'var(--beat-accent-amber)' }}>⚠</span>
+                              <span>{entry.ref_note}</span>
+                            </div>
+                          )
+                        )}
                         <div className="flex flex-col gap-1.5">
                           <SpecRow k="aspect" v={entry.aspect_ratio} />
                           <SpecRow k="duration" v={fmtSeconds(entry.duration_ms)} />

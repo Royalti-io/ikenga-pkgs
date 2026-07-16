@@ -108,8 +108,9 @@ export interface EngineCapability {
 // Google Flow, Veo, generic). Shape inferred from mcp/src/tools/export.ts +
 // sidecars/project/src/prompt-package.ts. NOTE the per-cell element keys `cellId`
 // (camelCase) — real-mcp passes the sidecar's `packages[]` through verbatim, so
-// this is the exact wire shape the views receive. The returned clip comes back
-// via render.ingest_external.
+// this is the exact wire shape the views receive, including the optional
+// `ref_note` the sidecar computes when a ref image is local or unresolvable.
+// The returned clip comes back via render.ingest_external.
 
 export type PromptPlatform = 'higgsfield' | 'flow' | 'veo' | 'generic';
 
@@ -119,6 +120,8 @@ export interface PromptPackageEntry {
   platform: PromptPlatform;
   prompt: string;
   ref_image_uri: string | null;
+  /** Portability note for the ref image (local file → upload to target; missing → none). */
+  ref_note?: string | null;
   aspect_ratio: AspectRatio;
   duration_ms: number;
   camera: {

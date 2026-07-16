@@ -561,9 +561,9 @@ export function createRealMcpClient(): McpClient {
       }
       // export.prompt_package (WF-1) — platform-shaped prompt bundle for an
       // API-less generator. projectId injected; cell_id → cellId. The sidecar's
-      // `packages[]` elements (cellId/prompt/ref_image_uri/aspect_ratio/
-      // duration_ms/camera) pass through verbatim — the UI PromptPackage type
-      // matches that wire shape.
+      // `packages[]` elements (cellId/prompt/ref_image_uri/ref_note/
+      // aspect_ratio/duration_ms/camera) pass through verbatim — the UI
+      // PromptPackage type matches that wire shape.
       case 'export.prompt_package': {
         const projectId = (args.project_id as string) ?? requireActive('export.prompt_package').projectId;
         const body = await raw('export.prompt_package', {
