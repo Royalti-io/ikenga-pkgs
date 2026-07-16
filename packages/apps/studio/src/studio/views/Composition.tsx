@@ -138,7 +138,12 @@ export function CompositionView() {
   const [musicPreset, setMusicPreset] = useState('upbeat');
   const [bedCheck, setBedCheck] = useState<BedCheck | null>(null);
 
-  const [rerenderState, setRerenderState] = useState<'idle' | 'running' | 'done'>('idle');
+  const [rerenderState, setRerenderState] = useState<'idle' | 'running' | 'done' | 'failed'>('idle');
+  // cell_uids whose render() ENQUEUE call itself rejected (not a render-job
+  // failure after a successful enqueue — those are already visible via the
+  // per-clip badge/glyph). Tracked separately from rerenderState so a single
+  // retryClip() failure can surface without stomping a concurrent bulk run.
+  const [failedEnqueueUids, setFailedEnqueueUids] = useState<string[]>([]);
   const [refreshing, setRefreshing] = useState(false);
 
   // Export state machine.
@@ -242,21 +247,27 @@ export function CompositionView() {
   };
 
   // ── Render / retry over MCP ──────────────────────────────────────────────
-  const rerenderAll = async () => {
+  // uidsOverride lets the "Retry failed" affordance re-enqueue just the
+  // cell_uids that failed last time, reusing the same enqueue/poll path.
+  const rerenderAll = async (uidsOverride?: string[]) => {
     if (rerenderState === 'running') return;
     const projectId = project?.project_id;
     if (!projectId) return;
+    const cellUids = uidsOverride ?? clips.map((c) => c.uid);
     setRerenderState('running');
     try {
       const client = await getMcpClient();
-      const cellUids = clips.map((c) => c.uid);
+      const failedUids: string[] = [];
       const recordIds = (
         await Promise.all(
           cellUids.map((uid) =>
             compositionApi
               .render(client, { project_id: projectId, cell_uid: uid })
               .then((r) => r.record_id)
-              .catch(() => null),
+              .catch(() => {
+                failedUids.push(uid);
+                return null;
+              }),
           ),
         )
       ).filter((r): r is string => Boolean(r));
@@ -264,10 +275,22 @@ export function CompositionView() {
       void refreshRenders();
       await Promise.all(recordIds.map((rid) => pollRenderUntilDone(client, rid)));
       void refreshRenders();
-      setRerenderState('done');
-      window.setTimeout(() => setRerenderState('idle'), 1600);
+      if (failedUids.length > 0) {
+        // A failed enqueue for cells not in this batch (e.g. a prior failed
+        // retry-failed run) shouldn't be silently dropped from the banner.
+        setFailedEnqueueUids((prev) => Array.from(new Set([...prev.filter((u) => !cellUids.includes(u)), ...failedUids])));
+        setRerenderState('failed');
+      } else {
+        setFailedEnqueueUids((prev) => prev.filter((u) => !cellUids.includes(u)));
+        setRerenderState('done');
+        window.setTimeout(() => setRerenderState('idle'), 1600);
+      }
     } catch (err) {
-      setRerenderState('idle');
+      // The whole batch threw (e.g. getMcpClient() itself failed) — every
+      // requested cell_uid is unaccounted for, not just the ones that made
+      // it into a per-cell .catch().
+      setFailedEnqueueUids((prev) => Array.from(new Set([...prev, ...cellUids])));
+      setRerenderState('failed');
       // eslint-disable-next-line no-console
       console.error('[studio] re-render all failed', err);
     }
@@ -280,9 +303,16 @@ export function CompositionView() {
       const client = await getMcpClient();
       setCellUid(uid);
       await compositionApi.render(client, { project_id: projectId, cell_uid: uid });
+      setFailedEnqueueUids((prev) => {
+        const next = prev.filter((u) => u !== uid);
+        if (next.length === 0) setRerenderState((s) => (s === 'failed' ? 'idle' : s));
+        return next;
+      });
       bumpActivePoll();
       void refreshRenders();
     } catch (err) {
+      setFailedEnqueueUids((prev) => (prev.includes(uid) ? prev : [...prev, uid]));
+      setRerenderState('failed');
       // eslint-disable-next-line no-console
       console.error('[studio] retry render failed', err);
     }
@@ -402,11 +432,17 @@ export function CompositionView() {
         type="button"
         className="btn btn-sm btn-ghost"
         aria-label="Re-render all cells"
-        onClick={rerenderAll}
+        onClick={() => void rerenderAll()}
         disabled={rerenderState === 'running'}
         aria-busy={rerenderState === 'running'}
       >
-        {rerenderState === 'running' ? 'Rendering…' : rerenderState === 'done' ? 'Rendered ✓' : '↻ Re-render all'}
+        {rerenderState === 'running'
+          ? 'Rendering…'
+          : rerenderState === 'done'
+            ? 'Rendered ✓'
+            : rerenderState === 'failed'
+              ? '⚠ Enqueue failed'
+              : '↻ Re-render all'}
       </button>
     </>
   );
@@ -480,6 +516,28 @@ export function CompositionView() {
             </span>
           </div>
         </header>
+
+        {/* Enqueue-failure banner: a render() call itself rejected (network,
+            sidecar down, etc.) before a record ever existed to badge — the
+            per-clip glyphs can't show this, so it needs its own surface. */}
+        {failedEnqueueUids.length > 0 && (
+          <div className="comp-notice" role="alert">
+            <span aria-hidden="true">⚠</span>
+            <span>
+              <b>{failedEnqueueUids.length} cell{failedEnqueueUids.length === 1 ? '' : 's'}</b> failed to
+              enqueue for render: {failedEnqueueUids.join(', ')}.
+            </span>
+            <button
+              type="button"
+              className="btn btn-sm btn-ghost"
+              aria-label="Retry failed enqueues"
+              onClick={() => void rerenderAll(failedEnqueueUids)}
+              disabled={rerenderState === 'running'}
+            >
+              ↺ Retry failed
+            </button>
+          </div>
+        )}
 
         {/* Engine sub-tabs */}
         <div className="engine-tabs-row">

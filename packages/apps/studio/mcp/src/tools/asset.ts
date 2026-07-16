@@ -3,7 +3,7 @@
  * RPCs (files under `<projectRoot>/assets/`).
  */
 
-import { SidecarClient } from '../sidecar-client.js';
+import { SidecarClient, EXTERNAL_CALL_TIMEOUT_MS } from '../sidecar-client.js';
 import { callSidecar } from './project.js';
 import type { ToolDef } from './types.js';
 
@@ -37,12 +37,19 @@ export function assetTools(sidecar: SidecarClient): ToolDef[] {
         required: ['projectId', 'source'],
         additionalProperties: false,
       },
+      // May download from a remote URL inside the RPC; a large file can exceed
+      // the 30s default.
       handler: (args) =>
-        callSidecar(sidecar, 'asset.import', {
-          projectId: args.projectId,
-          source: args.source,
-          kind: args.kind,
-        }),
+        callSidecar(
+          sidecar,
+          'asset.import',
+          {
+            projectId: args.projectId,
+            source: args.source,
+            kind: args.kind,
+          },
+          EXTERNAL_CALL_TIMEOUT_MS,
+        ),
     },
     {
       name: 'asset.resolve',

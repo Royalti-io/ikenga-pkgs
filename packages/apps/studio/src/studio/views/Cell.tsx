@@ -60,7 +60,7 @@ import {
   renderApi,
   exportApi,
 } from '../mcp-client';
-import { pollRenderUntilDone } from '../lib/render-poll';
+import { pollRenderUntilDone, POLL_FAILED } from '../lib/render-poll';
 import { recordByUid, fmtRelative, base64ToBlob, copyText, engineLabel } from './composition/format';
 import type { CellVideoAvailability } from './composition/CellVideo';
 import { DEFAULT_RESOLUTION } from '../mcp-types';
@@ -163,6 +163,93 @@ const savedAtMap = new Map<string, number>();
 // back to it, so the retry banner is never silently lost.
 const saveErrors = new Map<string, string>();
 const bufKey = (pid: string | null, uid: string) => `${pid ?? 'mock'}::${uid}`;
+
+// ─── localStorage draft mirror (survives the pane's OWN remount) ─────────
+//
+// The module-level Maps above are still per-mount: the shell remounts the
+// whole pkg iframe on every pane switch, which re-evaluates this module from
+// scratch and wipes them along with everything else in the destroyed JS
+// context. localStorage is same-origin-stable across that remount (srcdoc
+// inherits the parent origin), so it is the actual durable layer — the Maps
+// are just this mount's in-memory cache over it. Keyed by the same bufKey
+// string so `studio:draft:<projectId>::<cellUid>` is exactly the key the rest
+// of the file already reasons about. Only DIRTY content is ever written —
+// content matching the last-known disk baseline has nothing worth restoring
+// and is actively removed so a stale entry can't outlive its own draft.
+const DRAFT_STORAGE_PREFIX = 'studio:draft:';
+const draftStorageKey = (key: string) => `${DRAFT_STORAGE_PREFIX}${key}`;
+
+interface PersistedDraft { content: string; savedContent: string; ts: number; }
+
+function readPersistedDraft(key: string): PersistedDraft | null {
+  try {
+    const raw = localStorage.getItem(draftStorageKey(key));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PersistedDraft>;
+    if (typeof parsed.content !== 'string' || typeof parsed.savedContent !== 'string') return null;
+    return { content: parsed.content, savedContent: parsed.savedContent, ts: parsed.ts ?? 0 };
+  } catch {
+    // Disabled/quota-exceeded storage, or corrupt JSON from an older shape —
+    // either way there is nothing safe to restore, not a reason to throw.
+    return null;
+  }
+}
+
+function writePersistedDraft(key: string, content: string, baseline: string): void {
+  try {
+    if (content === baseline) { localStorage.removeItem(draftStorageKey(key)); return; }
+    localStorage.setItem(draftStorageKey(key), JSON.stringify({ content, savedContent: baseline, ts: Date.now() }));
+  } catch {
+    // Best-effort — the in-memory buffer still works for this mount.
+  }
+}
+
+function clearPersistedDraft(key: string): void {
+  try { localStorage.removeItem(draftStorageKey(key)); } catch { /* best-effort */ }
+}
+
+/** True if ANY open buffer this mount has touched differs from its saved
+ *  baseline — drives the beforeunload guard, independent of which cell (if
+ *  any) is on screen right now. */
+function anyDraftDirty(): boolean {
+  for (const [key, content] of editBuffers) {
+    if (content !== savedContent.get(key)) return true;
+  }
+  return false;
+}
+
+/** Immediate (non-debounced) flush of every buffer this mount knows about —
+ *  used on pagehide/visibilitychange, where a pending debounce timer would
+ *  simply never fire. */
+function flushAllDrafts(): void {
+  for (const [key, content] of editBuffers) {
+    const baseline = savedContent.get(key);
+    if (baseline === undefined) continue;
+    writePersistedDraft(key, content, baseline);
+  }
+}
+
+// Debounced per-key flush so every keystroke doesn't hit localStorage — only
+// module-scope (not component state) because editBuffers itself is.
+const draftFlushTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const DRAFT_FLUSH_DEBOUNCE_MS = 500;
+
+function scheduleDraftFlush(key: string): void {
+  const existing = draftFlushTimers.get(key);
+  if (existing) clearTimeout(existing);
+  draftFlushTimers.set(key, setTimeout(() => {
+    draftFlushTimers.delete(key);
+    const content = editBuffers.get(key);
+    const baseline = savedContent.get(key);
+    if (content === undefined || baseline === undefined) return;
+    writePersistedDraft(key, content, baseline);
+  }, DRAFT_FLUSH_DEBOUNCE_MS));
+}
+
+function cancelDraftFlush(key: string): void {
+  const t = draftFlushTimers.get(key);
+  if (t) { clearTimeout(t); draftFlushTimers.delete(key); }
+}
 
 // ─── rendered-cell preview (reuses the Wave-2 read_bytes → blob pattern) ──
 //
@@ -441,8 +528,12 @@ function useRenderLifecycle(
           },
         });
         if (abortRef.current.aborted) return;
-        if (rec?.status === 'done') { setState('done'); setProgress(1); }
-        else if (rec) setState('failed');
+        // POLL_FAILED means the status RPC itself kept failing (sidecar blip
+        // outlasting the poll's own retries) — a null/undefined here would
+        // otherwise match neither branch and leave renderState stuck at
+        // queued/running forever with a spinner and a disabled button.
+        if (rec !== POLL_FAILED && rec.status === 'done') { setState('done'); setProgress(1); }
+        else setState('failed');
       } catch (err) {
         // eslint-disable-next-line no-console
         console.error('[studio] cell render failed', err);
@@ -585,18 +676,27 @@ export function CellView() {
   const [contentState, setContentState] = useState<'idle' | 'loading' | 'ready' | 'unavailable'>('idle');
   const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving' | 'error'>('saved');
   const [saveError, setSaveError] = useState<string | null>(null);
+  // Which cell (if any) just had its buffer seeded from a localStorage draft
+  // instead of the freshly-read disk content — drives the "unsaved draft
+  // restored" notice. Cleared on every cell (re)load and on discard.
+  const [draftRestoredFor, setDraftRestoredFor] = useState<string | null>(null);
   const editorRef = useRef<CodeEditorHandle>(null);
   // Reads the cell that is open *now*, so an in-flight save can tell whether
   // the selection moved out from under it while its writes were awaiting.
   const cellUidRef = useRef(cellUid);
   cellUidRef.current = cellUid;
 
-  // Load the active cell's content — reuse a preserved buffer if present, else
-  // read the REAL content.html (real) / the mock fixture (standalone).
+  // Load the active cell's content — reuse a preserved buffer if present
+  // (same-mount cell revisit), else read the REAL content.html (real) / the
+  // mock fixture (standalone) and reconcile it against any dirty draft a
+  // PREVIOUS mount of this pane left in localStorage.
   useEffect(() => {
     if (!cellUid) { setContentState('idle'); return; }
+    setDraftRestoredFor(null);
     const key = bufKey(pid, cellUid);
     if (editBuffers.has(key)) {
+      // Already reconciled once this mount (the branch below ran already) —
+      // the persisted-draft check only needs to happen on first load per key.
       const buf = editBuffers.get(key)!;
       setValue(buf);
       setValueUid(cellUid);
@@ -609,14 +709,32 @@ export function CellView() {
     }
     let cancelled = false;
     setSaveError(null);
-    if (!hasRealCells) {
-      const html = getCellHtml(cellUid);
-      editBuffers.set(key, html);
-      savedContent.set(key, html);
-      setValue(html);
+
+    // freshHtml is always the true current disk/fixture baseline. A persisted
+    // draft whose content differs from it wins the buffer (an unsaved edit a
+    // prior mount could not flush anywhere but localStorage must never be
+    // silently dropped for the freshly-read content); one that matches it is
+    // stale and simply cleared.
+    const settle = (freshHtml: string) => {
+      if (cancelled) return;
+      const persisted = readPersistedDraft(key);
+      const initial = persisted && persisted.content !== freshHtml ? persisted.content : freshHtml;
+      if (persisted && persisted.content === freshHtml) clearPersistedDraft(key);
+      editBuffers.set(key, initial);
+      savedContent.set(key, freshHtml);
+      setValue(initial);
       setValueUid(cellUid);
       setContentState('ready');
-      setSaveState('saved');
+      if (persisted && persisted.content !== freshHtml) {
+        setSaveState('dirty');
+        setDraftRestoredFor(cellUid);
+      } else {
+        setSaveState('saved');
+      }
+    };
+
+    if (!hasRealCells) {
+      settle(getCellHtml(cellUid));
       return;
     }
     setContentState('loading');
@@ -625,13 +743,7 @@ export function CellView() {
         const client = await getMcpClient();
         const res = await storyboardApi.read_cell_content(client, cellUid);
         if (cancelled) return;
-        const html = res.html ?? '';
-        editBuffers.set(key, html);
-        savedContent.set(key, html);
-        setValue(html);
-        setValueUid(cellUid);
-        setContentState('ready');
-        setSaveState('saved');
+        settle(res.html ?? '');
       } catch (err) {
         if (cancelled) return;
         setContentState('unavailable');
@@ -649,6 +761,25 @@ export function CellView() {
     saveErrors.delete(key);
     setSaveState(next !== savedContent.get(key) ? 'dirty' : 'saved');
     setSaveError((e) => (e ? null : e));
+    scheduleDraftFlush(key);
+  }, [cellUid, pid]);
+
+  // Discard the restored draft: revert the buffer to the disk baseline
+  // recorded at settle() above, drop the persisted entry, and dismiss the
+  // notice. Editing instead (without discarding) just dismisses the notice —
+  // the restored content IS the buffer at that point, same as any other edit.
+  const discardRestoredDraft = useCallback(() => {
+    if (!cellUid) return;
+    const key = bufKey(pid, cellUid);
+    const baseline = savedContent.get(key) ?? '';
+    cancelDraftFlush(key);
+    clearPersistedDraft(key);
+    editBuffers.set(key, baseline);
+    saveErrors.delete(key);
+    setValue(baseline);
+    setSaveState('saved');
+    setSaveError(null);
+    setDraftRestoredFor(null);
   }, [cellUid, pid]);
 
   const doSave = useCallback(async () => {
@@ -675,6 +806,15 @@ export function CellView() {
       // trailing unconditional 'saved' would clobber that dirtiness and the
       // newer keystrokes would read as persisted when they aren't.
       const current = editBuffers.get(key) ?? html;
+      // A pending debounced flush was scheduled against the OLD baseline —
+      // cancel it so it can't fire on stale data, then re-derive the draft
+      // against the NEW baseline (`html`, now the disk truth): nothing left
+      // to persist if no keystrokes landed during the await, otherwise the
+      // keystrokes that did land are still an unsaved draft and must survive
+      // a remount same as any other dirty buffer.
+      cancelDraftFlush(key);
+      if (current === html) clearPersistedDraft(key);
+      else writePersistedDraft(key, current, html);
       // …and the SELECTION may have moved too. saveState belongs to whichever
       // cell is open now, so only the save for that cell may touch it; the
       // per-key maps above already carry the outcome for the cell we left.
@@ -700,6 +840,33 @@ export function CellView() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [doSave]);
+
+  // Crash-safe drafts: flush every dirty buffer this mount has touched (not
+  // just the current cell — a cell switched away from earlier this mount can
+  // still be dirty in the module Maps) to localStorage whenever the pane may
+  // be about to disappear, and warn on an actual unload. A debounced flush
+  // alone isn't enough here — the pane can vanish (shell remount, tab close)
+  // between debounce ticks, which is exactly the crash the draft mirror
+  // exists for. Mount-once: iterates module state directly, no cellUid dep.
+  useEffect(() => {
+    const flush = () => flushAllDrafts();
+    const onVisibility = () => { if (document.visibilityState === 'hidden') flush(); };
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      flush();
+      if (anyDraftDirty()) {
+        e.preventDefault();
+        e.returnValue = '';
+      }
+    };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      window.removeEventListener('pagehide', flush);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('beforeunload', onBeforeUnload);
+    };
+  }, []);
 
   const dirty = saveState === 'dirty' || saveState === 'error';
   const canSave = dirty && contentState === 'ready';
@@ -1378,6 +1545,39 @@ export function CellView() {
               }}
             >
               Couldn't update approval — {approveError}
+            </div>
+          )}
+
+          {/* unsaved-draft-restored notice (crash-safe drafts — a dirty edit a
+              prior mount could only reach localStorage, not disk) */}
+          {draftRestoredFor === cellUid && (
+            <div
+              role="status"
+              className="flex items-center gap-2 border-b px-3 py-1.5 text-[11px]"
+              style={{
+                background: 'var(--info-soft)',
+                borderColor: 'color-mix(in oklab, var(--info) 40%, var(--border))',
+                color: 'color-mix(in oklab, var(--info) 55%, var(--fg))',
+              }}
+            >
+              <span className="flex-1">
+                Unsaved draft restored from an earlier session. Save to keep it, or discard to go back to what's on disk.
+              </span>
+              <button
+                type="button"
+                onClick={discardRestoredDraft}
+                className="underline"
+                style={{ color: 'var(--info)' }}
+              >
+                Discard
+              </button>
+              <button
+                type="button"
+                onClick={() => setDraftRestoredFor(null)}
+                className="text-fg-faint hover:text-fg"
+              >
+                Dismiss
+              </button>
             </div>
           )}
 

@@ -14,6 +14,27 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve as resolvePath } from 'node:path';
 
+/**
+ * Generous timeout for tool calls that synchronously await an external
+ * dependency inside the RPC (fal.ai image generation, large asset downloads).
+ * The 30s default is too tight for a cold fal round-trip or a big file fetch;
+ * these calls mutate on-disk state, so a premature timeout would surface a
+ * false failure while the mutation completes anyway.
+ */
+export const EXTERNAL_CALL_TIMEOUT_MS = 600_000;
+
+/**
+ * After a respawn, the child must stay alive this long before it counts as
+ * recovered and we reset the retry counter. Node populates a ChildProcess
+ * synchronously even when the binary dies instantly, so a crash-looping child
+ * would otherwise reset the counter forever and never reach the cap.
+ */
+const RESPAWN_GRACE_MS = 10_000;
+
+/** How long a timed-out call's id/method is remembered so a late response can
+ * be named in the drop log. Bounds the tracking map. */
+const LATE_RESPONSE_TTL_MS = 300_000;
+
 // ─────────────────────────────────────────────────────────────────────────
 // JSON-RPC framing types (mirror sidecars/project/src/rpc.ts)
 // ─────────────────────────────────────────────────────────────────────────
@@ -99,11 +120,15 @@ export class SidecarClient {
   private nextId = 1;
   private pending = new Map<
     number,
-    { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout }
+    { resolve: (v: unknown) => void; reject: (e: Error) => void; timer: NodeJS.Timeout; method: string }
   >();
+  /** ids of calls that already timed out, kept briefly so a late response can
+   * be named (not just dropped) in the log. */
+  private timedOut = new Map<number, { method: string; at: number }>();
   private listeners = new Set<EventListener>();
   private respawnAttempts = 0;
   private respawning = false;
+  private respawnGraceTimer: NodeJS.Timeout | null = null;
   private readonly sidecarPath: string;
   private readonly env: NodeJS.ProcessEnv;
   private readonly maxRespawnAttempts: number;
@@ -145,12 +170,14 @@ export class SidecarClient {
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        this.recordTimedOut(id, method);
         reject(new Error(`sidecar call '${method}' timed out after ${timeoutMs}ms`));
       }, timeoutMs);
       this.pending.set(id, {
         resolve: (v) => resolve(v as T),
         reject,
         timer,
+        method,
       });
       try {
         child.stdin!.write(JSON.stringify(req) + '\n');
@@ -187,6 +214,11 @@ export class SidecarClient {
   // ─── internals ─────────────────────────────────────────────────────────
 
   private spawnChild(): void {
+    // Single spawn lock shared by start(), call(), and attemptRespawn(): never
+    // overwrite a live child (that would orphan its process + leak its readline
+    // listener). A backoff-sleeping respawn and a concurrent call() both funnel
+    // here; whoever spawns first sets this.child, the other no-ops.
+    if (this.child) return;
     if (!existsSync(this.sidecarPath)) {
       this.deadReason = `sidecar binary not found at ${this.sidecarPath}`;
       process.stderr.write(`[studio-mcp] ${this.deadReason}\n`);
@@ -238,9 +270,15 @@ export class SidecarClient {
       this.child = null;
       this.rl?.close();
       this.rl = null;
+      // Child exited before proving it stayed up: cancel the pending
+      // recovery-reset so this counts toward the retry cap.
+      if (this.respawnGraceTimer) {
+        clearTimeout(this.respawnGraceTimer);
+        this.respawnGraceTimer = null;
+      }
 
       if (this.shuttingDown) return;
-      void this.attemptRespawn();
+      this.attemptRespawn();
     });
   }
 
@@ -259,8 +297,26 @@ export class SidecarClient {
     // Response.
     const resp = msg as JsonRpcResponse;
     if (resp.id == null || typeof resp.id !== 'number') return;
+    // A real response proves a respawned child is up → recover early (before
+    // the grace timer would).
+    if (this.respawnAttempts > 0) this.markRecovered();
     const slot = this.pending.get(resp.id);
-    if (!slot) return;
+    if (!slot) {
+      // No pending slot: the call already timed out (response is late) or the
+      // id is unknown. Log it — a silently-dropped late response is exactly
+      // what makes false-failure / duplicate-mutation bugs invisible.
+      const late = this.timedOut.get(resp.id);
+      if (late) {
+        this.timedOut.delete(resp.id);
+        process.stderr.write(
+          `[studio-mcp] dropping late sidecar response id=${resp.id} method='${late.method}' ` +
+            `(call already timed out — its mutation may have completed on disk)\n`,
+        );
+      } else {
+        process.stderr.write(`[studio-mcp] dropping sidecar response for unknown id=${resp.id}\n`);
+      }
+      return;
+    }
     this.pending.delete(resp.id);
     clearTimeout(slot.timer);
     if (resp.error) {
@@ -270,30 +326,64 @@ export class SidecarClient {
     }
   }
 
-  private async attemptRespawn(): Promise<void> {
-    if (this.respawning) return;
-    this.respawning = true;
-    try {
-      while (this.respawnAttempts < this.maxRespawnAttempts) {
-        this.respawnAttempts++;
-        const backoff = Math.min(2000 * 2 ** (this.respawnAttempts - 1), 8000);
-        process.stderr.write(
-          `[studio-mcp] sidecar respawn attempt ${this.respawnAttempts}/${this.maxRespawnAttempts} in ${backoff}ms\n`,
-        );
-        await new Promise((r) => setTimeout(r, backoff));
-        if (this.shuttingDown) return;
-        this.spawnChild();
-        if (this.child) {
-          // Spawned. Reset counter on first successful tool call (see resetRespawnCounter).
-          // For now, consider any successful spawn a recovery.
-          this.respawnAttempts = 0;
-          return;
-        }
-      }
+  /**
+   * Single respawn attempt. Re-invoked by the child `exit` handler, so a chain
+   * of early-exiting children walks the retry counter up to the cap. The
+   * counter is reset only once a child *proves* it stayed up — via a real RPC
+   * response (`markRecovered`) or by surviving the grace window
+   * (`armRespawnGraceTimer`) — NOT the instant `spawnChild()` returns truthy,
+   * which a crash-looping binary always does.
+   */
+  private attemptRespawn(): void {
+    if (this.respawning || this.shuttingDown) return;
+    if (this.respawnAttempts >= this.maxRespawnAttempts) {
       this.deadReason = `sidecar respawn gave up after ${this.maxRespawnAttempts} attempts`;
       process.stderr.write(`[studio-mcp] ${this.deadReason}\n`);
-    } finally {
-      this.respawning = false;
+      return;
     }
+    this.respawning = true;
+    this.respawnAttempts++;
+    const backoff = Math.min(2000 * 2 ** (this.respawnAttempts - 1), 8000);
+    process.stderr.write(
+      `[studio-mcp] sidecar respawn attempt ${this.respawnAttempts}/${this.maxRespawnAttempts} in ${backoff}ms\n`,
+    );
+    setTimeout(() => {
+      this.respawning = false;
+      if (this.shuttingDown) return;
+      this.spawnChild();
+      // If the child failed to spawn (e.g. binary missing → deadReason set),
+      // stop; a live child arms the grace timer and awaits proof of life.
+      if (this.child) this.armRespawnGraceTimer();
+    }, backoff);
+  }
+
+  /** Counter reset once a respawned child survives the grace window. */
+  private armRespawnGraceTimer(): void {
+    if (this.respawnGraceTimer) clearTimeout(this.respawnGraceTimer);
+    const spawned = this.child;
+    this.respawnGraceTimer = setTimeout(() => {
+      this.respawnGraceTimer = null;
+      if (this.child && this.child === spawned) this.markRecovered();
+    }, RESPAWN_GRACE_MS);
+  }
+
+  /** The current child is confirmed up: clear the retry state. */
+  private markRecovered(): void {
+    this.respawnAttempts = 0;
+    this.deadReason = null;
+    if (this.respawnGraceTimer) {
+      clearTimeout(this.respawnGraceTimer);
+      this.respawnGraceTimer = null;
+    }
+  }
+
+  /** Remember a timed-out call's id → method briefly so a late response can be
+   * named in the drop log; prune stale entries to bound the map. */
+  private recordTimedOut(id: number, method: string): void {
+    const now = Date.now();
+    for (const [k, v] of this.timedOut) {
+      if (now - v.at > LATE_RESPONSE_TTL_MS) this.timedOut.delete(k);
+    }
+    this.timedOut.set(id, { method, at: now });
   }
 }

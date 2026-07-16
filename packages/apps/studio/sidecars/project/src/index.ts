@@ -244,7 +244,17 @@ function cellDirOf(projectRoot: string, cell: Cell): string {
   return dirname(abs);
 }
 
-function buildHandlers(db: Db): RpcHandlers {
+// buildHandlers returns the RPC handler set PLUS the two long-lived runners.
+// The runners are locals here but `main()` needs to reach them on shutdown to
+// abort in-flight children (otherwise a killed sidecar orphans the detached
+// render/export process trees).
+interface BuiltHandlers {
+  handlers: RpcHandlers;
+  runner: RenderRunner;
+  exporter: ExportRunner;
+}
+
+function buildHandlers(db: Db): BuiltHandlers {
   // ProjectLookup over the in-memory open-project map for the render runner.
   const lookup: ProjectLookup = {
     projectRoot: (projectId) => open.get(projectId)?.path,
@@ -573,6 +583,13 @@ function buildHandlers(db: Db): RpcHandlers {
         `[studio-sidecar] hydrate project=${projectId} cells=${hyd.count} elapsedMs=${hyd.elapsedMs}\n`,
       );
       recordProjectMeta(db, open_);
+      // Resume any renders/exports orphaned by a prior crash now that this
+      // project's root resolves again. `recover()` left them `queued` and
+      // deferred the drain to avoid failing them at boot; kicking here is the
+      // per-project resume. Both kicks are idempotent and skip still-closed
+      // projects, so this only picks up work for the project just opened.
+      runner.kick();
+      exporter.kick();
       return { ok: true, projectId, project };
     },
 
@@ -619,7 +636,7 @@ function buildHandlers(db: Db): RpcHandlers {
       return { ok: true, project: o.project, openCells, queueDepth: depth };
     },
   };
-  return handlers;
+  return { handlers, runner, exporter };
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -678,7 +695,7 @@ async function main(): Promise<number> {
   }
 
   const db = await openDb();
-  const handlers = buildHandlers(db);
+  const { handlers, runner, exporter } = buildHandlers(db);
 
   // Boot banner — stderr only.
   const { dbPath } = describeDb();
@@ -690,22 +707,27 @@ async function main(): Promise<number> {
 
   const loop = startRpcLoop(handlers);
 
-  // Clean shutdown on stdin EOF.
-  process.stdin.on('end', async () => {
-    process.stderr.write('[studio-sidecar] stdin closed, shutting down\n');
-    for (const o of open.values()) {
-      try {
-        await o.watcher.close();
-      } catch {
-        // ignore
-      }
+  // Shared clean-shutdown path for stdin-EOF and SIGINT/SIGTERM. Aborting the
+  // in-flight render/export is the whole point: both spawn `detached`
+  // children, so without an abort the killed sidecar orphans the
+  // npx → chrome → ffmpeg (or bare ffmpeg) groups. Each runner's `shutdown`
+  // aborts every controller (→ killTree on the group) and waits, bounded, for
+  // the workers to settle before we exit.
+  let shuttingDown = false;
+  const shutdown = async (reason: string): Promise<void> => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    process.stderr.write(`[studio-sidecar] ${reason}, shutting down\n`);
+    try {
+      await runner.shutdown(2000);
+    } catch {
+      // ignore — never block exit on an abort hiccup
     }
-    loop.close();
-    process.exit(0);
-  });
-
-  const onSignal = async (sig: string) => {
-    process.stderr.write(`[studio-sidecar] received ${sig}, shutting down\n`);
+    try {
+      await exporter.shutdown(2000);
+    } catch {
+      // ignore
+    }
     for (const o of open.values()) {
       try {
         await o.watcher.close();
@@ -716,8 +738,10 @@ async function main(): Promise<number> {
     loop.close();
     process.exit(0);
   };
-  process.on('SIGINT', () => void onSignal('SIGINT'));
-  process.on('SIGTERM', () => void onSignal('SIGTERM'));
+
+  process.stdin.on('end', () => void shutdown('stdin closed'));
+  process.on('SIGINT', () => void shutdown('received SIGINT'));
+  process.on('SIGTERM', () => void shutdown('received SIGTERM'));
 
   // The loop owns the event-loop tick now.
   return new Promise<number>(() => {});

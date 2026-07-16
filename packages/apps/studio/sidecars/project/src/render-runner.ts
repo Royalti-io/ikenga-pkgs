@@ -36,6 +36,7 @@ import {
   markDone,
   markStarted,
   mimeForPath,
+  reapOrphanRenderPids,
 } from './queue.js';
 import type { RenderQueueRow } from './db.js';
 import {
@@ -109,8 +110,20 @@ export class RenderRunner {
     this.writer = deps.writer;
   }
 
-  /** Recover from a restart: any `running` rows are stale — re-queue them. */
+  /**
+   * Recover from a restart. Any `running` rows are stale — but a crash may have
+   * left the previous sidecar's detached writer group still running, so we
+   * SIGKILL those orphans FIRST (via the persisted PID registry) to guarantee
+   * the requeued render can't race a survivor over the same output file. We
+   * then flip `running → queued` but do NOT drain here: at boot no project is
+   * open, so draining would resolve every row's projectRoot to `undefined`.
+   * The requeued rows stay `queued` and resume when their owning project
+   * reopens (the `open` handler kicks the runner). `nextQueued` already skips
+   * closed-project rows, so the kick below is a safe no-op at boot and only
+   * matters if a project happened to be open already.
+   */
   recover(): void {
+    reapOrphanRenderPids();
     const rows = listQueue(this.db);
     for (const row of rows) {
       if (row.status === 'running') {
@@ -120,6 +133,20 @@ export class RenderRunner {
       }
     }
     this.kick();
+  }
+
+  /**
+   * Shutdown hook: abort every in-flight render — killing the detached HF
+   * process groups via `ctx.signal` → `killTree` — and wait, bounded by
+   * `timeoutMs`, for the workers to settle before the process exits. Without
+   * this a killed sidecar orphans the npx → chrome → ffmpeg trees.
+   */
+  async shutdown(timeoutMs = 2000): Promise<void> {
+    for (const ctrl of this.controllers.values()) ctrl.abort();
+    const deadline = Date.now() + timeoutMs;
+    while (this.controllers.size > 0 && Date.now() < deadline) {
+      await new Promise<void>((r) => setTimeout(r, 50));
+    }
   }
 
   /**
@@ -394,18 +421,27 @@ export class RenderRunner {
     // Defer to a microtask/tick so enqueue returns before work starts.
     void this.drain().finally(() => {
       this.draining = false;
-      // If something was enqueued during the last job, re-check.
-      const pending = this.db
-        .prepare(`SELECT COUNT(*) AS n FROM render_queue WHERE status = 'queued'`)
-        .get() as { n: number };
-      if ((pending?.n ?? 0) > 0) this.kick();
+      // Re-arm only if a RUNNABLE (open-project) row remains. A raw
+      // `status = 'queued'` count would spin forever here: rows for closed
+      // projects stay queued by design (they resume on reopen), so counting
+      // them would re-kick a drain that immediately finds nothing to run.
+      if (this.nextQueued()) this.kick();
     });
   }
 
+  /**
+   * Next queued row whose owning project is currently open. Rows for closed
+   * projects are intentionally skipped (left `queued`) rather than drained and
+   * failed — they resume when the project reopens (see `recover`).
+   */
   private nextQueued(): RenderQueueRow | undefined {
-    return this.db
-      .prepare(`SELECT * FROM render_queue WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1`)
-      .get() as RenderQueueRow | undefined;
+    const rows = this.db
+      .prepare(`SELECT * FROM render_queue WHERE status = 'queued' ORDER BY created_at ASC`)
+      .all() as RenderQueueRow[];
+    for (const row of rows) {
+      if (this.lookup.projectRoot(row.project_id)) return row;
+    }
+    return undefined;
   }
 
   private async drain(): Promise<void> {
@@ -580,6 +616,10 @@ function extractPoster(outputPath: string): Promise<void> {
       ['-y', '-ss', '0.5', '-i', outputPath, '-frames:v', '1', posterPath],
       { stdio: ['ignore', 'pipe', 'pipe'] },
     );
+    // Drain both pipes — an unread stdout/stderr fills its ~64KB OS buffer on a
+    // chatty ffmpeg and blocks the child forever (silent zombie).
+    child.stdout?.on('data', () => {});
+    child.stderr?.on('data', () => {});
     child.on('error', () => resolve());
     child.on('close', () => resolve());
   });

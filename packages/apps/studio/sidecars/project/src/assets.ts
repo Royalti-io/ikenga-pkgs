@@ -21,15 +21,25 @@
 
 import {
   copyFileSync,
+  createWriteStream,
   existsSync,
   mkdirSync,
   readdirSync,
   renameSync,
   statSync,
-  writeFileSync,
+  unlinkSync,
 } from 'node:fs';
 import { basename, extname, isAbsolute, join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { Readable, Transform } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+
+// A stalled/slow remote asset shouldn't hang import indefinitely.
+const IMPORT_TIMEOUT_MS = 5 * 60 * 1000;
+// Bound remote asset imports so a huge/misbehaving URL can't exhaust disk —
+// image/audio/font assets are comfortably under this; larger video assets
+// should go through the render pipeline's own output path, not asset.import.
+const IMPORT_MAX_BYTES = 500 * 1024 * 1024;
 
 const KIND_SUBDIR: Record<string, string> = {
   image: 'images',
@@ -62,6 +72,24 @@ const MIME_BY_EXT: Record<string, string> = {
 
 function guessMime(p: string): string | undefined {
   return MIME_BY_EXT[extname(p).toLowerCase()];
+}
+
+/** Marker so the cap violation is distinguishable from an unrelated stream error. */
+const CAP_EXCEEDED_PREFIX = 'asset exceeds max import size';
+
+/** Transform that aborts the pipeline once more than `maxBytes` has flowed through it. */
+function sizeCapStream(maxBytes: number): Transform {
+  let seen = 0;
+  return new Transform({
+    transform(chunk: Buffer, _enc, cb) {
+      seen += chunk.length;
+      if (seen > maxBytes) {
+        cb(new Error(`${CAP_EXCEEDED_PREFIX} (${maxBytes} bytes)`));
+        return;
+      }
+      cb(null, chunk);
+    },
+  });
 }
 
 function assetsRoot(projectRoot: string): string {
@@ -157,12 +185,42 @@ export async function importAsset(
 
   try {
     if (isUrl) {
-      const resp = await fetch(source);
+      const resp = await fetch(source, { signal: AbortSignal.timeout(IMPORT_TIMEOUT_MS) });
       if (!resp.ok) {
         return { result: { ok: false, error: 'fetch-failed', message: `HTTP ${resp.status} for ${source}` } };
       }
-      const buf = Buffer.from(await resp.arrayBuffer());
-      writeFileSync(tmp, buf);
+      const declaredLength = Number(resp.headers.get('content-length'));
+      if (Number.isFinite(declaredLength) && declaredLength > IMPORT_MAX_BYTES) {
+        return {
+          result: {
+            ok: false,
+            error: 'asset-too-large',
+            message: `declared size ${declaredLength} exceeds ${IMPORT_MAX_BYTES}-byte import cap for ${source}`,
+          },
+        };
+      }
+      if (!resp.body) {
+        return { result: { ok: false, error: 'fetch-failed', message: `empty response body for ${source}` } };
+      }
+      try {
+        // Stream to disk (no whole-file buffering); sizeCapStream enforces the
+        // cap even when content-length is absent or understated.
+        await pipeline(
+          Readable.fromWeb(resp.body as never),
+          sizeCapStream(IMPORT_MAX_BYTES),
+          createWriteStream(tmp),
+        );
+      } catch (e) {
+        try {
+          unlinkSync(tmp);
+        } catch {
+          // best-effort cleanup of a partial download
+        }
+        if ((e as Error).message?.startsWith(CAP_EXCEEDED_PREFIX)) {
+          return { result: { ok: false, error: 'asset-too-large', message: (e as Error).message } };
+        }
+        throw e;
+      }
     } else {
       const absSrc = isAbsolute(source) ? source : resolve(projectRoot, source);
       copyFileSync(absSrc, tmp);

@@ -21,6 +21,8 @@ import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 
 import { publishStudioState, type StudioPublishedState } from './bridge';
+import { loadLastProject } from './lib/project-persistence';
+import { useProjectStore } from './project-store';
 
 // ─── Public shape ────────────────────────────────────────────────────────
 
@@ -60,6 +62,76 @@ const INITIAL: SharedStoreState = {
   engineMode: 'hf',
 };
 
+// ─── Cursor persistence (localStorage, keyed by project id) ──────────────
+//
+// review §5.3 "Persist + restore selection": cellUid/playheadMs/hoverBeat/
+// engineMode live only in this destroyed-on-remount JS context today, so a
+// pane switch or crash silently drops the user's place. Mirrored to
+// localStorage per project id (`com.ikenga.studio:cursor:<id>`) and debounced
+// so continuous playhead scrubbing doesn't hammer the write. Store creation
+// happens before any project is open, so the ONLY project id available at
+// that point is the last-opened one persisted by lib/project-persistence.ts
+// (the same key the Launcher's auto-reopen reads) — hydration below reuses
+// that key rather than inventing a second "current project" concept, and
+// only ever applies a persisted blob keyed to that exact id, which is what
+// keeps a stale/foreign project's cursor from leaking into a fresh open.
+
+const CURSOR_KEY_PREFIX = 'com.ikenga.studio:cursor:';
+const CURSOR_SAVE_DEBOUNCE_MS = 500;
+
+function cursorStorage(): Storage | null {
+  try {
+    const s = globalThis.localStorage;
+    if (!s) return null;
+    const probe = '__studio_cursor_probe__';
+    s.setItem(probe, '1');
+    s.removeItem(probe);
+    return s;
+  } catch {
+    return null;
+  }
+}
+
+function loadCursor(projectId: string): SharedStoreState | null {
+  const s = cursorStorage();
+  if (!s) return null;
+  try {
+    const raw = s.getItem(CURSOR_KEY_PREFIX + projectId);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<StudioPublishedState>;
+    return {
+      cellUid:    typeof parsed.cellUid === 'string' ? parsed.cellUid : null,
+      playheadMs: typeof parsed.playheadMs === 'number' ? parsed.playheadMs : 0,
+      hoverBeat:  typeof parsed.hoverBeat === 'string' ? parsed.hoverBeat : null,
+      engineMode: parsed.engineMode === 'remotion' ? 'remotion' : 'hf',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveCursor(projectId: string, cursor: StudioPublishedState): void {
+  const s = cursorStorage();
+  if (!s) return;
+  try {
+    s.setItem(CURSOR_KEY_PREFIX + projectId, JSON.stringify(cursor));
+  } catch {
+    // quota / opaque origin — degrade to no-persistence, same as
+    // lib/project-persistence.ts.
+  }
+}
+
+/** Resolve the store's initial values: defaults unless the last-opened
+ *  project (the one the Launcher will try to auto-reopen) has a persisted
+ *  cursor on file. Guards the stale-project case implicitly — the lookup is
+ *  keyed by that exact project id, so a different project's leftover cursor
+ *  is never a candidate. */
+function hydrateInitial(): SharedStoreState {
+  const last = loadLastProject();
+  if (!last?.project_id) return INITIAL;
+  return loadCursor(last.project_id) ?? INITIAL;
+}
+
 // ─── Side-effect: publish on every change ────────────────────────────────
 //
 // Done as middleware on top of subscribeWithSelector so the publish fires
@@ -82,7 +154,7 @@ function snapshot(state: SharedStoreState): StudioPublishedState {
 
 export const useSharedStore = create<SharedStore>()(
   subscribeWithSelector((set) => ({
-    ...INITIAL,
+    ...hydrateInitial(),
 
     setCellUid: (uid) => set({ cellUid: uid }),
     setPlayheadMs: (ms) => set({ playheadMs: ms }),
@@ -120,6 +192,63 @@ useSharedStore.subscribe(
 // <pane>` returns a defined value even before the user has interacted.
 // Standalone-dev (no parent) makes this a no-op (see bridge.postIyke).
 publishStudioState(snapshot(useSharedStore.getState()));
+
+// Debounced cursor persistence, keyed by the CURRENTLY open project (not the
+// last-opened one hydrateInitial() reads — that distinction matters mid-
+// session: once a project is open, its own id is authoritative). No project
+// open means nothing to key the write to, so it's a no-op until one is.
+let _cursorSaveTimer: ReturnType<typeof setTimeout> | null = null;
+let _pendingCursorSave: { projectId: string; cursor: StudioPublishedState } | null = null;
+
+function flushCursorSave(): void {
+  if (_cursorSaveTimer) {
+    clearTimeout(_cursorSaveTimer);
+    _cursorSaveTimer = null;
+  }
+  if (_pendingCursorSave) {
+    saveCursor(_pendingCursorSave.projectId, _pendingCursorSave.cursor);
+    _pendingCursorSave = null;
+  }
+}
+
+useSharedStore.subscribe(
+  (state) => snapshot(state),
+  (next) => {
+    const projectId = useProjectStore.getState().project?.project_id;
+    if (!projectId) return;
+    _pendingCursorSave = { projectId, cursor: next };
+    if (_cursorSaveTimer) clearTimeout(_cursorSaveTimer);
+    _cursorSaveTimer = setTimeout(() => {
+      _cursorSaveTimer = null;
+      flushCursorSave();
+    }, CURSOR_SAVE_DEBOUNCE_MS);
+  },
+  { equalityFn: (a, b) =>
+      a.cellUid    === b.cellUid &&
+      a.playheadMs === b.playheadMs &&
+      a.hoverBeat  === b.hoverBeat &&
+      a.engineMode === b.engineMode,
+  },
+);
+
+// A project switch can land well inside the debounce window — flush the
+// OUTGOING project's pending cursor first rather than losing it or (worse)
+// writing it under the incoming project's id. useProjectStore has no
+// subscribeWithSelector middleware, so this takes the plain full-state form
+// rather than the (selector, listener) overload used above.
+useProjectStore.subscribe((state, prevState) => {
+  if (
+    prevState.project?.project_id
+    && prevState.project.project_id !== state.project?.project_id
+  ) flushCursorSave();
+});
+
+// Best-effort crash/close safety net; debounce alone would drop the last
+// ~500ms of cursor movement on a hard close.
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', flushCursorSave);
+  window.addEventListener('beforeunload', flushCursorSave);
+}
 
 // ─── Convenience selectors ───────────────────────────────────────────────
 //

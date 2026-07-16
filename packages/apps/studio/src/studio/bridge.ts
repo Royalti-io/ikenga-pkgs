@@ -180,6 +180,18 @@ export function getHostContext(): StudioHostContext | undefined {
 // same client. In standalone mode the getter throws — pkgs that need a
 // real backend should hand-author a dev token via env (the launcher will
 // surface that path in commit 11).
+//
+// As of 2026-07-16 no view under src/studio calls this (grep for
+// `getSupabase(` turns up only this definition), and manifest.json
+// deliberately carries no `capabilities.supabase` / `permissions
+// ["supabase.tables"]` block — the shell has nothing to thread into
+// hostContext.supabase, so this would throw for every real caller today.
+// Do NOT add the capability speculatively for dead code (that would make
+// the shell resolve + vault-expose Supabase keys nobody reads). The first
+// view that actually needs Supabase must add capabilities.supabase (with
+// the specific tables it touches) to manifest.json in the same change
+// that adds its call site — the error below exists to make that ordering
+// unmissable rather than fail silently.
 
 let _supabasePromise: Promise<SupabaseClient> | null = null;
 
@@ -195,8 +207,11 @@ export function getSupabase(): Promise<SupabaseClient> {
       const sb = conn.hostContext?.supabase;
       if (!sb) {
         throw new Error(
-          '[studio] hostContext.supabase missing — declare `capabilities.supabase` in '
-          + 'manifest.json (the WP-08 manifest authoring step) for this pkg.',
+          '[studio] hostContext.supabase missing — this pkg\'s manifest.json has no '
+          + '`capabilities.supabase` block, so the shell never resolved or threaded '
+          + 'Supabase config. Add `capabilities.supabase` plus the specific '
+          + '`permissions["supabase.tables"]` this call touches to manifest.json '
+          + 'BEFORE calling getSupabase() from a real view.',
         );
       }
       return createClient(sb.url, sb.anonKey, {
@@ -358,9 +373,62 @@ export function publishState(key: string, value: unknown): void {
   postIyke({ __iyke: true, kind: 'state', payload: { key, value } });
 }
 
+// ─── Playhead publish throttle ────────────────────────────────────────────
+//
+// `playheadMs` advances once per rendered frame during playback (lib/
+// player.ts's rAF loop, ~30/s) and every shared-state setter publishes the
+// FULL snapshot — so an unthrottled publish here fires ~30 postMessages/sec
+// at the shell for the whole duration of playback even though nothing but
+// the scrub position moved (review §2 "Cross-window postMessage flood").
+// Trailing-edge coalesce: a change that touches ONLY playheadMs is bucketed
+// to ~8Hz; a change that also touches cellUid/hoverBeat/engineMode (rare,
+// user-driven edges — selection, engine toggle) goes out immediately and
+// flushes/cancels any pending playhead-only tick first, so the shell never
+// sees an out-of-order snapshot (a stale playhead landing after a newer
+// full snapshot). The in-app store itself is untouched — this only throttles
+// the outbound iyke publish.
+
+const PLAYHEAD_THROTTLE_MS = 125; // ~8Hz
+
+let _lastPublished: StudioPublishedState | null = null;
+let _throttleTimer: ReturnType<typeof setTimeout> | null = null;
+let _pendingSnapshot: StudioPublishedState | null = null;
+
+function onlyPlayheadChanged(next: StudioPublishedState, prev: StudioPublishedState | null): boolean {
+  if (!prev) return false;
+  return (
+    next.cellUid === prev.cellUid
+    && next.hoverBeat === prev.hoverBeat
+    && next.engineMode === prev.engineMode
+    && next.playheadMs !== prev.playheadMs
+  );
+}
+
 /** Publish the canonical 4-value snapshot under key 'studio'. Called from
- *  every setter in src/studio/shared-state.ts (WP-07 commit 3). */
+ *  every setter in src/studio/shared-state.ts (WP-07 commit 3). Playhead-only
+ *  changes are throttled (see above); everything else is immediate. */
 export function publishStudioState(snapshot: StudioPublishedState): void {
+  if (onlyPlayheadChanged(snapshot, _lastPublished)) {
+    _pendingSnapshot = snapshot;
+    if (_throttleTimer) return; // already scheduled — trailing edge coalesces
+    _throttleTimer = setTimeout(() => {
+      _throttleTimer = null;
+      const pending = _pendingSnapshot;
+      _pendingSnapshot = null;
+      if (pending) {
+        _lastPublished = pending;
+        publishState('studio', pending);
+      }
+    }, PLAYHEAD_THROTTLE_MS);
+    return;
+  }
+
+  if (_throttleTimer) {
+    clearTimeout(_throttleTimer);
+    _throttleTimer = null;
+    _pendingSnapshot = null;
+  }
+  _lastPublished = snapshot;
   publishState('studio', snapshot);
 }
 
@@ -374,4 +442,8 @@ export function __resetBridge(): void {
   _connectionPromise = null;
   _supabasePromise = null;
   _contextListeners = new Set();
+  if (_throttleTimer) clearTimeout(_throttleTimer);
+  _throttleTimer = null;
+  _pendingSnapshot = null;
+  _lastPublished = null;
 }

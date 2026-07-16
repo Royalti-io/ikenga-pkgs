@@ -12,6 +12,7 @@
  */
 
 import type { SidecarClient } from '../sidecar-client.js';
+import { EXTERNAL_CALL_TIMEOUT_MS } from '../sidecar-client.js';
 import { callSidecar } from './project.js';
 import type { ToolDef } from './types.js';
 
@@ -49,15 +50,24 @@ export function exportTools(sidecar: SidecarClient): ToolDef[] {
         required: ['projectId'],
         additionalProperties: false,
       },
+      // The sidecar enqueues and returns an exportId synchronously today (poll
+      // export.status), so 30s would suffice — but this is the external-render
+      // entry point, so give it the generous budget to stay correct if compose
+      // ever blocks on the ffmpeg run.
       handler: (args) =>
-        callSidecar(sidecar, 'export.compose', {
-          projectId: args.projectId,
-          rung: args.rung,
-          cellIds: args.cellIds,
-          music_preset: args.music_preset,
-          outputPath: args.outputPath,
-          engine: args.engine,
-        }),
+        callSidecar(
+          sidecar,
+          'export.compose',
+          {
+            projectId: args.projectId,
+            rung: args.rung,
+            cellIds: args.cellIds,
+            music_preset: args.music_preset,
+            outputPath: args.outputPath,
+            engine: args.engine,
+          },
+          EXTERNAL_CALL_TIMEOUT_MS,
+        ),
     },
     {
       name: 'export.status',

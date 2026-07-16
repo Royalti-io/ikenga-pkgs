@@ -22,7 +22,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { archetypeApi, projectApi, renderApi, getMcpClient, type McpClient } from '../mcp-client';
+import { archetypeApi, projectApi, renderApi, getMcpClient, getProbedEngines, type McpClient } from '../mcp-client';
 import { openFolder } from '../bridge';
 import { useProjectStore } from '../project-store';
 import { openProjectByPath } from '../lib/open-project';
@@ -138,7 +138,11 @@ export function LauncherView() {
   const loadEngines = useCallback(async () => {
     try {
       const client = clientRef.current ?? (clientRef.current = await getMcpClient());
-      const { engines: list } = await renderApi.list_engines(client);
+      // The real client's own cold-start probe already ran render.list_engines
+      // — reuse that result instead of re-issuing the call. `null` (mock mode,
+      // or the probe failed over to mock) falls back to calling it directly.
+      const cached = getProbedEngines();
+      const list = cached ?? (await renderApi.list_engines(client)).engines;
       setEngines(list ?? []);
     } catch {
       // Honest degrade: no engine seam → omit the rail card entirely.

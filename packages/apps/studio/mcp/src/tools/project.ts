@@ -12,9 +12,10 @@ export async function callSidecar(
   sidecar: SidecarClient,
   method: string,
   params: unknown,
+  timeoutMs?: number,
 ): Promise<ToolResult> {
   try {
-    const r = (await sidecar.call(method, params)) as ToolResult;
+    const r = (await sidecar.call(method, params, { timeoutMs })) as ToolResult;
     return r;
   } catch (e) {
     if (e instanceof SidecarUnavailableError) {

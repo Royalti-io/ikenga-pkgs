@@ -55,6 +55,29 @@ export interface McpClient {
 
 let _client: McpClient | null = null;
 
+/** In-flight construction, shared across concurrent callers so three
+ *  simultaneous Launcher loaders (archetypes/recents/engines, each firing its
+ *  own `getMcpClient()` on mount) await ONE probe + ONE client instead of each
+ *  building a real client and racing to win `_client` — a losing instance
+ *  could be left holding a stale/null active-project reference and throw
+ *  "no open project" on its first real call. Cleared in the `finally` below
+ *  so a later retry (post PROBE_RETRY_MS) starts a fresh probe rather than
+ *  replaying a long-settled promise. */
+let _clientPromise: Promise<McpClient> | null = null;
+
+/** Cache of the probe's own `render.list_engines` result (real mode only) so
+ *  callers that need the engine list right after `getMcpClient()` resolves
+ *  (Launcher's engines rail) don't re-issue the same call the probe just
+ *  made. `null` whenever the probe hasn't run or didn't succeed — callers
+ *  fall back to calling render.list_engines themselves. */
+let _probedEngines: EngineCapability[] | null = null;
+
+/** Returns the engine list captured by the last successful probe, or `null`
+ *  if none is cached (mock mode, or the probe hasn't resolved / failed). */
+export function getProbedEngines(): EngineCapability[] | null {
+  return _probedEngines;
+}
+
 /** Lazily resolves and caches the MCP client. Idempotent — calling twice
  *  returns the same promise.
  *
@@ -88,42 +111,64 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 const PROBE_RETRY_MS = 10_000;
 let _probeFailedAt = 0;
 
-export async function getMcpClient(): Promise<McpClient> {
-  if (_client && !(_probeFailedAt && Date.now() - _probeFailedAt >= PROBE_RETRY_MS)) {
-    return _client;
+export function getMcpClient(): Promise<McpClient> {
+  const stale = _probeFailedAt !== 0 && Date.now() - _probeFailedAt >= PROBE_RETRY_MS;
+  if (_client && !stale) {
+    return Promise.resolve(_client);
   }
 
-  if (isStandalone()) {
-    _probeFailedAt = 0;
-    const { createMockMcpClient } = await import('./__mocks__/mcp.js');
-    _client = createMockMcpClient();
-    return _client;
+  // Concurrent callers (Launcher's three loaders all fire on mount) share the
+  // one construction + probe already underway rather than each starting its
+  // own real client and probe.
+  if (_clientPromise) {
+    return _clientPromise;
   }
 
-  await connectBridge();
-  const { createRealMcpClient } = await import('./real-mcp.js');
-  const real = createRealMcpClient();
-  // Guarded probe: render.list_engines needs no open project and is cheap.
-  // A pass proves the real studio MCP server is live; a throw/timeout means it
-  // is absent or crash-looping — fall back to the mock so the UI stays usable.
-  try {
-    await withTimeout(real.callTool('render.list_engines'), PROBE_TIMEOUT_MS);
-    _client = real;
-    _probeFailedAt = 0;
-  } catch {
-    if (!_client) {
-      const { createMockMcpClient } = await import('./__mocks__/mcp.js');
-      _client = createMockMcpClient();
+  _clientPromise = (async () => {
+    try {
+      if (isStandalone()) {
+        _probeFailedAt = 0;
+        const { createMockMcpClient } = await import('./__mocks__/mcp.js');
+        _client = createMockMcpClient();
+        return _client;
+      }
+
+      await connectBridge();
+      const { createRealMcpClient } = await import('./real-mcp.js');
+      const real = createRealMcpClient();
+      // Guarded probe: render.list_engines needs no open project and is cheap.
+      // A pass proves the real studio MCP server is live; a throw/timeout means it
+      // is absent or crash-looping — fall back to the mock so the UI stays usable.
+      try {
+        const { engines } = await withTimeout(
+          real.callTool<{ engines: EngineCapability[] }>('render.list_engines'),
+          PROBE_TIMEOUT_MS,
+        );
+        _client = real;
+        _probeFailedAt = 0;
+        _probedEngines = engines ?? null;
+      } catch {
+        if (!_client) {
+          const { createMockMcpClient } = await import('./__mocks__/mcp.js');
+          _client = createMockMcpClient();
+        }
+        _probeFailedAt = Date.now();
+        _probedEngines = null;
+      }
+      return _client;
+    } finally {
+      _clientPromise = null;
     }
-    _probeFailedAt = Date.now();
-  }
-  return _client;
+  })();
+  return _clientPromise;
 }
 
 /** TEST/DEV ONLY. Drops the cached client so the next getMcpClient() call
  *  re-resolves. Used by view tests that need to inject a custom mock. */
 export function __resetMcpClient(): void {
   _client = null;
+  _clientPromise = null;
+  _probedEngines = null;
 }
 
 // ─── Typed helpers ──────────────────────────────────────────────────────

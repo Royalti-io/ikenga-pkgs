@@ -31,10 +31,12 @@
  * complete server-side — we simply do not download its output.
  */
 
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { createWriteStream, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 import { fal } from '@fal-ai/client';
 
@@ -69,6 +71,10 @@ const FAL_IMAGE_MODEL_DEFAULT = 'fal-ai/flux/schnell';
 // Anchor kinds that carry a usable image reference for image-to-video /
 // character-location continuity.
 const IMAGE_ANCHOR_KINDS = new Set(['image', 'character', 'location']);
+
+// Generous — these are video files, not API calls — but bounded so a stalled
+// CDN can't hang the single-worker render queue with no render.cancel escape.
+const DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 
 // ─────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -164,16 +170,29 @@ function extractCost(res: unknown): number | undefined {
   return typeof c === 'number' ? c : undefined;
 }
 
-/** Download a remote url to `outPath`. Throws on a non-OK response. */
-async function downloadTo(url: string, outPath: string): Promise<void> {
-  const res = await fetch(url);
+/**
+ * Download a remote url to `outPath`, streaming straight to disk (no
+ * whole-file buffering). Aborts via the render's own `ctx.signal` (so
+ * `render.cancel` actually stops a stalled download) OR a generous fixed
+ * timeout — whichever fires first. Throws on a non-OK response, on abort, or
+ * on timeout.
+ */
+async function downloadTo(url: string, outPath: string, signal?: AbortSignal): Promise<void> {
+  const timeoutSignal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
+  const fetchSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
+  const res = await fetch(url, { signal: fetchSignal });
   if (!res.ok) {
     throw new Error(`[fal] download failed (${res.status} ${res.statusText}) for ${url}`);
   }
-  const buf = Buffer.from(await res.arrayBuffer());
+  if (!res.body) {
+    throw new Error(`[fal] download response had no body for ${url}`);
+  }
   const dir = dirname(outPath);
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(outPath, buf);
+  // Readable.fromWeb bridges the fetch body's web ReadableStream to a node
+  // stream so pipeline() gets proper backpressure + write-error propagation
+  // (a sync writeFileSync(buf) can't back-pressure a slow disk either).
+  await pipeline(Readable.fromWeb(res.body as never), createWriteStream(outPath));
 }
 
 /** Result of resolving a cell's image reference: a fetchable url, or why not. */
@@ -465,7 +484,7 @@ export const falAdapter: RendererAdapter = {
       );
     }
 
-    await downloadTo(videoUrl, outPath);
+    await downloadTo(videoUrl, outPath, ctx.signal);
     if (!existsSync(outPath) || statSync(outPath).size === 0) {
       throw new Error(`[fal] downloaded output missing or empty at ${outPath}`);
     }

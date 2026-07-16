@@ -85,6 +85,7 @@ import {
 } from '@ikenga/studio-schema';
 
 import { resolveChromeExecutable } from './chrome.js';
+import { clearRenderPid, recordRenderPid } from '../queue.js';
 import type {
   Diagnostic,
   PreviewURL,
@@ -444,6 +445,10 @@ export const hyperframesAdapter: RendererAdapter = {
       detached: true,
     });
     activeChildren.set(recordId, child);
+    // Persist the group-leader PID so a fresh sidecar (after a crash) can reap
+    // this detached group before re-queuing the render — otherwise two writers
+    // would race the same output file. Cleared on close below.
+    if (child.pid !== undefined) recordRenderPid(recordId, child.pid);
 
     // Wire cancellation via the host signal.
     const onAbort = () => {
@@ -536,6 +541,7 @@ export const hyperframesAdapter: RendererAdapter = {
       child.once('close', (code) => resolveExit(code));
     });
     activeChildren.delete(recordId);
+    clearRenderPid(recordId);
 
     const finishedAt = nowIso();
     const finishedAtMs = Date.now();

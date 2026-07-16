@@ -4,7 +4,7 @@
  * storyboard.json (atomic write; watcher emits cells/changed).
  */
 
-import { SidecarClient } from '../sidecar-client.js';
+import { SidecarClient, EXTERNAL_CALL_TIMEOUT_MS } from '../sidecar-client.js';
 import { callSidecar } from './project.js';
 import type { ToolDef } from './types.js';
 
@@ -54,15 +54,22 @@ export function anchorTools(sidecar: SidecarClient): ToolDef[] {
         required: ['projectId', 'kind', 'name', 'prompt'],
         additionalProperties: false,
       },
+      // Blocks on a fal.ai still-image round-trip inside the RPC; a cold call
+      // can exceed the 30s default.
       handler: (args) =>
-        callSidecar(sidecar, 'anchor.generate', {
-          projectId: args.projectId,
-          kind: args.kind,
-          name: args.name,
-          prompt: args.prompt,
-          seed: args.seed,
-          model: args.model,
-        }),
+        callSidecar(
+          sidecar,
+          'anchor.generate',
+          {
+            projectId: args.projectId,
+            kind: args.kind,
+            name: args.name,
+            prompt: args.prompt,
+            seed: args.seed,
+            model: args.model,
+          },
+          EXTERNAL_CALL_TIMEOUT_MS,
+        ),
     },
     {
       name: 'anchor.delete',

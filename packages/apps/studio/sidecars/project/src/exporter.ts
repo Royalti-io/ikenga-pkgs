@@ -73,7 +73,7 @@
  * alongside the path; the shell/iframe is responsible for revealing it.
  */
 
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, resolve } from 'node:path';
 
@@ -255,6 +255,9 @@ function ffprobeDurationMs(path: string): Promise<number> {
     ]);
     let out = '';
     child.stdout.on('data', (b: Buffer) => (out += b.toString('utf8')));
+    // Never read, but must be drained — an unread stderr pipe fills its OS
+    // buffer on a chatty ffprobe and hangs the process forever.
+    child.stderr.on('data', () => {});
     child.on('error', () => resolveDur(0));
     child.on('close', () => {
       const secs = Number.parseFloat(out.trim());
@@ -280,6 +283,8 @@ function ffprobeHasAudio(path: string): Promise<boolean> {
     ]);
     let out = '';
     child.stdout.on('data', (b: Buffer) => (out += b.toString('utf8')));
+    // Never read, but must be drained — see ffprobeDurationMs above.
+    child.stderr.on('data', () => {});
     child.on('error', () => resolveHas(false));
     child.on('close', () => resolveHas(out.trim().length > 0));
   });
@@ -473,17 +478,42 @@ export function buildFfmpegArgs(opts: {
 // ─────────────────────────────────────────────────────────────────────────
 
 import {
+  clearExportPid,
   enqueueExport,
   getExport,
   listExportQueue,
   markExportDone,
   markExportStarted,
   mimeForPath,
+  reapOrphanExportPids,
+  recordExportPid,
 } from './queue.js';
 import type { ExportQueueRow } from './db.js';
 import { randomUUID } from 'node:crypto';
 
 type Db = Parameters<typeof markExportStarted>[0];
+
+/**
+ * Terminate a detached ffmpeg child and its process group. SIGTERM first,
+ * then SIGKILL after a short grace window. Mirrors renderers/hyperframes.ts.
+ */
+function killTree(child: ChildProcess): void {
+  const pid = child.pid;
+  const signalGroup = (sig: NodeJS.Signals) => {
+    if (pid === undefined) return;
+    try {
+      process.kill(-pid, sig); // negative pid → process group
+    } catch {
+      try {
+        if (!child.killed) child.kill(sig);
+      } catch {
+        // already exited
+      }
+    }
+  };
+  signalGroup('SIGTERM');
+  setTimeout(() => signalGroup('SIGKILL'), 1200);
+}
 
 export interface ExportLookup {
   projectRoot(projectId: string): string | undefined;
@@ -505,6 +535,7 @@ export class ExportRunner {
   private readonly db: Db;
   private readonly lookup: ExportLookup;
   private readonly writer: EventWriter;
+  private readonly controllers = new Map<string, AbortController>();
   private draining = false;
 
   constructor(deps: ExportRunnerDeps) {
@@ -513,8 +544,17 @@ export class ExportRunner {
     this.writer = deps.writer;
   }
 
-  /** Re-queue any 'running' rows orphaned by a crash, then kick. */
+  /**
+   * Recover from a restart. A crash may have left the previous sidecar's
+   * detached ffmpeg still running, so reap it FIRST (via the persisted PID
+   * registry) before requeuing — otherwise the requeued export could race a
+   * survivor over the same output file. `running → queued` rows stay queued
+   * (not drained here): at boot no project is open, and `nextQueued` already
+   * skips closed-project rows, so the kick below is a safe no-op and only
+   * matters if a project happened to be open already.
+   */
   recover(): void {
+    reapOrphanExportPids();
     for (const row of listExportQueue(this.db)) {
       if (row.status === 'running') {
         this.db
@@ -523,6 +563,20 @@ export class ExportRunner {
       }
     }
     this.kick();
+  }
+
+  /**
+   * Shutdown hook: abort every in-flight export — killing the detached ffmpeg
+   * process group via the runFfmpeg abort signal → `killTree` — and wait,
+   * bounded by `timeoutMs`, for the workers to settle before the process
+   * exits. Without this a killed sidecar orphans the ffmpeg process.
+   */
+  async shutdown(timeoutMs = 2000): Promise<void> {
+    for (const ctrl of this.controllers.values()) ctrl.abort();
+    const deadline = Date.now() + timeoutMs;
+    while (this.controllers.size > 0 && Date.now() < deadline) {
+      await new Promise<void>((r) => setTimeout(r, 50));
+    }
   }
 
   /** Validate selection up-front, persist the queued row, kick the drain. */
@@ -594,19 +648,30 @@ export class ExportRunner {
   kick(): void {
     if (this.draining) return;
     this.draining = true;
+    // Defer to a microtask/tick so compose() returns before work starts.
     void this.drain().finally(() => {
       this.draining = false;
-      const pending = this.db
-        .prepare(`SELECT COUNT(*) AS n FROM export_queue WHERE status = 'queued'`)
-        .get() as { n: number };
-      if ((pending?.n ?? 0) > 0) this.kick();
+      // Re-arm only if a RUNNABLE (open-project) row remains. A raw
+      // `status = 'queued'` count would spin forever here: rows for closed
+      // projects stay queued by design (they resume on reopen), so counting
+      // them would re-kick a drain that immediately finds nothing to run.
+      if (this.nextQueued()) this.kick();
     });
   }
 
+  /**
+   * Next queued row whose owning project is currently open. Rows for closed
+   * projects are intentionally skipped (left `queued`) rather than drained and
+   * failed — they resume when the project reopens (see `recover`).
+   */
   private nextQueued(): ExportQueueRow | undefined {
-    return this.db
-      .prepare(`SELECT * FROM export_queue WHERE status = 'queued' ORDER BY created_at ASC LIMIT 1`)
-      .get() as ExportQueueRow | undefined;
+    const rows = this.db
+      .prepare(`SELECT * FROM export_queue WHERE status = 'queued' ORDER BY created_at ASC`)
+      .all() as ExportQueueRow[];
+    for (const row of rows) {
+      if (this.lookup.projectRoot(row.project_id)) return row;
+    }
+    return undefined;
   }
 
   private async drain(): Promise<void> {
@@ -643,6 +708,9 @@ export class ExportRunner {
 
     markExportStarted(this.db, row.export_id);
 
+    const controller = new AbortController();
+    this.controllers.set(row.export_id, controller);
+
     try {
       const outputPath = req.outputPath ?? this.outputPathFor(root);
       const res = this.lookup.resolution(row.project_id) ?? { w: 1920, h: 1080 };
@@ -671,7 +739,7 @@ export class ExportRunner {
         fps: 30,
       });
 
-      await this.runFfmpeg(row.project_id, row.export_id, built);
+      await this.runFfmpeg(row.project_id, row.export_id, built, controller.signal);
 
       if (!existsSync(outputPath)) {
         throw new Error(`ffmpeg exited 0 but output missing at ${outputPath}`);
@@ -679,9 +747,17 @@ export class ExportRunner {
       markExportDone(this.db, row.export_id, 'done', { outputPath });
       this.emitDone(row.project_id, row.export_id, 'done', outputPath);
     } catch (e) {
-      const msg = (e as Error).message;
-      markExportDone(this.db, row.export_id, 'failed', { error: msg });
-      this.emitDone(row.project_id, row.export_id, 'failed', undefined, msg);
+      const cancelled = (e as Error & { cancelled?: boolean }).cancelled === true || controller.signal.aborted;
+      if (cancelled) {
+        markExportDone(this.db, row.export_id, 'cancelled');
+        this.emitDone(row.project_id, row.export_id, 'cancelled');
+      } else {
+        const msg = (e as Error).message;
+        markExportDone(this.db, row.export_id, 'failed', { error: msg });
+        this.emitDone(row.project_id, row.export_id, 'failed', undefined, msg);
+      }
+    } finally {
+      this.controllers.delete(row.export_id);
     }
   }
 
@@ -689,9 +765,19 @@ export class ExportRunner {
     projectId: string,
     exportId: string,
     built: BuildArgsResult,
+    signal: AbortSignal,
   ): Promise<void> {
     return new Promise((resolveRun, reject) => {
-      const child = spawn('ffmpeg', built.args, { stdio: ['ignore', 'pipe', 'pipe'] });
+      // `detached: true` mirrors render-runner: kill the whole process group
+      // (negative pid) via `killTree` so an abort/crash can't leave an
+      // orphaned ffmpeg process behind.
+      const child = spawn('ffmpeg', built.args, { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+      if (child.pid !== undefined) recordExportPid(exportId, child.pid);
+
+      const onAbort = () => killTree(child);
+      if (signal.aborted) onAbort();
+      else signal.addEventListener('abort', onAbort, { once: true });
+
       let stderrTail: string[] = [];
       let buf = '';
       let lastEmit = 0;
@@ -727,8 +813,22 @@ export class ExportRunner {
         stderrTail.push(s);
         if (stderrTail.length > 40) stderrTail = stderrTail.slice(-40);
       });
-      child.on('error', (err) => reject(err));
+      child.on('error', (err) => {
+        signal.removeEventListener('abort', onAbort);
+        clearExportPid(exportId);
+        reject(err);
+      });
       child.on('close', (code) => {
+        signal.removeEventListener('abort', onAbort);
+        clearExportPid(exportId);
+        if (signal.aborted) {
+          // Cancellation is not a failure; tag the error so runOne marks the
+          // row 'cancelled' rather than 'failed'.
+          const abortErr = new Error('[export] ffmpeg aborted via shutdown');
+          (abortErr as Error & { cancelled?: boolean }).cancelled = true;
+          reject(abortErr);
+          return;
+        }
         if (code === 0) {
           // Emit a final 1.0 progress so consumers see completion on the channel.
           emitRenderProgress(this.writer, projectId, {

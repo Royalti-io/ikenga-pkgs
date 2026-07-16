@@ -11,6 +11,12 @@
 // when the queue goes idle the loop stops entirely (no heartbeat) until the
 // user enqueues (bumpActivePoll) or hits Refresh (refreshRenders). While
 // active, the counter/timeline can't lag reality by more than one 2s tick.
+//
+// No immediate `refreshRenders()` on mount here — `hydrateStoryboard` already
+// does the one mount-time `render.list` (storyboard-store.ts) right after
+// cells load. This hook only arms off the resulting `hasActive`/`activeUntil`
+// state; when that reconciled read lands, `hasActive` flips and the effect
+// re-runs, arming the fast loop if a render was already in flight at mount.
 
 import { useEffect } from 'react';
 
@@ -35,10 +41,10 @@ export function useRenderPoll(): void {
     let stopped = false;
     let timer: number | undefined;
 
-    // One immediate read so the pane shows current truth the instant it mounts
-    // (or the moment work is enqueued), then arm the fast loop only if active.
-    void refreshRenders();
-
+    // Arm off whatever `hasActive`/`activeUntil` already say — no fetch here;
+    // hydrate's mount-time render.list (or the last poll tick) already owns
+    // reconciling that state. If it lands active after this runs, the
+    // selector change re-triggers the effect and arm() re-evaluates.
     const arm = () => {
       if (stopped) return;
       const active = hasActive || Date.now() < activeUntil;

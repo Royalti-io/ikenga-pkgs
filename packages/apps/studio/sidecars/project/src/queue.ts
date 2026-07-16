@@ -8,9 +8,10 @@
  * `*.tsx` / `*.excalidraw`.
  */
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
+import { resolvePkgDataDir } from './db.js';
 import type { ExportQueueRow, RenderQueueRow } from './db.js';
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -166,6 +167,113 @@ export function hydrateProjectCells(
     count++;
   }
   return { count, elapsedMs: Date.now() - t0 };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Persisted writer-PID registry (shared by render + export children)
+//
+// The queue's writer processes (npx → hyperframes → chrome → ffmpeg, or the
+// exporter's own ffmpeg) spawn `detached` so a plain child.kill only reaches
+// the direct child; the group survives a sidecar kill. If the sidecar crashes
+// mid-job, that group is orphaned and keeps writing the output file. On the
+// next boot `recover()` re-queues the row — so without reaping the survivor
+// first, two writers would race the same output. We persist the spawned
+// group-leader PID keyed by recordId/exportId to a small per-kind JSON file
+// so a fresh process can kill it. Best-effort: a lost or stale entry just
+// means a no-op kill (the pid is already gone or recycled).
+// ─────────────────────────────────────────────────────────────────────────
+
+function pidsPath(fileName: string): string {
+  return join(resolvePkgDataDir(), fileName);
+}
+
+function readPids(fileName: string): Record<string, number> {
+  try {
+    const p = pidsPath(fileName);
+    if (!existsSync(p)) return {};
+    const parsed = JSON.parse(readFileSync(p, 'utf8')) as Record<string, number>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function writePids(fileName: string, map: Record<string, number>): void {
+  try {
+    const p = pidsPath(fileName);
+    const dir = dirname(p);
+    if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+    writeFileSync(p, JSON.stringify(map), 'utf8');
+  } catch {
+    // best-effort — a failure here only weakens crash recovery, never the job
+  }
+}
+
+/** Record a spawned writer's group-leader PID (called at spawn time). */
+function recordPid(fileName: string, id: string, pid: number): void {
+  if (!Number.isInteger(pid) || pid <= 1) return;
+  const m = readPids(fileName);
+  m[id] = pid;
+  writePids(fileName, m);
+}
+
+/** Drop a writer's PID once it has exited (called on child close). */
+function clearPid(fileName: string, id: string): void {
+  const m = readPids(fileName);
+  if (id in m) {
+    delete m[id];
+    writePids(fileName, m);
+  }
+}
+
+/**
+ * Boot-time reap: SIGKILL any writer process GROUPS a previously-crashed
+ * sidecar left running, then clear the registry so we never re-kill a recycled
+ * pid on a later boot. Kills the negative pid (the whole detached group); falls
+ * back to the positive pid if the group is already gone.
+ */
+function reapOrphanPids(fileName: string): void {
+  const m = readPids(fileName);
+  for (const pid of Object.values(m)) {
+    if (!Number.isInteger(pid) || pid <= 1) continue;
+    try {
+      process.kill(-pid, 'SIGKILL'); // negative pid → whole group
+    } catch {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // already gone
+      }
+    }
+  }
+  writePids(fileName, {});
+}
+
+const RENDER_PIDS_FILE = 'render-pids.json';
+const EXPORT_PIDS_FILE = 'export-pids.json';
+
+export function recordRenderPid(recordId: string, pid: number): void {
+  recordPid(RENDER_PIDS_FILE, recordId, pid);
+}
+
+export function clearRenderPid(recordId: string): void {
+  clearPid(RENDER_PIDS_FILE, recordId);
+}
+
+export function reapOrphanRenderPids(): void {
+  reapOrphanPids(RENDER_PIDS_FILE);
+}
+
+export function recordExportPid(exportId: string, pid: number): void {
+  recordPid(EXPORT_PIDS_FILE, exportId, pid);
+}
+
+export function clearExportPid(exportId: string): void {
+  clearPid(EXPORT_PIDS_FILE, exportId);
+}
+
+export function reapOrphanExportPids(): void {
+  reapOrphanPids(EXPORT_PIDS_FILE);
 }
 
 // ─────────────────────────────────────────────────────────────────────────
