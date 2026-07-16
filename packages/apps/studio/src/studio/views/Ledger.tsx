@@ -264,6 +264,14 @@ export function LedgerView() {
     [cellsSorted, primaryByUid, recordsByCellAll],
   );
 
+  // "used" = referenced by at least one cell in this storyboard, not merely present
+  // in the project's anchor list — an anchor can be locked and unreferenced.
+  const usedAnchors = useMemo(() => {
+    const ids = new Set<string>();
+    for (const { cell } of rows) for (const id of cell.anchors) ids.add(id);
+    return [...ids].map((id) => ({ id, name: anchorsById[id]?.name ?? id }));
+  }, [rows, anchorsById]);
+
   const trackARecords = useMemo(() => renderRecords.filter((r) => trackOf(r.engine) === 'a'), [renderRecords]);
   const totalCostUsd = useMemo(() => trackARecords.reduce((sum, r) => sum + (costOf(r) ?? 0), 0), [trackARecords]);
   const budgetPct = Math.min(100, Math.max(0, (totalCostUsd / BUDGET_CAP_USD) * 100));
@@ -501,10 +509,10 @@ export function LedgerView() {
             Anchors used this ledger
           </span>
           <div className="flex flex-wrap gap-1">
-            {Object.values(anchorsById).length === 0 ? (
+            {usedAnchors.length === 0 ? (
               <span className="text-[11px] text-fg-faint">—</span>
             ) : (
-              Object.values(anchorsById).map((a) => (
+              usedAnchors.map((a) => (
                 <span key={a.id} className="rounded border border-soft bg-sunken px-1.5 py-0.5 font-mono text-[10px] text-fg-muted">
                   {a.name}
                 </span>

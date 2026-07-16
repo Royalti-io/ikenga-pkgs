@@ -368,9 +368,7 @@ export function CastWorldView() {
   );
 
   const lockedCount = displayAnchors.filter((a) => a.locked).length;
-  const driftCount = displayAnchors.filter((a) => !a.locked && a.nodes.length > 0 && a.seed != null).length === 0
-    ? 0
-    : displayAnchors.filter((a) => !a.locked && a.nodes.some((n) => !n.rendered)).length;
+  const driftCount = displayAnchors.filter((a) => !a.locked && a.nodes.some((n) => !n.rendered)).length;
 
   // ── mutations (real mode only) ──
 

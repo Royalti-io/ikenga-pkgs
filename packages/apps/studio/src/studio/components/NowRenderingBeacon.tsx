@@ -30,28 +30,31 @@ import { LAYOUTS } from '../routes';
 import { useSharedStore } from '../shared-state';
 import {
   useStoryboardStore,
-  selectHasRealCells,
   selectHydratedCells,
   selectHydratedProject,
   selectRenderStatus,
+  selectStoryboardSource,
 } from '../storyboard-store';
 
 /** The cell whose render is currently in flight, or null. Real mode reads the
  *  live render-status map (fed by the App-level render.list poll) folded onto
  *  the hydrated timeline, so the beacon references a REAL cell uid (or is absent
- *  when nothing is rendering) — never the mock c04. Standalone/mock keeps the
- *  static mock-timeline derivation. */
+ *  when nothing is rendering) — never the mock c04. Only genuine mock/standalone
+ *  mode (source === 'mock') falls back to the static mock-timeline derivation;
+ *  a real, connected project with zero cells has no clips to fold and correctly
+ *  yields null (no beacon), same as any other real-but-empty state. */
 function useRunningCell(): TimelineClip | null {
-  const hasRealCells = useStoryboardStore(selectHasRealCells);
+  const source = useStoryboardStore(selectStoryboardSource);
   const hydratedCells = useStoryboardStore(selectHydratedCells);
   const projectDoc = useStoryboardStore(selectHydratedProject);
   const renderStatus = useStoryboardStore(selectRenderStatus);
   return useMemo(() => {
-    const clips = hasRealCells
-      ? buildTimelineModel(hydratedCells, projectDoc, renderStatus).clips
-      : COMPOSITION_TIMELINE;
+    const clips =
+      source === 'mock'
+        ? COMPOSITION_TIMELINE
+        : buildTimelineModel(hydratedCells, projectDoc, renderStatus).clips;
     return clips.find((c) => c.status === 'running') ?? null;
-  }, [hasRealCells, hydratedCells, projectDoc, renderStatus]);
+  }, [source, hydratedCells, projectDoc, renderStatus]);
 }
 
 const INFO = 'var(--info,#5bb3e0)';

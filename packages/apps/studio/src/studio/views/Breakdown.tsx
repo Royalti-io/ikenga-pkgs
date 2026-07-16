@@ -261,6 +261,8 @@ export function BreakdownView() {
   // archetype (projectDoc.script.archetype / archetype_id) drives the scene +
   // dialogue parsing below; non-narrative formats have no dialogue by design.
   const title = hasRealCells ? (projectDoc?.script?.title ?? projectDoc?.title ?? 'script') : DEMO_TITLE;
+  // real projects always persist the screenplay to <root>/script.fountain (see mcp-client.ts:199-201)
+  const scriptFilename = hasRealCells ? 'script.fountain' : 'the-forge.fountain';
 
   // ── anchors (real: anchor.list; mock: DEMO_ANCHORS) ──
   const [anchors, setAnchors] = useState<Anchor[]>([]);
@@ -440,7 +442,7 @@ export function BreakdownView() {
               </span>
             )}
             <span className="text-fg-faint">·</span>
-            <span>the-forge.fountain</span>
+            <span>{scriptFilename}</span>
             <span className="text-fg-faint">·</span>
             <span><span className="tabular-nums text-fg">{shots.length}</span> shots detected</span>
             <span className="text-fg-faint">·</span>
@@ -485,7 +487,7 @@ export function BreakdownView() {
         <div className="flex min-h-0 flex-col pr-5">
           <div className="mb-3 flex items-center justify-between border-b border-soft pb-2.5">
             <span className="font-mono text-[10px] uppercase tracking-widest text-fg-faint">Script</span>
-            <span className="font-mono text-[11px] text-fg-muted">the-forge.fountain</span>
+            <span className="font-mono text-[11px] text-fg-muted">{scriptFilename}</span>
           </div>
           <div className="min-h-0 flex-1 overflow-y-auto pr-1.5">
             {scenes.map((scene) => {
