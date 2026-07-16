@@ -67,6 +67,7 @@ import {
   fmtClock,
   fmtSeconds,
   fidelityLabel,
+  engineLabel,
   recordByUid,
 } from './composition/format';
 
@@ -512,159 +513,258 @@ export function CompositionView() {
           </div>
         </div>
 
-        {/* Transport */}
-        <TransportBar
-          playing={playing}
-          onPlayToggle={playToggle}
-          onStepBack={() => stepFrames(-1)}
-          onStepForward={() => stepFrames(1)}
-          loop={loop}
-          onLoopToggle={loopToggle}
-          currentMs={playheadMs}
-          totalMs={totalMs}
-          fps={FPS}
-          counterLabel={`${renderedCount}/${clips.length} cells rendered`}
-          rightSlot={rightSlot}
-        />
-
-        {/* Preview surface */}
-        <PreviewSurface
-          aspect={aspectAttr(meta.aspect)}
-          safeZoneOn
-          status={
-            composedMode
-              ? 'ready'
-              : !activeClip
-                ? 'ready'
-                : (activeRecord?.status ?? activeClip.status) === 'done'
+        {/* Stage: viewer column + tool rail (C-A). Collapses to one column at
+            narrow pane widths — see .comp-stage in studio-editor.css. */}
+        <div className="comp-stage">
+          <section className="comp-viewer" aria-label="Video preview">
+            {/* Preview surface */}
+            <PreviewSurface
+              aspect={aspectAttr(meta.aspect)}
+              safeZoneOn
+              status={
+                composedMode
                   ? 'ready'
-                  : (activeRecord?.status ?? activeClip.status) === 'running'
-                    ? 'rendering'
-                    : (activeRecord?.status ?? activeClip.status) === 'queued'
-                      ? 'queued'
-                      : (activeRecord?.status ?? activeClip.status) === 'failed'
-                        ? 'failed'
-                        : (activeRecord?.status ?? activeClip.status) === 'cancelled'
-                          ? 'cancelled'
-                          : 'pending'
-          }
-          ariaLabel={
-            composedMode
-              ? 'Composed export playback'
-              : activeClip
-                ? `Composition preview — cell ${activeClip.uid} ${activeClip.beat}`
-                : 'Composition preview — end of composition'
-          }
-        >
-          {composedMode && exportId ? (
-            <ComposedVideo exportId={exportId} muted={muted} onExit={() => setComposedMode(false)} />
-          ) : !activeClip ? (
-            <div className="preview-status">
-              <span className="preview-status-text">— end of composition —</span>
-            </div>
-          ) : (activeRecord?.status ?? activeClip.status) === 'done' ? (
-            <div className="comp-viewer-stage">
-              {/* Real per-cell pixels overlay; poster + caption behind it. */}
-              <CellVideo
-                recordId={activeRecordId}
-                playing={playing}
-                muted={muted}
-                playheadMs={playheadMs}
-                clipStartMs={activeClip.start_ms}
-                onAvailability={setVideoState}
-              />
-              <div className={`comp-poster${videoState === 'ready' ? ' is-hidden' : ''}`} aria-hidden={videoState === 'ready'}>
-                <div
-                  className="preview-cell-label"
-                  style={{ color: `var(--beat-accent-${activeClip.accent})` }}
-                >
-                  {activeClip.beat}
+                  : !activeClip
+                    ? 'ready'
+                    : (activeRecord?.status ?? activeClip.status) === 'done'
+                      ? 'ready'
+                      : (activeRecord?.status ?? activeClip.status) === 'running'
+                        ? 'rendering'
+                        : (activeRecord?.status ?? activeClip.status) === 'queued'
+                          ? 'queued'
+                          : (activeRecord?.status ?? activeClip.status) === 'failed'
+                            ? 'failed'
+                            : (activeRecord?.status ?? activeClip.status) === 'cancelled'
+                              ? 'cancelled'
+                              : 'pending'
+              }
+              ariaLabel={
+                composedMode
+                  ? 'Composed export playback'
+                  : activeClip
+                    ? `Composition preview — cell ${activeClip.uid} ${activeClip.beat}`
+                    : 'Composition preview — end of composition'
+              }
+            >
+              {composedMode && exportId ? (
+                <ComposedVideo exportId={exportId} muted={muted} onExit={() => setComposedMode(false)} />
+              ) : !activeClip ? (
+                <div className="preview-status">
+                  <span className="preview-status-text">— end of composition —</span>
                 </div>
-                <div className="preview-narration">
-                  {previewWords.length > 0 ? (
-                    previewWords.map((w) => {
-                      const isActive = activeWord?.word === w.word && activeWord?.start_ms === w.start_ms;
-                      const isPast = playheadMs >= w.end_ms;
-                      return (
-                        <span
-                          key={`${w.word}-${w.start_ms}`}
-                          className={'preview-word' + (isActive ? ' is-active' : isPast ? ' is-past' : '')}
-                        >
-                          {w.word}
-                        </span>
-                      );
-                    })
-                  ) : (
-                    <span className="preview-word is-active">{activeClip.beat}</span>
-                  )}
-                </div>
-                <div className="preview-engine-note">
-                  HyperFrames · {fidelityLabel(activeRung ?? meta.rung)}
-                  {videoState === 'unavailable' && ' · rendered — preview unavailable, try Refresh'}
-                </div>
-              </div>
-              {/* Clip badge + play overlay */}
-              <div className="comp-clip-badge" aria-hidden="true">
-                <span className="comp-clip-badge__dot" style={{ background: `var(--beat-accent-${activeClip.accent})` }} />
-                {activeClip.uid} · {fmtClock(activeClip.start_ms)}–{fmtClock(activeClip.start_ms + activeClip.duration_ms)}
-              </div>
-              <button
-                type="button"
-                className={`comp-play-overlay${playing ? ' is-playing' : ''}`}
-                aria-label={playing ? 'Pause composition' : 'Play composition'}
-                onClick={playToggle}
-              >
-                <span aria-hidden="true">{playing ? '❚❚' : '▶'}</span>
-              </button>
-            </div>
-          ) : (activeRecord?.status ?? activeClip.status) === undefined ? (
-            // Explicit EMPTY preview (C-B graft): nothing rendered for this cell.
-            <div className="comp-empty-preview">
-              <div className="preview-cell-label" style={{ color: `var(--beat-accent-${activeClip.accent})` }}>
-                {activeClip.beat}
-              </div>
-              <span className="preview-status-text">Not rendered yet</span>
-              <button
-                type="button"
-                className="btn btn-sm comp-btn-primary"
-                onClick={() => retryClip(activeClip.uid)}
-                aria-label={`Render ${activeClip.beat} cell`}
-              >
-                ⚡ Render this cell
-              </button>
-            </div>
-          ) : (
-            <div style={{ textAlign: 'center' }}>
-              <div className="preview-cell-label" style={{ color: `var(--beat-accent-${activeClip.accent})` }}>
-                {activeClip.beat}
-              </div>
-              <PreviewStatus
-                glyph={
-                  (activeRecord?.status ?? activeClip.status) === 'running'
-                    ? '◐'
-                    : (activeRecord?.status ?? activeClip.status) === 'failed'
-                      ? '⚠'
-                      : (activeRecord?.status ?? activeClip.status) === 'cancelled'
-                        ? '✕'
-                        : '○'
-                }
-                text={(activeRecord?.status ?? activeClip.status) ?? 'pending'}
-                action={
-                  (activeRecord?.status ?? activeClip.status) === 'failed' ? (
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-ghost"
-                      aria-label={`Retry render for ${activeClip.beat}`}
-                      onClick={() => retryClip(activeClip.uid)}
+              ) : (activeRecord?.status ?? activeClip.status) === 'done' ? (
+                <div className="comp-viewer-stage">
+                  {/* Real per-cell pixels overlay; poster + caption behind it. */}
+                  <CellVideo
+                    recordId={activeRecordId}
+                    playing={playing}
+                    muted={muted}
+                    playheadMs={playheadMs}
+                    clipStartMs={activeClip.start_ms}
+                    onAvailability={setVideoState}
+                  />
+                  <div className={`comp-poster${videoState === 'ready' ? ' is-hidden' : ''}`} aria-hidden={videoState === 'ready'}>
+                    <div
+                      className="preview-cell-label"
+                      style={{ color: `var(--beat-accent-${activeClip.accent})` }}
                     >
-                      ↺ Retry
-                    </button>
-                  ) : undefined
-                }
-              />
+                      {activeClip.beat}
+                    </div>
+                    <div className="preview-narration">
+                      {previewWords.length > 0 ? (
+                        previewWords.map((w) => {
+                          const isActive = activeWord?.word === w.word && activeWord?.start_ms === w.start_ms;
+                          const isPast = playheadMs >= w.end_ms;
+                          return (
+                            <span
+                              key={`${w.word}-${w.start_ms}`}
+                              className={'preview-word' + (isActive ? ' is-active' : isPast ? ' is-past' : '')}
+                            >
+                              {w.word}
+                            </span>
+                          );
+                        })
+                      ) : (
+                        <span className="preview-word is-active">{activeClip.beat}</span>
+                      )}
+                    </div>
+                    <div className="preview-engine-note">
+                      HyperFrames · {fidelityLabel(activeRung ?? meta.rung)}
+                      {videoState === 'unavailable' && ' · rendered — preview unavailable, try Refresh'}
+                    </div>
+                  </div>
+                  {/* Clip badge + play overlay */}
+                  <div className="comp-clip-badge" aria-hidden="true">
+                    <span className="comp-clip-badge__dot" style={{ background: `var(--beat-accent-${activeClip.accent})` }} />
+                    {activeClip.uid} · {fmtClock(activeClip.start_ms)}–{fmtClock(activeClip.start_ms + activeClip.duration_ms)}
+                  </div>
+                  <button
+                    type="button"
+                    className={`comp-play-overlay${playing ? ' is-playing' : ''}`}
+                    aria-label={playing ? 'Pause composition' : 'Play composition'}
+                    onClick={playToggle}
+                  >
+                    <span aria-hidden="true">{playing ? '❚❚' : '▶'}</span>
+                  </button>
+                </div>
+              ) : (activeRecord?.status ?? activeClip.status) === undefined ? (
+                // Explicit EMPTY preview (C-B graft): nothing rendered for this cell.
+                <div className="comp-empty-preview">
+                  <div className="preview-cell-label" style={{ color: `var(--beat-accent-${activeClip.accent})` }}>
+                    {activeClip.beat}
+                  </div>
+                  <span className="preview-status-text">Not rendered yet</span>
+                  <button
+                    type="button"
+                    className="btn btn-sm comp-btn-primary"
+                    onClick={() => retryClip(activeClip.uid)}
+                    aria-label={`Render ${activeClip.beat} cell`}
+                  >
+                    ⚡ Render this cell
+                  </button>
+                </div>
+              ) : (
+                <div style={{ textAlign: 'center' }}>
+                  <div className="preview-cell-label" style={{ color: `var(--beat-accent-${activeClip.accent})` }}>
+                    {activeClip.beat}
+                  </div>
+                  <PreviewStatus
+                    glyph={
+                      (activeRecord?.status ?? activeClip.status) === 'running'
+                        ? '◐'
+                        : (activeRecord?.status ?? activeClip.status) === 'failed'
+                          ? '⚠'
+                          : (activeRecord?.status ?? activeClip.status) === 'cancelled'
+                            ? '✕'
+                            : '○'
+                    }
+                    text={(activeRecord?.status ?? activeClip.status) ?? 'pending'}
+                    action={
+                      (activeRecord?.status ?? activeClip.status) === 'failed' ? (
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-ghost"
+                          aria-label={`Retry render for ${activeClip.beat}`}
+                          onClick={() => retryClip(activeClip.uid)}
+                        >
+                          ↺ Retry
+                        </button>
+                      ) : undefined
+                    }
+                  />
+                </div>
+              )}
+            </PreviewSurface>
+
+            {/* Transport — beneath the picture it drives (C-A) */}
+            <TransportBar
+              playing={playing}
+              onPlayToggle={playToggle}
+              onStepBack={() => stepFrames(-1)}
+              onStepForward={() => stepFrames(1)}
+              loop={loop}
+              onLoopToggle={loopToggle}
+              currentMs={playheadMs}
+              totalMs={totalMs}
+              fps={FPS}
+              counterLabel={`${renderedCount}/${clips.length} cells rendered`}
+              rightSlot={rightSlot}
+            />
+          </section>
+
+          {/* Rail cards */}
+          <aside className="comp-rail" aria-label="Composition tools">
+            {/* Active cell inspector */}
+            <div className="comp-card">
+              <header className="comp-card__head"><span className="kicker">Active cell</span></header>
+              <div className="comp-card__body">
+                {activeClip ? (
+                  <>
+                    <div className="comp-insp-title">
+                      <span className="comp-swatch" data-accent={activeClip.accent} aria-hidden="true" />
+                      <h3>{activeClip.beat}</h3>
+                    </div>
+                    <dl className="comp-kv">
+                      <dt>In / Out</dt>
+                      <dd>{fmtClock(activeClip.start_ms)} – {fmtClock(activeClip.start_ms + activeClip.duration_ms)}</dd>
+                      <dt>Duration</dt>
+                      <dd>{fmtSeconds(activeClip.duration_ms)}</dd>
+                      <dt>Fidelity</dt>
+                      <dd>
+                        {fidelityLabel(activeRung ?? meta.rung)}
+                        {(activeRecord?.status ?? activeClip.status) === 'done' ? ' · rendered' : ''}
+                      </dd>
+                      <dt>Engine</dt>
+                      {/* The engine is a property of the render that exists, not of
+                          the pkg — an excalidraw cell or a Track-B ingest is neither
+                          HyperFrames nor a guess. No record ⇒ nothing to name. */}
+                      <dd>{activeRecord ? engineLabel(activeRecord.engine) : '—'}</dd>
+                    </dl>
+                  </>
+                ) : (
+                  <p className="comp-dim">Scrub the timeline to inspect a cell.</p>
+                )}
+              </div>
             </div>
-          )}
-        </PreviewSurface>
+
+            {/* Audio bed */}
+            <div className="comp-card">
+              <header className="comp-card__head"><span className="kicker">Audio bed</span></header>
+              <div className="comp-card__body">
+                <div className="comp-fieldrow">
+                  <label htmlFor="comp-music">Music</label>
+                  <select
+                    id="comp-music"
+                    className="input comp-input"
+                    aria-label="Music preset"
+                    value={musicPreset}
+                    onChange={(e) => setMusicPreset(e.target.value)}
+                  >
+                    {MUSIC_PRESETS.map((p) => (
+                      <option key={p.value} value={p.value}>{p.label}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {showSilentNotice && (
+                  <div className="comp-notice" role="status">
+                    <span aria-hidden="true">⚠</span>
+                    <span>
+                      <b>No track on disk.</b> This preset has no audio file yet — the export
+                      will be video-only (silent) until one is added.
+                    </span>
+                  </div>
+                )}
+
+                {!narration && (
+                  <div className="comp-narr-empty">
+                    <span className="comp-dim">No narration yet — the waveform appears once it’s generated.</span>
+                    <details className="comp-narr-how">
+                      <summary>How do I add narration?</summary>
+                      Ask your Chi in the chat dock to generate narration for this project — it
+                      writes the narration track and word timings the waveform reads.
+                    </details>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Export */}
+            <ExportCard
+              state={exportState}
+              exportPath={exportPath}
+              wasSilent={exportSilent}
+              errorMessage={exportError}
+              metaLine={`${meta.resolution.w}×${meta.resolution.h} · ${fmtSeconds(totalMs)} · H.264`}
+              composedAvailable={Boolean(exportId)}
+              onExportClick={() => setPreflightOpen(true)}
+              onCancel={cancelExport}
+              onExportAgain={() => setExportState('idle')}
+              onRetry={() => void runExport()}
+              onPlayComposed={() => setComposedMode(true)}
+            />
+          </aside>
+        </div>
 
         {/* Timeline section — ruler + filmstrip + scrubber */}
         <div className="timeline-section">
@@ -785,96 +885,6 @@ export function CompositionView() {
               <PlayheadEcho leftPct={playheadPct} />
             </div>
           )}
-        </div>
-
-        {/* Rail cards */}
-        <div className="comp-rail">
-          {/* Active cell inspector */}
-          <div className="comp-card">
-            <header className="comp-card__head"><span className="kicker">Active cell</span></header>
-            <div className="comp-card__body">
-              {activeClip ? (
-                <>
-                  <div className="comp-insp-title">
-                    <span className="comp-swatch" data-accent={activeClip.accent} aria-hidden="true" />
-                    <h3>{activeClip.beat}</h3>
-                  </div>
-                  <dl className="comp-kv">
-                    <dt>In / Out</dt>
-                    <dd>{fmtClock(activeClip.start_ms)} – {fmtClock(activeClip.start_ms + activeClip.duration_ms)}</dd>
-                    <dt>Duration</dt>
-                    <dd>{fmtSeconds(activeClip.duration_ms)}</dd>
-                    <dt>Fidelity</dt>
-                    <dd>
-                      {fidelityLabel(activeRung ?? meta.rung)}
-                      {(activeRecord?.status ?? activeClip.status) === 'done' ? ' · rendered' : ''}
-                    </dd>
-                    <dt>Engine</dt>
-                    <dd>HyperFrames</dd>
-                  </dl>
-                </>
-              ) : (
-                <p className="comp-dim">Scrub the timeline to inspect a cell.</p>
-              )}
-            </div>
-          </div>
-
-          {/* Audio bed */}
-          <div className="comp-card">
-            <header className="comp-card__head"><span className="kicker">Audio bed</span></header>
-            <div className="comp-card__body">
-              <div className="comp-fieldrow">
-                <label htmlFor="comp-music">Music</label>
-                <select
-                  id="comp-music"
-                  className="input comp-input"
-                  aria-label="Music preset"
-                  value={musicPreset}
-                  onChange={(e) => setMusicPreset(e.target.value)}
-                >
-                  {MUSIC_PRESETS.map((p) => (
-                    <option key={p.value} value={p.value}>{p.label}</option>
-                  ))}
-                </select>
-              </div>
-
-              {showSilentNotice && (
-                <div className="comp-notice" role="status">
-                  <span aria-hidden="true">⚠</span>
-                  <span>
-                    <b>No track on disk.</b> This preset has no audio file yet — the export
-                    will be video-only (silent) until one is added.
-                  </span>
-                </div>
-              )}
-
-              {!narration && (
-                <div className="comp-narr-empty">
-                  <span className="comp-dim">No narration yet — the waveform appears once it’s generated.</span>
-                  <details className="comp-narr-how">
-                    <summary>How do I add narration?</summary>
-                    Ask your Chi in the chat dock to generate narration for this project — it
-                    writes the narration track and word timings the waveform reads.
-                  </details>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* Export */}
-          <ExportCard
-            state={exportState}
-            exportPath={exportPath}
-            wasSilent={exportSilent}
-            errorMessage={exportError}
-            metaLine={`${meta.resolution.w}×${meta.resolution.h} · ${fmtSeconds(totalMs)} · H.264`}
-            composedAvailable={Boolean(exportId)}
-            onExportClick={() => setPreflightOpen(true)}
-            onCancel={cancelExport}
-            onExportAgain={() => setExportState('idle')}
-            onRetry={() => void runExport()}
-            onPlayComposed={() => setComposedMode(true)}
-          />
         </div>
 
         {/* Render records truth surface (C-C) */}

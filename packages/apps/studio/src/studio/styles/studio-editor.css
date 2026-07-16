@@ -734,7 +734,14 @@
 .comp-dim { color: var(--fg-muted); font-size: var(--text-micro); }
 .mono { font-family: var(--font-mono); }
 
-.comp-cockpit { gap: 0; }
+/* The stage's collapse breakpoints key off THIS box, not the viewport — see the
+   @container rules below .comp-rail. inline-size only: the frame's height must
+   stay content-driven or it stops overflowing its scroller (commit 8c012f3). */
+.comp-cockpit {
+  gap: 0;
+  container-type: inline-size;
+  container-name: comp-frame;
+}
 
 /* ── header ───────────────────────────────────────────────────────────── */
 .comp-header {
@@ -876,13 +883,56 @@
 .comp-composed__video { flex: 1; min-height: 0; width: 100%; object-fit: contain; background: #000; }
 .comp-composed__note { flex: 1; display: grid; place-items: center; padding: var(--space-4); text-align: center; color: var(--fg-muted); font-size: var(--text-body-sm); }
 
+/* ── stage: viewer column + tool rail ─────────────────────────────────── */
+/* C-A puts the picture and the tools that act on it side by side: the rail's
+   inspector / bed / Export must stay co-visible with the frame they describe.
+   The timeline + records stay full-width footers *below* this grid. */
+.comp-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 336px;
+  align-items: start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-base);
+}
+.comp-viewer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+/* Preview + transport were full-bleed bands of the frame before the stage
+   existed; inside the viewer column they read as one picture card, so the
+   band's bottom hairline becomes a full border. */
+.comp-viewer .preview-surface,
+.comp-viewer .transport {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+}
+
 /* ── rail cards ───────────────────────────────────────────────────────── */
 .comp-rail {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
   gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  background: var(--bg-base);
+  min-width: 0;
+}
+
+/* C-A assumes a wide pane; below it the two columns starve, so the rail drops
+   under the viewer and re-flows as the auto-fit card row (the lock's own
+   1180/1020 breakpoints).
+   @container, NOT @media: studio splits its own panes *inside* one iframe, so
+   the viewport is the whole app — a pane dragged to the 240px clamp would still
+   match a wide @media and keep the starved grid. The frame is the container.
+   Must stay *after* the .comp-rail base rule — a container query adds no
+   specificity, so source order is what decides. */
+@container comp-frame (max-width: 1180px) {
+  .comp-stage { grid-template-columns: minmax(0, 1fr) 300px; }
+}
+@container comp-frame (max-width: 1020px) {
+  .comp-stage { grid-template-columns: minmax(0, 1fr); }
+  .comp-rail { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
 }
 .comp-card {
   border: 1px solid var(--border-soft);
