@@ -46,8 +46,9 @@ import {
   selectHasRealCells,
   selectRenderRecords,
 } from '../storyboard-store';
-import { getMcpClient, exportApi, renderApi, anchorApi } from '../mcp-client';
-import type { Anchor, Cell, PromptPackage, PromptPackageEntry, RenderRecord } from '../mcp-types';
+import { useAnchorsStore, selectAnchors } from '../anchors-store';
+import { getMcpClient, exportApi, renderApi } from '../mcp-client';
+import type { Cell, PromptPackage, PromptPackageEntry, RenderRecord } from '../mcp-types';
 import { EmptyState } from '../components/EmptyState';
 import { useLayoutStore } from '../layout-store';
 import { fmtSeconds, fmtRelative } from './composition/format';
@@ -123,22 +124,13 @@ export function HandoffView() {
     setPaneView(focusedPane, 'canvas');
   }, []);
 
-  // ── anchors in frame ──
-  const [anchors, setAnchors] = useState<Anchor[]>([]);
+  // ── anchors in frame (shared store — review §2.4) ──
+  const storeAnchors = useAnchorsStore(selectAnchors);
+  const ensureAnchors = useAnchorsStore((s) => s.ensure);
   useEffect(() => {
-    if (!hasRealCells) { setAnchors([]); return; }
-    let cancelled = false;
-    (async () => {
-      try {
-        const client = await getMcpClient();
-        const res = await anchorApi.list(client);
-        if (!cancelled) setAnchors(res.anchors ?? []);
-      } catch {
-        if (!cancelled) setAnchors([]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [hasRealCells, project?.project_id]);
+    if (hasRealCells && project?.project_id) ensureAnchors(project.project_id);
+  }, [hasRealCells, project?.project_id, ensureAnchors]);
+  const anchors = hasRealCells ? storeAnchors : [];
 
   const anchorsInFrame = useMemo(
     () => (cell ? anchors.filter((a) => cell.anchors.includes(a.id)) : []),

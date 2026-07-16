@@ -56,7 +56,8 @@ import {
   selectHydratedCells,
   selectHydratedProject,
 } from '../storyboard-store';
-import { getMcpClient, storyboardApi, anchorApi, renderApi } from '../mcp-client';
+import { useAnchorsStore, selectAnchors, selectAnchorsError } from '../anchors-store';
+import { getMcpClient, storyboardApi, renderApi } from '../mcp-client';
 import { parseFountain, type FountainScene } from '../lib/fountain';
 import type { Anchor, Cell, EngineCapability } from '../mcp-types';
 import { EmptyState } from '../components/EmptyState';
@@ -264,23 +265,16 @@ export function BreakdownView() {
   // real projects always persist the screenplay to <root>/script.fountain (see mcp-client.ts:199-201)
   const scriptFilename = hasRealCells ? 'script.fountain' : 'the-forge.fountain';
 
-  // ── anchors (real: anchor.list; mock: DEMO_ANCHORS) ──
-  const [anchors, setAnchors] = useState<Anchor[]>([]);
-  const [anchorsError, setAnchorsError] = useState<string | null>(null);
+  // ── anchors (shared store — review §2.4 — real: anchor.list via the
+  // store; mock: DEMO_ANCHORS) ──
+  const storeAnchors = useAnchorsStore(selectAnchors);
+  const storeAnchorsError = useAnchorsStore(selectAnchorsError);
+  const ensureAnchors = useAnchorsStore((s) => s.ensure);
   useEffect(() => {
-    if (!hasRealCells) { setAnchors(DEMO_ANCHORS); setAnchorsError(null); return; }
-    let cancelled = false;
-    void (async () => {
-      try {
-        const client = await getMcpClient();
-        const res = await anchorApi.list(client);
-        if (!cancelled) { setAnchors(res.anchors ?? []); setAnchorsError(null); }
-      } catch (e) {
-        if (!cancelled) { setAnchors([]); setAnchorsError((e as Error).message); }
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [hasRealCells, project?.project_id]);
+    if (hasRealCells && project?.project_id) ensureAnchors(project.project_id);
+  }, [hasRealCells, project?.project_id, ensureAnchors]);
+  const anchors = hasRealCells ? storeAnchors : DEMO_ANCHORS;
+  const anchorsError = hasRealCells ? storeAnchorsError : null;
 
   // ── engines (real only — powers the Track A/B heuristic) ──
   const [engines, setEngines] = useState<EngineCapability[]>([]);

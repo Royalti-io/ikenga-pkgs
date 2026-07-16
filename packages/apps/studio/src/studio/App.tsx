@@ -11,13 +11,15 @@
 // shared store the views already subscribe to — App.tsx itself stays
 // cross-link-agnostic.
 
-import { useEffect } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { isStandalone } from './bridge';
 import { useLayoutStore } from './layout-store';
 import { useProjectStore, selectIsProjectOpen, selectOpenProject } from './project-store';
 import { useStoryboardStore } from './storyboard-store';
 import { useRenderPoll } from './lib/use-render-poll';
+import { loadLastProject, clearLastProject, type LastProject } from './lib/project-persistence';
+import { openProjectByPath, errText } from './lib/open-project';
 import type { PaneIndex, ViewComponentRegistry } from './routes';
 import { LayoutSwitcher } from './components/LayoutSwitcher';
 import { Split } from './components/Split';
@@ -162,6 +164,31 @@ function PaneRegion() {
   );
 }
 
+// Optimistic resume (review §2 cold-start + §5.4): shown in place of the full
+// Launcher for the instant between mount and the resume `project.open`
+// settling. Mirrors main.tsx's boot-placeholder idiom (`.studio-scaffold`)
+// rather than inventing a new loading surface — this and the boot placeholder
+// are the same visual beat, back to back, on every remount that has a last
+// project.
+function ResumeSkeleton({ name }: { name: string }) {
+  return (
+    <main className="studio-scaffold">
+      <h1 className="studio-scaffold__title">Studio</h1>
+      <p className="studio-scaffold__hint">
+        Resuming <span className="text-fg">{name}</span>…
+      </p>
+    </main>
+  );
+}
+
+// Discriminated so a render can never read `resumeError`-shaped fields while
+// still `pending`, or show the skeleton once the attempt has settled either
+// way — the phase IS the render decision, not a side flag alongside one.
+type ResumeState =
+  | { phase: 'idle' }
+  | { phase: 'pending'; target: LastProject }
+  | { phase: 'failed'; name: string; detail: string };
+
 export function App() {
   const isProjectOpen = useProjectStore(selectIsProjectOpen);
   const openProjectSummary = useProjectStore(selectOpenProject);
@@ -170,6 +197,48 @@ export function App() {
   const standalone = isStandalone();
   const bindPersistence = useLayoutStore((s) => s.bindPersistence);
   const unbindPersistence = useLayoutStore((s) => s.unbindPersistence);
+
+  // Optimistic resume: read the persisted last-opened project SYNCHRONOUSLY
+  // (lazy init runs during this first render, before the `!isProjectOpen`
+  // branch below decides what to paint) instead of waiting on the full
+  // probe/mode handshake the old Launcher-side auto-reopen gated behind. That
+  // gate is why every pane remount used to flash the Launcher first — the
+  // reopen target is already known from localStorage, no round-trip needed to
+  // find it. Standalone (pnpm dev, no shell parent) never resumes: there is
+  // nothing real on disk for a mock session to reopen (mirrors the old
+  // mode!=='real' guard, but decidable synchronously via isStandalone()).
+  const [resume, setResume] = useState<ResumeState>(() => {
+    if (standalone) return { phase: 'idle' };
+    const target = loadLastProject();
+    return target ? { phase: 'pending', target } : { phase: 'idle' };
+  });
+  // StrictMode double-invokes effects; this plus the `phase !== 'pending'`
+  // check below gives exactly one reopen attempt for the state's lifetime.
+  const resumeAttempted = useRef(false);
+
+  useEffect(() => {
+    if (resume.phase !== 'pending' || resumeAttempted.current) return;
+    resumeAttempted.current = true;
+    const { target } = resume;
+    void (async () => {
+      try {
+        // Reuses Wave 1's shared getMcpClient() (in-flight guard + probed-
+        // engines cache) via openProjectByPath — no separate client here.
+        await openProjectByPath(target.path, target.name);
+        // Success flips project-store's isOpen; the render below switches to
+        // the pane layout on its own. Still settle the phase so a LATER
+        // explicit close (project-store.closeProject) lands on a plain
+        // Launcher instead of resurrecting this skeleton.
+        setResume({ phase: 'idle' });
+      } catch (e) {
+        // Moved / access denied / sidecar error: forget the stale entry so
+        // the flash-inducing skeleton can't recur on the next mount, and hand
+        // the honest failure to the Launcher the user lands on instead.
+        clearLastProject();
+        setResume({ phase: 'failed', name: target.name || target.path, detail: errText(e) });
+      }
+    })();
+  }, [resume]);
 
   // App-level keyboard map + V-split focus trap (commit 15). Registered
   // unconditionally; its handlers no-op until a pane region exists.
@@ -209,9 +278,19 @@ export function App() {
   // The launcher pre-empts the pane layout entirely — it isn't a sub-view
   // and doesn't share the layout/view-switcher chrome (launcher.md §"Chrome
   // & Navigation": "There is no pane chrome or view-switcher"). It unmounts
-  // the moment a project opens.
+  // the moment a project opens. While a resume is in flight, the skeleton
+  // above pre-empts the Launcher itself so no Launcher mount (and its own
+  // archetype/recents loaders) ever happens for the common resume path.
   if (!isProjectOpen) {
-    return <LauncherView />;
+    if (resume.phase === 'pending') {
+      return <ResumeSkeleton name={resume.target.name || resume.target.path} />;
+    }
+    return (
+      <LauncherView
+        resumeError={resume.phase === 'failed' ? { name: resume.name, detail: resume.detail } : null}
+        onDismissResumeError={() => setResume({ phase: 'idle' })}
+      />
+    );
   }
 
   return (

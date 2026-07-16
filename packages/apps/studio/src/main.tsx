@@ -12,9 +12,17 @@ import { StrictMode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 
 import { App } from './studio/App';
-import { connectBridge } from './studio/bridge';
+import { connectBridge, isStandalone } from './studio/bridge';
+import { loadLastProject } from './studio/lib/project-persistence';
 import { setupTheme } from './studio/theme';
 import './studio/styles/index.css';
+
+// Read the persisted last-opened project up front (review §2/§5.4 optimistic
+// resume) purely for boot copy: it lets this pre-handshake placeholder say
+// "Reopening X…" instead of a generic "Connecting…" that would otherwise
+// flash before App's own resume skeleton (App.tsx) takes over with the same
+// message. Standalone never resumes (nothing real on disk for a mock
+// session) so it keeps the generic copy — mirrors App.tsx's own gate.
 
 // Own the theme BEFORE React mounts (and before the styles above paint anything
 // theme-dependent): mirror the shell's data-theme/mode/density onto our own
@@ -30,6 +38,9 @@ setupTheme();
 // never trips the timeout.
 type BootState = 'connecting' | 'error';
 
+const lastProject = isStandalone() ? null : loadLastProject();
+const resumeTargetName = lastProject ? lastProject.name || lastProject.path : null;
+
 function ScaffoldPlaceholder({ state }: { state: BootState }) {
   return (
     <main className="studio-scaffold">
@@ -37,6 +48,8 @@ function ScaffoldPlaceholder({ state }: { state: BootState }) {
       <p className="studio-scaffold__hint">
         {state === 'error'
           ? "Studio couldn't reach the workspace."
+          : resumeTargetName
+          ? `Reopening ${resumeTargetName}…`
           : 'Connecting to your workspace…'}
       </p>
     </main>

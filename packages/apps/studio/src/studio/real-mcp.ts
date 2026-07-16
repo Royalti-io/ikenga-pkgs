@@ -42,7 +42,7 @@ import { callPkgTool } from './bridge';
 import type { McpClient } from './mcp-client';
 import type {
   Project, Cell, Beat, RenderRecord, Archetype, AspectRatio, Anchor,
-  StudioEventName, StudioEventPayloadMap,
+  PosterEntry, StudioEventName, StudioEventPayloadMap,
 } from './mcp-types';
 
 // ─── active-project state (per client instance) ─────────────────────────
@@ -488,6 +488,15 @@ export function createRealMcpClient(): McpClient {
           sizeBytes: (body.sizeBytes as number) ?? 0,
           path: (body.path as string) ?? '',
         };
+      }
+      // render.list_posters (Wave 2, review §2.5) — batched poster read for the
+      // Canvas grid; collapses N per-tile render.read_poster round-trips into
+      // one. No active-project injection (keyed on the render record ids only,
+      // same as read_poster/read_bytes).
+      case 'render.list_posters': {
+        const recordIds = (args.record_ids as string[] | undefined) ?? [];
+        const body = await raw('render.list_posters', { recordIds });
+        return { posters: (body.posters as PosterEntry[]) ?? [] };
       }
       // render.ingest_external (WF-1) — attach an externally-produced clip to a
       // cell as a done render row (return leg of export.prompt_package).

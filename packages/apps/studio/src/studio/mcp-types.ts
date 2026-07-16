@@ -102,6 +102,17 @@ export interface EngineCapability {
   combine?: boolean;
 }
 
+// ─── Batched poster read (render.list_posters — Wave 2, review §2.5) ────
+//
+// One round-trip for every Canvas tile's poster instead of N concurrent
+// `render.read_poster` calls. `b64` is `null` for a record with no poster
+// yet or an unreadable file — a single missing poster never fails the batch.
+
+export interface PosterEntry {
+  recordId: string;
+  b64: string | null;
+}
+
 // ─── Prompt-package handoff (export.prompt_package — WF-1) ───────────────
 //
 // Platform-shaped prompt bundle for a target generator with no API (Higgsfield,

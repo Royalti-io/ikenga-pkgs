@@ -58,6 +58,7 @@ import {
   selectRenderRecords,
 } from '../storyboard-store';
 import { useSharedStore } from '../shared-state';
+import { useAnchorsStore, selectAnchors, selectAnchorsLoading, selectAnchorsError } from '../anchors-store';
 import { getMcpClient, anchorApi } from '../mcp-client';
 import { recordByUid, engineLabel } from './composition/format';
 import type { Anchor, Cell, ShotType } from '../mcp-types';
@@ -303,9 +304,16 @@ export function CastWorldView() {
   const renderRecords = useStoryboardStore(selectRenderRecords);
   const setCellUid = useSharedStore((s) => s.setCellUid);
 
-  const [anchors, setAnchors] = useState<Anchor[]>([]);
-  const [loadState, setLoadState] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
-  const [loadError, setLoadError] = useState<string | null>(null);
+  // Shared anchors store (review §2.4) — hydrate-once-per-project instead of
+  // CastWorld's own anchor.list; mutations below call `refetchAnchors()`
+  // (now the store's `refresh()`) so every OTHER pane reading the store
+  // (Cell/Canvas/Handoff/Breakdown/Ledger) also sees the write, not just this
+  // one.
+  const anchors = useAnchorsStore(selectAnchors);
+  const anchorsLoading = useAnchorsStore(selectAnchorsLoading);
+  const anchorsErr = useAnchorsStore(selectAnchorsError);
+  const ensureAnchors = useAnchorsStore((s) => s.ensure);
+  const refreshAnchorsStore = useAnchorsStore((s) => s.refresh);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [rowError, setRowError] = useState<{ id: string; message: string } | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -319,28 +327,24 @@ export function CastWorldView() {
 
   const refetchAnchors = useCallback(async () => {
     if (!hasRealCells) return;
-    setLoadState((s) => (s === 'ready' ? s : 'loading'));
-    setLoadError(null);
-    try {
-      const client = await getMcpClient();
-      const res = await anchorApi.list(client);
-      setAnchors(res.anchors ?? []);
-      setLoadState('ready');
-    } catch (err) {
-      setLoadState('error');
-      setLoadError((err as Error).message);
-    }
-  }, [hasRealCells]);
+    await refreshAnchorsStore();
+  }, [hasRealCells, refreshAnchorsStore]);
 
-  // load on mount + re-read on focus (POLL-on-demand — matches the rest of
-  // the app; the shell can't relay a cells/changed event into the iframe).
+  // hydrate once per project (store dedupes concurrent callers) + re-read on
+  // focus (POLL-on-demand — matches the rest of the app; the shell can't
+  // relay a cells/changed event into the iframe).
   useEffect(() => {
-    if (hasRealCells) void refetchAnchors();
-    else {
-      setAnchors([]);
-      setLoadState('idle');
-    }
-  }, [hasRealCells, refetchAnchors]);
+    if (hasRealCells && project?.project_id) ensureAnchors(project.project_id);
+  }, [hasRealCells, project?.project_id, ensureAnchors]);
+
+  const loadState: 'idle' | 'loading' | 'ready' | 'error' = !hasRealCells
+    ? 'idle'
+    : anchorsErr
+      ? 'error'
+      : anchorsLoading
+        ? 'loading'
+        : 'ready';
+  const loadError = anchorsErr;
 
   const displayAnchors = useMemo<DisplayAnchor[]>(() => {
     if (hasRealCells) return buildRealAnchors(anchors, hydratedCells);

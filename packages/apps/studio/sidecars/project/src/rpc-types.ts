@@ -109,6 +109,7 @@ export type RpcMethod =
   | 'render.list_engines'
   | 'render.read_bytes'
   | 'render.read_poster'
+  | 'render.list_posters'
   | 'render.ingest_external'
   // export.* (WP-07c / G-38)
   | 'export.compose'

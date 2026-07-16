@@ -13,7 +13,7 @@
 // aren't available, never to a fake player. See views/composition/* + the
 // playback-seam probe verdict for why file:// / loopback don't work in the pane.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   TransportBar,
@@ -318,7 +318,9 @@ export function CompositionView() {
     }
   };
 
-  const onRefreshRecords = async () => {
+  // Stable so the memoized <RecordsPanel> (review §2.2/2.6) can actually bail
+  // on its onRefresh prop instead of seeing a fresh function every render.
+  const onRefreshRecords = useCallback(async () => {
     if (refreshing) return;
     setRefreshing(true);
     try {
@@ -326,7 +328,7 @@ export function CompositionView() {
     } finally {
       setRefreshing(false);
     }
-  };
+  }, [refreshing, refreshRenders]);
 
   // ── Export flow: pre-flight → compose → running → done | error ──────────
   const runExport = async () => {

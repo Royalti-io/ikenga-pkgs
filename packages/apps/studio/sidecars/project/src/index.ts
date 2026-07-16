@@ -355,6 +355,7 @@ function buildHandlers(db: Db): BuiltHandlers {
       'render.list',
       'render.read_bytes',
       'render.read_poster',
+      'render.list_posters',
       'export.compose',
       'export.status',
       'export.list',
@@ -496,6 +497,8 @@ function buildHandlers(db: Db): BuiltHandlers {
         return runner.readBytes(params.recordId as string);
       case 'render.read_poster':
         return runner.readPoster(params.recordId as string);
+      case 'render.list_posters':
+        return runner.listPosters(Array.isArray(params.recordIds) ? (params.recordIds as string[]) : []);
       case 'render.ingest_external':
         return runner.ingestExternal(params.projectId as string, params.cellId as string, {
           filePath: params.filePath as string,

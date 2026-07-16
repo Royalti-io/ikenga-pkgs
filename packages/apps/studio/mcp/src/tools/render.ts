@@ -83,6 +83,20 @@ export function renderTools(sidecar: SidecarClient): ToolDef[] {
       handler: (args) => callSidecar(sidecar, 'render.read_poster', { recordId: args.recordId }),
     },
     {
+      name: 'render.list_posters',
+      description:
+        "Batch-read up to 100 finished renders' poster PNGs off disk, base64-encoded, in ONE round-trip — collapses the Canvas grid's per-tile fan-out (N concurrent render.read_poster calls) into a single call. Returns { ok:true, posters: [{ recordId, b64 }] }; b64 is null for a record with no poster yet or an unreadable file — a single missing poster never fails the batch.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          recordIds: { type: 'array', items: { type: 'string' }, maxItems: 100 },
+        },
+        required: ['recordIds'],
+        additionalProperties: false,
+      },
+      handler: (args) => callSidecar(sidecar, 'render.list_posters', { recordIds: args.recordIds }),
+    },
+    {
       name: 'render.ingest_external',
       description:
         "Attach a filmmaker's externally-produced clip (mp4/png dropped on disk) to a cell as a done RenderRecord with manual provenance — the return leg of export.prompt_package. Copies the file into renders/<engine>/<rungDir>/<cellUid>.<ext> and writes a terminal 'done' render row so render.list surfaces it exactly like a completed real render. Returns { ok:true, recordId, engine, outputPath, record }.",

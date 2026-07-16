@@ -93,6 +93,10 @@ export type IngestExternalResult =
   | { ok: true; recordId: string; engine: string; outputPath: string; record: RenderRecord }
   | { ok: false; error: string; message?: string };
 
+/** Cap on `listPosters`'s batch size — bounds the synchronous per-record
+ *  disk reads a single RPC turn can do (Canvas grid batching, review §2.5). */
+const MAX_LIST_POSTERS = 100;
+
 /**
  * The runner owns the AbortControllers for in-flight renders so `cancel`
  * can abort the right one. Keyed by recordId.
@@ -318,6 +322,26 @@ export class RenderRunner {
     } catch (e) {
       return { ok: false, error: 'render-read-failed', message: (e as Error).message };
     }
+  }
+
+  /**
+   * Batched poster read (review §2.5): the Canvas grid mounts one
+   * `<CellPoster>` per tile, and each used to issue its own `readPoster`
+   * round-trip — N done cells meant N concurrent base64-PNG calls. This
+   * collapses them into one. Reuses `readPoster` per id rather than a
+   * shared bulk query — posters are small PNGs, so N sync `readFileSync`
+   * calls stay cheap even at `MAX_LIST_POSTERS`, and a record with no
+   * poster (or an unreadable one) maps to `b64: null` instead of failing
+   * the whole batch, mirroring `readPoster`'s own per-record honesty.
+   * Silently truncates past the cap rather than erroring the batch — a
+   * caller sending too many ids gets a partial answer, not a hard failure.
+   */
+  listPosters(recordIds: string[]): { ok: true; posters: Array<{ recordId: string; b64: string | null }> } {
+    const posters = recordIds.slice(0, MAX_LIST_POSTERS).map((recordId) => {
+      const r = this.readPoster(recordId);
+      return { recordId, b64: r.ok ? r.base64 : null };
+    });
+    return { ok: true, posters };
   }
 
   /**

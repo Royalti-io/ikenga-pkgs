@@ -119,6 +119,33 @@ export interface StoryboardStoreActions {
   displayCell: (uid: string | null) => DisplayCell | null;
 }
 
+// ─── poll-tick reference stability (review §2.2/2.6) ─────────────────────
+//
+// `foldRenderStatus` (and the raw render.list rows behind it) return a fresh
+// object/array every ~2s poll tick even when nothing changed. Cell/Canvas/
+// Composition/NowRenderingBeacon all subscribe to `renderStatus` (and the
+// first three to `renderRecords`) by reference via zustand's default
+// Object.is selector equality, so a same-value-but-new-reference tick still
+// re-renders all four. Reusing the prior reference when the values are
+// unchanged fixes every consumer at the store instead of requiring a
+// `useShallow` at each call site.
+
+function statusMapEqual(a: Record<string, RenderStatus>, b: Record<string, RenderStatus>): boolean {
+  const aKeys = Object.keys(a);
+  if (aKeys.length !== Object.keys(b).length) return false;
+  for (const k of aKeys) if (a[k] !== b[k]) return false;
+  return true;
+}
+
+/** Records are small, JSON-serializable, and `.passthrough()`-shaped (nested
+ *  `output`/`preview`/`metadata`) — a structural stringify compare is cheaper
+ *  to get right than a hand-rolled deep-equal and still cheap at render.list's
+ *  scale. */
+function recordsEqual(a: RenderRecord[], b: RenderRecord[]): boolean {
+  if (a.length !== b.length) return false;
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 export type StoryboardStore = StoryboardStoreState & StoryboardStoreActions;
 
 export const useStoryboardStore = create<StoryboardStore>((set, get) => ({
@@ -161,15 +188,17 @@ export const useStoryboardStore = create<StoryboardStore>((set, get) => ({
   },
 
   refreshRenders: async () => {
-    const { projectId, source } = get();
+    const { projectId, source, renderStatus: prevStatus, renderRecords: prevRecords } = get();
     if (!projectId || source !== 'real') return;
     try {
       const client = await getMcpClient();
       if (client.mode !== 'real') return;
       const { records } = await renderApi.list(client);
+      const nextRecords = records ?? [];
+      const nextStatus = foldRenderStatus(nextRecords);
       set({
-        renderStatus: foldRenderStatus(records ?? []),
-        renderRecords: records ?? [],
+        renderStatus: statusMapEqual(prevStatus, nextStatus) ? prevStatus : nextStatus,
+        renderRecords: recordsEqual(prevRecords, nextRecords) ? prevRecords : nextRecords,
         lastSyncedAt: Date.now(),
       });
     } catch {

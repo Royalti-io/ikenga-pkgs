@@ -28,7 +28,7 @@
 //     narration block. When absent, an honest note (with a Chi hint) stands in
 //     for a dead toggle.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { CodeEditor, type CodeEditorHandle } from '@ikenga/ui-lib';
 import { insertAnchor } from '@ikenga/ui-lib/extensions';
@@ -52,19 +52,18 @@ import {
   selectRenderRecords,
   toDisplayCell,
 } from '../storyboard-store';
+import { useAnchorsStore, selectAnchors } from '../anchors-store';
 import {
   getMcpClient,
   storyboardApi,
-  compositionApi,
-  anchorApi,
   renderApi,
-  exportApi,
 } from '../mcp-client';
-import { pollRenderUntilDone, POLL_FAILED } from '../lib/render-poll';
+import { useAsyncAction } from '../lib/use-async-action';
+import { useShotGenerate, type RenderOpts } from '../lib/use-shot-generate';
 import { recordByUid, fmtRelative, base64ToBlob, copyText, engineLabel } from './composition/format';
 import type { CellVideoAvailability } from './composition/CellVideo';
 import { DEFAULT_RESOLUTION } from '../mcp-types';
-import type { Rung, AspectRatio, Anchor, RenderStatus, EngineCapability, PromptPackage, RenderRecord } from '../mcp-types';
+import type { Rung, AspectRatio, RenderStatus, EngineCapability, PromptPackage, RenderRecord } from '../mcp-types';
 import { EmptyState } from '../components/EmptyState';
 import { SafeZoneBands } from '../media-controls';
 
@@ -462,113 +461,6 @@ function DraftPreview({ html, ready, aspect }: { html: string; ready: boolean; a
   );
 }
 
-// ─── render lifecycle (enqueue + poll; honest indeterminate progress) ────
-
-type RenderState = 'idle' | 'queued' | 'running' | 'done' | 'failed';
-
-/** What a render enqueue is billed against. Omitted engine → the sidecar
- *  resolves one from the cell's content_path (registry.resolveEngineWithRequest);
- *  omitted variant → the adapter's own model resolution. */
-type RenderOpts = { engine?: string; variant?: string };
-
-function useRenderLifecycle(
-  cellUid: string | null,
-  real: { isReal: boolean; projectId: string | null },
-  hooks: { onEnqueued?: () => void; onSettled?: () => void },
-) {
-  const [state, setState] = useState<RenderState>('idle');
-  // progress is only ever a real fraction in the mock timer path; real mode
-  // keeps it 0 (the sidecar reports no true %) so the UI renders indeterminate.
-  const [progress, setProgress] = useState(0);
-  // What the last enqueue actually dispatched. A retry has to replay THIS
-  // rather than re-read the desk (which may have been switched since the
-  // failure), and the in-flight readout names it rather than guessing — the
-  // spend is against these, so nothing else may claim to speak for it.
-  const [lastOpts, setLastOpts] = useState<RenderOpts | null>(null);
-  const timersRef = useRef<{ kick?: ReturnType<typeof setTimeout>; tick?: ReturnType<typeof setInterval> }>({});
-  const abortRef = useRef<{ aborted: boolean }>({ aborted: false });
-  const hooksRef = useRef(hooks);
-  hooksRef.current = hooks;
-
-  const cancel = useCallback(() => {
-    if (timersRef.current.kick) clearTimeout(timersRef.current.kick);
-    if (timersRef.current.tick) clearInterval(timersRef.current.tick);
-    timersRef.current = {};
-    abortRef.current.aborted = true;
-  }, []);
-
-  // `variant` is the engine-specific model pick (fal's resolveVideoModel reads
-  // opts.variant first). Omitted → the adapter's own default.
-  const trigger = useCallback(async (opts?: RenderOpts) => {
-    if (state === 'queued' || state === 'running') return;
-    cancel();
-    abortRef.current = { aborted: false };
-    setState('queued');
-    setProgress(0);
-    setLastOpts({ engine: opts?.engine, variant: opts?.variant });
-
-    if (real.isReal && real.projectId && cellUid) {
-      try {
-        const client = await getMcpClient();
-        const { record_id } = await compositionApi.render(client, {
-          project_id: real.projectId,
-          cell_uid: cellUid,
-          engine: opts?.engine,
-          variant: opts?.variant,
-        });
-        hooksRef.current.onEnqueued?.();
-        const rec = await pollRenderUntilDone(client, record_id, {
-          signal: abortRef.current,
-          onTick: (r) => {
-            if (abortRef.current.aborted) return;
-            if (r.status === 'running') setState('running');
-            else if (r.status === 'queued') setState('queued');
-            else if (r.status === 'done') { setState('done'); setProgress(1); }
-            else if (r.status === 'failed' || r.status === 'cancelled') setState('failed');
-          },
-        });
-        if (abortRef.current.aborted) return;
-        // POLL_FAILED means the status RPC itself kept failing (sidecar blip
-        // outlasting the poll's own retries) — a null/undefined here would
-        // otherwise match neither branch and leave renderState stuck at
-        // queued/running forever with a spinner and a disabled button.
-        if (rec !== POLL_FAILED && rec.status === 'done') { setState('done'); setProgress(1); }
-        else setState('failed');
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.error('[studio] cell render failed', err);
-        setState('failed');
-      } finally {
-        hooksRef.current.onSettled?.();
-      }
-      return;
-    }
-
-    // Mock / standalone: local timer simulation so the control still animates.
-    timersRef.current.kick = setTimeout(() => setState('running'), 400);
-    timersRef.current.tick = setInterval(() => {
-      setProgress((p) => {
-        const next = Math.min(1, p + 0.08);
-        if (next >= 1) {
-          if (timersRef.current.tick) clearInterval(timersRef.current.tick);
-          setState('done');
-        }
-        return next;
-      });
-    }, 250);
-  }, [state, cancel, real.isReal, real.projectId, cellUid]);
-
-  useEffect(() => {
-    cancel();
-    setState('idle');
-    setProgress(0);
-    setLastOpts(null);
-    return cancel;
-  }, [cellUid, cancel]);
-
-  return { state, progress, trigger, lastOpts };
-}
-
 // Nominal narration window for the excerpt highlight (P1 stand-in for real
 // per-word timing when sync is on).
 const NARRATION_WINDOW_MS = 3200;
@@ -611,11 +503,78 @@ function randomSeed(): number {
   return Math.floor(100_000 + Math.random() * 899_999);
 }
 
+// The only reader of `playheadMs` in this view (review §2.6): subscribing at
+// the top of CellView re-rendered its ~1800-line tree every playback frame
+// for a highlight only this row paints. Pushed down here — and memoized —
+// so a per-frame update stays scoped to this strip instead of the whole view.
+const NarrationRow = memo(function NarrationRow({
+  narrationText,
+  narrationStaticIdx,
+}: {
+  narrationText: string | null;
+  narrationStaticIdx: number;
+}) {
+  const [narrationSync, setNarrationSync] = useState(false);
+  const playheadMs = useSharedStore(selectPlayheadMs);
+  const narrationActiveIdx = (() => {
+    if (!narrationText) return 0;
+    if (!narrationSync) return narrationStaticIdx;
+    const wordCount = narrationText.trim().split(/\s+/).length;
+    if (wordCount === 0) return 0;
+    const phase = ((playheadMs % NARRATION_WINDOW_MS) + NARRATION_WINDOW_MS) % NARRATION_WINDOW_MS;
+    return Math.min(wordCount - 1, Math.floor((phase / NARRATION_WINDOW_MS) * wordCount));
+  })();
+
+  return (
+    <div className="flex items-center gap-3 border-t border-soft bg-surface px-3 py-2 text-[11px]">
+      {narrationText ? (
+        <>
+          <button
+            type="button"
+            onClick={() => setNarrationSync((s) => !s)}
+            aria-pressed={narrationSync}
+            className={
+              'flex flex-none items-center gap-1.5 rounded px-2 py-1 ' +
+              (narrationSync ? 'bg-raised text-fg' : 'text-fg-muted hover:bg-raised hover:text-fg')
+            }
+            title="Sync the narration highlight to the composition playhead"
+          >
+            <span>▸ Narration</span>
+          </button>
+          <div className="min-w-0 flex-1 leading-relaxed text-fg-muted">
+            {narrationText.split(/(\s+)/).map((tok, i) => {
+              if (/^\s+$/.test(tok)) return tok;
+              const wordIdx =
+                narrationText.slice(0, narrationText.indexOf(tok) + tok.length).split(/\s+/).length - 1;
+              const active = wordIdx === narrationActiveIdx;
+              return (
+                <span
+                  key={`${i}-${tok}`}
+                  className={active ? 'font-medium' : 'opacity-60'}
+                  style={active ? { color: 'var(--achievement)' } : undefined}
+                >
+                  {tok}
+                </span>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <div className="flex items-center gap-2 text-fg-muted">
+          <span className="opacity-40">▸ Narration</span>
+          <span className="text-[11px]">
+            No narration on this cell yet — ask your Chi in chat to add voiceover.
+          </span>
+        </div>
+      )}
+    </div>
+  );
+});
+
 // ─── View ───────────────────────────────────────────────────────────────
 
 export function CellView() {
   const cellUid = useSharedStore(selectCellUid);
-  const playheadMs = useSharedStore(selectPlayheadMs);
   const setCellUid = useSharedStore((s) => s.setCellUid);
   const project = useProjectStore(selectOpenProject);
 
@@ -629,6 +588,17 @@ export function CellView() {
   const bumpActivePoll = useStoryboardStore((s) => s.bumpActivePoll);
 
   const pid = hasRealCells ? project?.project_id ?? null : null;
+
+  // The shared shot-generate pipeline — engine capability, the primary cell's
+  // render lifecycle (enqueue + poll), and the Track-B handoff/ingest legs.
+  // Presentation stays in this view; the action pipeline lives in the hook.
+  const shot = useShotGenerate(cellUid, {
+    isReal: hasRealCells,
+    projectId: project?.project_id ?? null,
+    onEnqueued: () => bumpActivePoll(),
+    onSettled: () => { void refreshRenders(); },
+  });
+  const trackAEngines = shot.trackAEngines;
 
   // Re-read on focus (POLL-on-demand stand-in for cells/changed).
   useEffect(() => { void refetchStoryboard(); }, [refetchStoryboard]);
@@ -872,23 +842,16 @@ export function CellView() {
   const canSave = dirty && contentState === 'ready';
   const savedAt = cellUid ? savedAtMap.get(bufKey(pid, cellUid)) : undefined;
 
-  // ── anchors ──
-  const [anchors, setAnchors] = useState<Anchor[]>([]);
+  // ── anchors (shared store — review §2.4: was an independent anchor.list
+  // per view; ensure() dedupes across Cell/Canvas/Handoff/Breakdown/Ledger/
+  // CastWorld hydrating the same project) ──
+  const storeAnchors = useAnchorsStore(selectAnchors);
+  const ensureAnchors = useAnchorsStore((s) => s.ensure);
   const [anchorDrawerOpen, setAnchorDrawerOpen] = useState(false);
   useEffect(() => {
-    if (!hasRealCells) { setAnchors([]); return; }
-    let cancelled = false;
-    (async () => {
-      try {
-        const client = await getMcpClient();
-        const res = await anchorApi.list(client);
-        if (!cancelled) setAnchors(res.anchors ?? []);
-      } catch {
-        if (!cancelled) setAnchors([]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [hasRealCells, pid]);
+    if (hasRealCells && pid) ensureAnchors(pid);
+  }, [hasRealCells, pid, ensureAnchors]);
+  const anchors = hasRealCells ? storeAnchors : [];
 
   const drawerAnchors: Array<{ id: string; name: string; kind: string; color: CellColor }> = hasRealCells
     ? anchors.map((a) => ({ id: a.id, name: a.name, kind: a.kind, color: 'neutral' as CellColor }))
@@ -915,7 +878,6 @@ export function CellView() {
   const [genSeedLocked, setGenSeedLocked] = useState(false);
   const [genAnchorIds, setGenAnchorIds] = useState<string[]>([]);
   const [refPickerOpen, setRefPickerOpen] = useState(false);
-  const [engines, setEngines] = useState<EngineCapability[]>([]);
   const [genEngine, setGenEngine] = useState<string>(HANDOFF_ENGINE_ID);
   // Which fal model the render resolves to — threaded as the render `variant`,
   // not a persisted Cell field (same as the Canvas per-shot picker). Starts on
@@ -923,27 +885,9 @@ export function CellView() {
   const [genModel, setGenModel] = useState<string>(FAL_MODEL_AUTO);
   const [genPatchDirty, setGenPatchDirty] = useState(false);
 
-  // Load the render-engine capability matrix once (real or mock — cheap probe).
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const client = await getMcpClient();
-        const { engines: list } = await renderApi.list_engines(client);
-        if (!cancelled) setEngines(list ?? []);
-      } catch {
-        if (!cancelled) setEngines([]);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  // Track-A candidates: engines that actually report video (or still, as a
-  // fallback) generation capability. If the server reports none (e.g. the
-  // mock's two flat rows), fall back to whatever the server DOES report
-  // rather than fabricating a fal row that isn't really there.
-  const videoEngines = useMemo(() => engines.filter((e) => e.video === true), [engines]);
-  const trackAEngines = videoEngines.length > 0 ? videoEngines : engines;
+  // Track-A candidates come from the shared shot-generate hook: engines that
+  // report video, else whatever the server DOES report (never a fabricated fal
+  // row). The capability matrix loads once in the hook, shared with Canvas.
 
   const engineDisplayName = useCallback((id: string): string => {
     if (id === HANDOFF_ENGINE_ID) return 'Higgsfield';
@@ -1074,19 +1018,14 @@ export function CellView() {
     setHandoffError(null);
     try {
       await persistGenPatch();
-      const client = await getMcpClient();
-      const pkg = await exportApi.prompt_package(client, {
-        project_id: pid ?? undefined,
-        cell_id: cellUid,
-        platform: 'higgsfield',
-      });
+      const pkg = await shot.packagePrompt(cellUid, { platform: 'higgsfield' });
       setHandoffPkg(pkg);
     } catch (err) {
       setHandoffError((err as Error).message);
     } finally {
       setHandoffBusy(false);
     }
-  }, [cellUid, pid, persistGenPatch]);
+  }, [cellUid, persistGenPatch, shot.packagePrompt]);
 
   const copyHandoffPrompt = useCallback(async () => {
     const entry = handoffPkg?.packages.find((p) => p.cellId === cellUid) ?? handoffPkg?.packages[0];
@@ -1103,11 +1042,8 @@ export function CellView() {
     setIngestBusy(true);
     setIngestError(null);
     try {
-      const client = await getMcpClient();
-      const rec = await renderApi.ingest_external(client, {
-        project_id: pid ?? undefined,
-        cell_id: cellUid,
-        file_path: ingestPath.trim(),
+      const rec = await shot.ingestExternal(cellUid, {
+        filePath: ingestPath.trim(),
         engine: HANDOFF_ENGINE_ID,
       });
       setKeeperOverrideId(rec.id);
@@ -1119,36 +1055,26 @@ export function CellView() {
     } finally {
       setIngestBusy(false);
     }
-  }, [cellUid, pid, ingestPath, refetchStoryboard, refreshRenders]);
+  }, [cellUid, ingestPath, refetchStoryboard, refreshRenders, shot.ingestExternal]);
 
   // ── Approve / reject (storyboardApi.set_approved) ──
-  const [approveBusy, setApproveBusy] = useState(false);
-  const [approveError, setApproveError] = useState<string | null>(null);
+  const approve = useAsyncAction();
+  const approveBusy = approve.busy;
+  const approveError = approve.error;
   const cellApproved = hasRealCells ? rawCell?.approved ?? false : false;
   const runSetApproved = useCallback(async (approved: boolean) => {
     if (!cellUid || !hasRealCells) return;
-    setApproveBusy(true);
-    setApproveError(null);
-    try {
-      const client = await getMcpClient();
+    await approve.run(async (client) => {
       await storyboardApi.set_approved(client, cellUid, approved);
       await refetchStoryboard();
-    } catch (err) {
-      setApproveError((err as Error).message);
-    } finally {
-      setApproveBusy(false);
-    }
-  }, [cellUid, hasRealCells, refetchStoryboard]);
+    });
+  }, [cellUid, hasRealCells, refetchStoryboard, approve.run]);
 
-  // ── render lifecycle + preview record ──
-  const { state: renderState, progress: renderProgress, trigger: triggerRender, lastOpts: lastRenderOpts } = useRenderLifecycle(
-    cellUid,
-    { isReal: hasRealCells, projectId: project?.project_id ?? null },
-    {
-      onEnqueued: () => bumpActivePoll(),
-      onSettled: () => { void refreshRenders(); },
-    },
-  );
+  // ── render lifecycle + preview record (from the shared shot-generate hook) ──
+  const renderState = shot.renderState;
+  const renderProgress = shot.renderProgress;
+  const triggerRender = shot.triggerRender;
+  const lastRenderOpts = shot.lastRenderOpts;
 
   const recByUid = useMemo(
     () => (hasRealCells ? recordByUid(renderRecords) : {}),
@@ -1243,19 +1169,12 @@ export function CellView() {
       : "engine resolved from this cell's content";
 
   // ── narration (honest) ──
-  const [narrationSync, setNarrationSync] = useState(false);
+  // `narrationSync`/the playhead-driven highlight live in <NarrationRow> now
+  // (review §2.6) — this view only derives the two inputs it needs.
   const narrationText = hasRealCells
     ? rawCell?.narration_excerpt ?? null
     : getNarrationExcerpt(cellUid)?.text ?? null;
   const narrationStaticIdx = hasRealCells ? 0 : getNarrationExcerpt(cellUid)?.activeWordIdx ?? 0;
-  const narrationActiveIdx = (() => {
-    if (!narrationText) return 0;
-    if (!narrationSync) return narrationStaticIdx;
-    const wordCount = narrationText.trim().split(/\s+/).length;
-    if (wordCount === 0) return 0;
-    const phase = ((playheadMs % NARRATION_WINDOW_MS) + NARRATION_WINDOW_MS) % NARRATION_WINDOW_MS;
-    return Math.min(wordCount - 1, Math.floor((phase / NARRATION_WINDOW_MS) * wordCount));
-  })();
 
   // ── header derived bits ──
   // The PROJECT's frame — which is all this is, and all the readout may say it
@@ -2051,49 +1970,8 @@ export function CellView() {
                 )}
               </div>
 
-              {/* narration row (honest) */}
-              <div className="flex items-center gap-3 border-t border-soft bg-surface px-3 py-2 text-[11px]">
-                {narrationText ? (
-                  <>
-                    <button
-                      type="button"
-                      onClick={() => setNarrationSync((s) => !s)}
-                      aria-pressed={narrationSync}
-                      className={
-                        'flex flex-none items-center gap-1.5 rounded px-2 py-1 ' +
-                        (narrationSync ? 'bg-raised text-fg' : 'text-fg-muted hover:bg-raised hover:text-fg')
-                      }
-                      title="Sync the narration highlight to the composition playhead"
-                    >
-                      <span>▸ Narration</span>
-                    </button>
-                    <div className="min-w-0 flex-1 leading-relaxed text-fg-muted">
-                      {narrationText.split(/(\s+)/).map((tok, i) => {
-                        if (/^\s+$/.test(tok)) return tok;
-                        const wordIdx =
-                          narrationText.slice(0, narrationText.indexOf(tok) + tok.length).split(/\s+/).length - 1;
-                        const active = wordIdx === narrationActiveIdx;
-                        return (
-                          <span
-                            key={`${i}-${tok}`}
-                            className={active ? 'font-medium' : 'opacity-60'}
-                            style={active ? { color: 'var(--achievement)' } : undefined}
-                          >
-                            {tok}
-                          </span>
-                        );
-                      })}
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex items-center gap-2 text-fg-muted">
-                    <span className="opacity-40">▸ Narration</span>
-                    <span className="text-[11px]">
-                      No narration on this cell yet — ask your Chi in chat to add voiceover.
-                    </span>
-                  </div>
-                )}
-              </div>
+              {/* narration row (honest) — playhead subscription lives inside */}
+              <NarrationRow narrationText={narrationText} narrationStaticIdx={narrationStaticIdx} />
             </div>
           </div>
         </>

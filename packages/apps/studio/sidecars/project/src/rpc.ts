@@ -156,6 +156,7 @@ const EXTENDED_METHODS = new Set<string>([
   'render.list_engines',
   'render.read_bytes',
   'render.read_poster',
+  'render.list_posters',
   'render.ingest_external',
   'export.compose',
   'export.status',

@@ -6,7 +6,7 @@
 // cell, joined to its latest render record. Horizontally scrollable so it
 // survives a narrow (v-split) pane.
 
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 
 import type { RenderRecord } from '../../mcp-types';
 import type { TimelineClip } from '../../__mocks__/composition';
@@ -36,7 +36,25 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: 'Cancelled',
 };
 
-export function RecordsPanel({
+// Owns the 1s "Synced Ns ago" tick in isolation (review §2.2 lower-tier) so
+// the once-a-second re-render stays scoped to this label instead of the
+// whole records table.
+const SyncStamp = memo(function SyncStamp({ lastSyncedAt }: { lastSyncedAt: number | null }) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+  const syncText = lastSyncedAt === null ? 'Not synced yet' : `Synced ${fmtRelative(lastSyncedAt, now)}`;
+  return (
+    <span className="comp-sync" title="Render records refresh live while a render is in flight">
+      <span className="comp-sync__dot" aria-hidden="true" />
+      <span className="comp-sync__text" aria-live="polite">{syncText}</span>
+    </span>
+  );
+});
+
+export const RecordsPanel = memo(function RecordsPanel({
   clips,
   recordByUid,
   lastSyncedAt,
@@ -44,13 +62,6 @@ export function RecordsPanel({
   refreshing,
   onRefresh,
 }: RecordsPanelProps) {
-  // Tick once a second so the "Synced Ns ago" stamp stays live between polls.
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(id);
-  }, []);
-
   const [copied, setCopied] = useState<string | null>(null);
   const doCopy = async (path: string, key: string) => {
     if (await copyText(path)) {
@@ -59,16 +70,11 @@ export function RecordsPanel({
     }
   };
 
-  const syncText = lastSyncedAt === null ? 'Not synced yet' : `Synced ${fmtRelative(lastSyncedAt, now)}`;
-
   return (
     <section className="comp-records" aria-label="Render records">
       <div className="comp-records__head">
         <span className="kicker">Render records</span>
-        <span className="comp-sync" title="Render records refresh live while a render is in flight">
-          <span className="comp-sync__dot" aria-hidden="true" />
-          <span className="comp-sync__text" aria-live="polite">{syncText}</span>
-        </span>
+        <SyncStamp lastSyncedAt={lastSyncedAt} />
         <button
           type="button"
           className="btn btn-sm btn-ghost"
@@ -142,4 +148,4 @@ export function RecordsPanel({
       </div>
     </section>
   );
-}
+});

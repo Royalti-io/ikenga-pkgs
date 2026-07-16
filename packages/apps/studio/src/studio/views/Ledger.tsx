@@ -29,7 +29,8 @@ import {
   selectLastSyncedAt,
   selectStoryboardSource,
 } from '../storyboard-store';
-import { getMcpClient, anchorApi, renderApi, exportApi } from '../mcp-client';
+import { useAnchorsStore, selectAnchors } from '../anchors-store';
+import { getMcpClient, renderApi, exportApi } from '../mcp-client';
 import type { BedCheck } from '../mcp-client';
 import type { Anchor, Cell, RenderRecord } from '../mcp-types';
 import { pollExportUntilDone } from '../lib/render-poll';
@@ -174,7 +175,8 @@ export function LedgerView() {
   const bumpActivePoll = useStoryboardStore((s) => s.bumpActivePoll);
 
   const [refreshing, setRefreshing] = useState(false);
-  const [anchorsById, setAnchorsById] = useState<Record<string, Anchor>>({});
+  const storeAnchors = useAnchorsStore(selectAnchors);
+  const ensureAnchors = useAnchorsStore((s) => s.ensure);
   const [bedCheck, setBedCheck] = useState<BedCheck | null>(null);
   const [expandedUid, setExpandedUid] = useState<string | null>(null);
   const [attachingUid, setAttachingUid] = useState<string | null>(null);
@@ -196,25 +198,16 @@ export function LedgerView() {
     void refreshRenders();
   }, [refreshRenders]);
 
+  // Shared anchors store (review §2.4) — anchor names are a labeling nicety,
+  // so a failed/absent load just falls back to raw ids below.
   useEffect(() => {
-    if (!hasRealCells) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const client = await getMcpClient();
-        const { anchors } = await anchorApi.list(client);
-        if (cancelled) return;
-        const byId: Record<string, Anchor> = {};
-        for (const a of anchors ?? []) byId[a.id] = a;
-        setAnchorsById(byId);
-      } catch {
-        // anchor names are a labeling nicety — fall back to raw ids on failure.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [hasRealCells, project?.project_id]);
+    if (hasRealCells && project?.project_id) ensureAnchors(project.project_id);
+  }, [hasRealCells, project?.project_id, ensureAnchors]);
+  const anchorsById = useMemo(() => {
+    const byId: Record<string, Anchor> = {};
+    for (const a of storeAnchors) byId[a.id] = a;
+    return byId;
+  }, [storeAnchors]);
 
   useEffect(() => {
     if (!hasRealCells) {

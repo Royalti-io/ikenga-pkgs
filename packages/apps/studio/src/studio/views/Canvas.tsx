@@ -50,16 +50,15 @@ import {
   toDisplayCell,
 } from '../storyboard-store';
 import { useLayoutStore } from '../layout-store';
+import { useAnchorsStore, selectAnchors } from '../anchors-store';
 import {
   getMcpClient,
   storyboardApi,
-  compositionApi,
-  renderApi,
-  anchorApi,
-  exportApi,
 } from '../mcp-client';
+import { useAsyncAction } from '../lib/use-async-action';
+import { useShotGenerate } from '../lib/use-shot-generate';
 import { SafeZoneBands } from '../media-controls';
-import { CellPoster } from './composition/CellPoster';
+import { CellPoster, prefetchPosters } from './composition/CellPoster';
 import type {
   Anchor,
   AspectRatio,
@@ -272,13 +271,15 @@ export function CanvasView() {
   const [viewport, setViewport] = useState<Viewport>({ x: 80, y: 30, scale: 0.9 });
   const [editMode, setEditMode] = useState(false);
 
-  // add/delete cell + error UI
+  // add/delete cell + error UI — the create/delete busy+error pair rides the
+  // shared useAsyncAction (one modal open at a time, so one instance covers both).
   const [addOpen, setAddOpen] = useState(false);
   const [newBeat, setNewBeat] = useState('');
   const [newRung, setNewRung] = useState<Rung>('0_beat_sheet');
   const [confirmDelete, setConfirmDelete] = useState<{ uid: string; beat: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const cellMutation = useAsyncAction();
+  const busy = cellMutation.busy;
+  const error = cellMutation.error;
 
   // Cell source: REAL cells hydrated from disk when a real project is open,
   // else the __mocks__/cells.ts fixture for standalone-dev / mock mode.
@@ -312,22 +313,14 @@ export function CanvasView() {
   useEffect(() => { void refetchStoryboard(); }, [refetchStoryboard]);
 
   // ── per-shot generation (hi-fi cells only) ──────────────────────────────
-  // Anchors resolve id → name/kind for the shot tile's ref chips. Best-effort:
-  // an unreachable anchor.list just leaves chips showing the raw id.
-  const [anchors, setAnchors] = useState<Anchor[]>([]);
+  // Anchors resolve id → name/kind for the shot tile's ref chips. Shared store
+  // (review §2.4) — an unreachable anchor.list just leaves chips showing the
+  // raw id, same as the old best-effort local fetch.
+  const anchors = useAnchorsStore(selectAnchors);
+  const ensureAnchors = useAnchorsStore((s) => s.ensure);
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const client = await getMcpClient();
-        const { anchors: list } = await anchorApi.list(client);
-        if (!cancelled) setAnchors(list ?? []);
-      } catch {
-        // anchor.list unreachable — chips fall back to the raw anchor id.
-      }
-    })();
-    return () => { cancelled = true; };
-  }, [project?.project_id]);
+    if (project?.project_id) ensureAnchors(project.project_id);
+  }, [project?.project_id, ensureAnchors]);
   const anchorById = useMemo(() => {
     const m: Record<string, Anchor> = {};
     for (const a of anchors) m[a.id] = a;
@@ -351,6 +344,19 @@ export function CanvasView() {
     [recordByUid],
   );
   const fmtCost = (n: number) => `$${n.toFixed(2)}`;
+
+  // Batched poster prefetch (review §2.5) — one render.list_posters round trip
+  // for every done tile's poster instead of N concurrent per-tile
+  // render.read_poster calls. Idempotent: prefetchPosters skips ids already
+  // cached or already in flight, so this can run on every recordByUid update
+  // (the adaptive render poll) without re-fetching what's already resolved.
+  const doneRecordIds = useMemo(
+    () => Object.values(recordByUid).filter((r) => r.status === 'done' && r.id).map((r) => r.id),
+    [recordByUid],
+  );
+  useEffect(() => {
+    if (doneRecordIds.length > 0) prefetchPosters(doneRecordIds);
+  }, [doneRecordIds]);
 
   // Per-cell engine choice — Track A (fal, direct API render) vs Track B
   // (handoff — no API, prompt-package + ingest_external round trip). UI-local:
@@ -385,23 +391,30 @@ export function CanvasView() {
       return next;
     });
 
+  // The shared shot-generate pipeline. Canvas drives it per-card (no focused
+  // render lifecycle — the storyboard store's adaptive poll refreshes tiles),
+  // keeping its own per-uid genBusy/genError presentation. The hook owns the
+  // engine capability + enqueue + Track-B legs, so the old hardcoded
+  // `engine: 'fal'` becomes a resolution against the server's reported matrix.
+  const shot = useShotGenerate(selectedCellUid, {
+    isReal: hasRealCells,
+    projectId: project?.project_id ?? null,
+    onEnqueued: () => bumpActivePoll(),
+  });
+
   async function generateShot(uid: string) {
     if (genBusy[uid]) return;
     setGenBusy((prev) => ({ ...prev, [uid]: true }));
     setGenErrorFor(uid, null);
     try {
-      const client = await getMcpClient();
-      // H2 — thread the user's fal model pick (ltx-video / flux / flux-i2v)
-      // as the render `variant`. The fal adapter's resolveVideoModel reads
-      // opts.variant first, so this is what makes the picker reach fal — and
-      // why Auto must send nothing at all (see FAL_MODEL_AUTO).
-      await compositionApi.render(client, {
-        project_id: project?.project_id ?? '',
-        cell_uid: uid,
-        engine: 'fal',
+      // H2 — thread the user's fal model pick (ltx-video / flux / flux-i2v) as
+      // the render `variant` (fal's resolveVideoModel reads opts.variant first;
+      // Auto must send nothing — see FAL_MODEL_AUTO). The engine is resolved
+      // from the shared capability matrix rather than the old 'fal' literal.
+      await shot.enqueueRender(uid, {
+        engine: shot.resolveTrackAEngineId('fal'),
         variant: choiceFor(uid).model || undefined,
       });
-      bumpActivePoll();
       await Promise.all([refetchStoryboard(), refreshRenders()]);
     } catch (err) {
       setGenErrorFor(uid, `Generate failed — ${(err as Error).message}`);
@@ -414,8 +427,7 @@ export function CanvasView() {
     const recordId = recordByUid[uid]?.id;
     if (!recordId) return;
     try {
-      const client = await getMcpClient();
-      await renderApi.cancel(client, recordId);
+      await shot.cancelRenderJob(recordId);
       await refreshRenders();
     } catch (err) {
       setGenErrorFor(uid, `Cancel failed — ${(err as Error).message}`);
@@ -434,8 +446,7 @@ export function CanvasView() {
 
   async function copyPromptPackage(uid: string, platform: PromptPlatform) {
     try {
-      const client = await getMcpClient();
-      const pkg = await exportApi.prompt_package(client, { cell_id: uid, platform });
+      const pkg = await shot.packagePrompt(uid, { platform });
       const entry = pkg.packages.find((p) => p.cellId === uid) ?? pkg.packages[0];
       if (entry && typeof navigator !== 'undefined' && navigator.clipboard) {
         await navigator.clipboard.writeText(entry.prompt);
@@ -453,8 +464,7 @@ export function CanvasView() {
     setGenBusy((prev) => ({ ...prev, [uid]: true }));
     setGenErrorFor(uid, null);
     try {
-      const client = await getMcpClient();
-      await renderApi.ingest_external(client, { cell_id: uid, file_path: path, engine: platform });
+      await shot.ingestExternal(uid, { filePath: path, engine: platform });
       await Promise.all([refetchStoryboard(), refreshRenders()]);
       setDropPath((prev) => ({ ...prev, [uid]: '' }));
     } catch (err) {
@@ -529,8 +539,6 @@ export function CanvasView() {
 
   async function createCell() {
     if (busy) return;
-    setBusy(true);
-    setError(null);
     const label = newBeat.trim() || 'new beat';
     const beatId = `${slugify(label)}-${rnd()}`;
     const uid = `${beatId}-${rnd()}`;
@@ -553,39 +561,33 @@ export function CanvasView() {
       },
       last_edited: new Date().toISOString(),
     } as unknown as Cell;
-    try {
-      const client = await getMcpClient();
-      await storyboardApi.create_cell(client, cell);
-      await refetchStoryboard();
-      setCellUid(uid);
-      // Open the new cell in the focused pane's Cell view.
-      const { focusedPane, setPaneView } = useLayoutStore.getState();
-      setPaneView(focusedPane, 'cell');
-      setAddOpen(false);
-      setNewBeat('');
-      setNewRung('0_beat_sheet');
-    } catch (err) {
-      setError(`Couldn't create the cell — ${(err as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
+    await cellMutation.run(
+      async (client) => {
+        await storyboardApi.create_cell(client, cell);
+        await refetchStoryboard();
+        setCellUid(uid);
+        // Open the new cell in the focused pane's Cell view.
+        const { focusedPane, setPaneView } = useLayoutStore.getState();
+        setPaneView(focusedPane, 'cell');
+        setAddOpen(false);
+        setNewBeat('');
+        setNewRung('0_beat_sheet');
+      },
+      { onError: (err) => `Couldn't create the cell — ${(err as Error).message}` },
+    );
   }
 
   async function deleteCell(uid: string) {
     if (busy) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const client = await getMcpClient();
-      await storyboardApi.delete_cell(client, uid);
-      if (selectedCellUid === uid) setCellUid(null);
-      await refetchStoryboard();
-      setConfirmDelete(null);
-    } catch (err) {
-      setError(`Couldn't delete the cell — ${(err as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
+    await cellMutation.run(
+      async (client) => {
+        await storyboardApi.delete_cell(client, uid);
+        if (selectedCellUid === uid) setCellUid(null);
+        await refetchStoryboard();
+        setConfirmDelete(null);
+      },
+      { onError: (err) => `Couldn't delete the cell — ${(err as Error).message}` },
+    );
   }
 
   // Empty-project state — before any cells materialize from an archetype chain.
@@ -674,7 +676,7 @@ export function CanvasView() {
           onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
-            setError(null);
+            cellMutation.clearError();
             setConfirmDelete({ uid: item.uid, beat: item.beat });
           }}
           className="absolute right-1 top-1 z-10 hidden h-5 w-5 items-center justify-center rounded border border-[var(--border)] bg-surface text-[11px] leading-none text-fg-faint hover:border-[var(--danger)] hover:text-[var(--danger)] group-hover:flex focus-visible:flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_oklab,var(--danger)_45%,transparent)]"
@@ -988,7 +990,7 @@ export function CanvasView() {
           <span className="mx-0.5 h-4 w-px bg-[var(--border-soft)]" aria-hidden />
           <button
             type="button"
-            onClick={() => { setError(null); setAddOpen(true); }}
+            onClick={() => { cellMutation.clearError(); setAddOpen(true); }}
             className="rounded px-2 py-1 text-fg-muted hover:bg-raised hover:text-fg"
           >
             + New cell
@@ -1017,7 +1019,7 @@ export function CanvasView() {
           <span className="truncate">{error}</span>
           <button
             type="button"
-            onClick={() => setError(null)}
+            onClick={() => cellMutation.clearError()}
             className="rounded px-1.5 py-0.5 text-fg-muted hover:bg-raised hover:text-fg"
           >
             Dismiss
@@ -1118,7 +1120,7 @@ export function CanvasView() {
                   onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setError(null);
+                    cellMutation.clearError();
                     setConfirmDelete({ uid: item.uid, beat: item.beat });
                   }}
                   className="absolute right-1 top-1 z-10 hidden h-5 w-5 items-center justify-center rounded border border-[var(--border)] bg-surface text-[11px] leading-none text-fg-faint hover:border-[var(--danger)] hover:text-[var(--danger)] group-hover:flex focus-visible:flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_oklab,var(--danger)_45%,transparent)]"

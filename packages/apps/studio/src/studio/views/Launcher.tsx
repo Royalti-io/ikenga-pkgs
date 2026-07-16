@@ -25,8 +25,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { archetypeApi, projectApi, renderApi, getMcpClient, getProbedEngines, type McpClient } from '../mcp-client';
 import { openFolder } from '../bridge';
 import { useProjectStore } from '../project-store';
-import { openProjectByPath } from '../lib/open-project';
-import { loadLastProject, clearLastProject } from '../lib/project-persistence';
+import { openProjectByPath, errText } from '../lib/open-project';
 import type { AspectRatio, Archetype, EngineCapability } from '../mcp-types';
 import { Icon } from './launcher/icons';
 import { Gallery } from './launcher/Gallery';
@@ -44,15 +43,20 @@ interface Toast {
   action?: { label: string; run: () => void };
 }
 
-function errText(e: unknown): string {
-  const m = e instanceof Error ? e.message : String(e);
-  // Strip the internal '[studio] <tool> failed:' prefix from user-facing copy.
-  return m.replace(/^\[studio\]\s*/, '').slice(0, 200);
-}
-
 // ─── view ──────────────────────────────────────────────────────────────────
 
-export function LauncherView() {
+export interface LauncherViewProps {
+  /** Set when App's own optimistic-resume attempt (App.tsx) failed — the
+   *  project moved / access was denied / the sidecar errored. App already
+   *  cleared the stale last-project entry; this is purely the honest banner.
+   *  `null`/omitted on a normal (non-resume) landing. */
+  resumeError?: { name: string; detail: string } | null;
+  /** Dismiss the resume-failure banner. Omitted when there's nothing to
+   *  dismiss (no `resumeError`). */
+  onDismissResumeError?: () => void;
+}
+
+export function LauncherView({ resumeError = null, onDismissResumeError }: LauncherViewProps) {
   const openProject = useProjectStore((s) => s.openProject);
 
   const clientRef = useRef<McpClient | null>(null);
@@ -74,15 +78,6 @@ export function LauncherView() {
   const [createError, setCreateError] = useState<string | null>(null);
   const [opening, setOpening] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
-
-  // Auto-reopen (audit: project-open-not-rehydrated): after a sidecar/dev-reload
-  // the open-project registry is gone and we land here; if a project was open we
-  // reopen it quietly. `reopening` shows the "Reopening <name>…" banner;
-  // `reopenError` is the honest failure banner (moved/denied → persisted entry
-  // cleared, stay on the desk). `reopenAttempted` guards one attempt per mount.
-  const [reopening, setReopening] = useState<string | null>(null);
-  const [reopenError, setReopenError] = useState<{ name: string; detail: string } | null>(null);
-  const reopenAttempted = useRef(false);
 
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastId = useRef(0);
@@ -220,33 +215,6 @@ export function LauncherView() {
     const target = recents.find((r) => r.exists);
     if (target) void openRecentRow(target);
   }, [recents, openRecentRow]);
-
-  // Auto-reopen the last project once the REAL engine is ready (mode==='real').
-  // Standalone/mock never auto-reopens (nothing real on disk to reopen). One
-  // attempt per mount (reopenAttempted) so a failure can't loop. On success
-  // openByPath → openProject flips isProjectOpen and this Launcher unmounts.
-  useEffect(() => {
-    if (mode !== 'real') return;
-    if (reopenAttempted.current) return;
-    const last = loadLastProject();
-    if (!last?.path) return;
-    reopenAttempted.current = true;
-    const label = last.name || last.path;
-    setReopening(label);
-    setReopenError(null);
-    void (async () => {
-      try {
-        await openByPath(last.path, label);
-        // Success → the view unmounts; no need to clear `reopening`.
-      } catch (e) {
-        // Moved / access denied / sidecar error — forget it so we don't retry
-        // on the next mount, and tell the user honestly. They stay on the desk.
-        clearLastProject();
-        setReopening(null);
-        setReopenError({ name: label, detail: errText(e) });
-      }
-    })();
-  }, [mode, openByPath]);
 
   // Open-folder: the shell pops its OWN native picker + grant dialog. We consume
   // the real result honestly — no pkg-side pre-modal, no hardcoded mock project.
@@ -422,25 +390,10 @@ export function LauncherView() {
       </header>
 
       <main className="mx-auto w-full max-w-6xl flex-1 px-6 py-7">
-        {/* Auto-reopen: quiet "Reopening…" while we re-establish the last open
-            project after a sidecar/dev-reload; honest failure banner if it moved
-            or access was denied (audit: project-open-not-rehydrated). */}
-        {reopening && (
-          <div
-            role="status"
-            aria-live="polite"
-            className="mb-5 flex items-center gap-2.5 rounded-lg border border-soft bg-surface px-4 py-2.5 text-[13px] text-fg-muted"
-          >
-            <span
-              aria-hidden="true"
-              className="h-3.5 w-3.5 flex-none animate-spin rounded-full border-2"
-              style={{ borderColor: 'var(--border)', borderTopColor: 'var(--primary)' }}
-            />
-            Reopening{' '}
-            <span className="font-mono text-fg">{reopening}</span>…
-          </div>
-        )}
-        {reopenError && (
+        {/* Optimistic-resume failure banner (App.tsx owns the resume attempt
+            itself — it already ran and failed before this Launcher ever
+            mounted, and already cleared the stale last-project entry). */}
+        {resumeError && (
           <div
             role="alert"
             className="mb-5 flex items-start gap-3 rounded-lg border px-4 py-3"
@@ -450,15 +403,15 @@ export function LauncherView() {
               <Icon name="alert" size={16} />
             </span>
             <div className="min-w-0 flex-1 text-[13px] leading-snug">
-              <div className="font-semibold text-fg">Couldn&rsquo;t reopen &ldquo;{reopenError.name}&rdquo;</div>
+              <div className="font-semibold text-fg">Couldn&rsquo;t reopen &ldquo;{resumeError.name}&rdquo;</div>
               <p className="mt-0.5 text-fg-muted">
                 It may have moved or access was denied. Removed it from the last-opened slot — open it again from Recent projects or a folder below.{' '}
-                <span className="font-mono text-fg-faint">{reopenError.detail}</span>
+                <span className="font-mono text-fg-faint">{resumeError.detail}</span>
               </p>
             </div>
             <button
               type="button"
-              onClick={() => setReopenError(null)}
+              onClick={() => onDismissResumeError?.()}
               aria-label="Dismiss"
               className="flex-none text-fg-faint hover:text-fg"
             >

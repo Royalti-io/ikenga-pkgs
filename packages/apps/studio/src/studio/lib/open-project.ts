@@ -15,6 +15,14 @@ import { getMcpClient, projectApi } from '../mcp-client';
 import { useProjectStore } from '../project-store';
 import type { AspectRatio } from '../mcp-types';
 
+/** Strip the internal `[studio] <tool> failed:` prefix from an error for
+ *  user-facing surfaces. Shared by the Launcher's toasts/banners and App's
+ *  optimistic-resume failure banner so the two don't drift on copy. */
+export function errText(e: unknown): string {
+  const m = e instanceof Error ? e.message : String(e);
+  return m.replace(/^\[studio\]\s*/, '').slice(0, 200);
+}
+
 /** Open a project by its on-disk path, enrich its header from project.info, and
  *  flip the project store open (persisting it as last-project). Rejects if the
  *  real project.open fails — callers surface that (toast / menu is fire-and-log). */

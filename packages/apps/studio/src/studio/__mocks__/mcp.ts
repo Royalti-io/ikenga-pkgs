@@ -465,6 +465,12 @@ function callMockTool(
       // No real poster on disk in mock mode → empty bytes; the tile falls back
       // to the status-text preview.
       return { base64: '', mime: 'image/png', sizeBytes: 0, path: 'mock://renders/latest.png' };
+    case 'render.list_posters': {
+      // No real posters on disk in mock mode → every requested id reports
+      // null, same honest fallback as the single-record read above.
+      const recordIds = (args.record_ids as string[] | undefined) ?? [];
+      return { posters: recordIds.map((recordId) => ({ recordId, b64: null as string | null })) };
+    }
 
     default:
       throw new Error(`[studio:mock] unimplemented MCP method: ${name}`);
