@@ -314,7 +314,7 @@ function buildHandlers(db: Db): RpcHandlers {
       rendersDir: join(r.root, 'renders'),
       aspectRatio: aspect,
       resolution: defaultResolution(p),
-      vault: { get: async (key: string) => (key === 'fal.key' ? process.env.FAL_KEY : undefined) },
+      vault: { get: async (key: string) => (key === 'studio.fal' ? process.env.FAL_KEY : undefined) },
       emit: () => {}, // preview/validate are cheap + synchronous-ish; no progress
       signal: new AbortController().signal,
     };

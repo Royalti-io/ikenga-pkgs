@@ -56,7 +56,12 @@ Scan the whole script for recurring entities and create one `Anchor` each. Prefe
 | A notable recurring object | `image` (prop) | e.g. a mask, a weapon, a logo |
 | The overall look | `style` | derived from tone/lighting cues; becomes the project `style_anchors` |
 
-Give each a stable `name`, a descriptive `prompt` (used later to generate the plate), and leave `seed` unset (the human/generation step pins it). Then go back and set each cell's `anchors[]` to the anchors that appear in that shot — this is what threads consistency.
+Give each a stable `name`, a descriptive `prompt` (used later to generate the plate), and leave `seed` unset (the human/generation step pins it). Create each as a **stub**:
+
+- `asset: { uri: "" }` — an empty-string uri. The schema **requires** `asset.uri`, so an anchor with no `asset` is rejected; the empty uri is the documented "pending plate" convention (Breakdown / Cast & World count empty-uri anchors as pending, not ready). `anchor.generate` later replaces it with a real plate.
+- Put the descriptive text in **`metadata.prompt`**, not a bare top-level `prompt` — `AnchorSchema` strips unknown top-level keys, so a top-level `prompt` is silently dropped. `metadata` is the open bag that survives.
+
+Then go back and set each cell's `anchors[]` to the anchors that appear in that shot — this is what threads consistency.
 
 ### 4 — Wire the project
 

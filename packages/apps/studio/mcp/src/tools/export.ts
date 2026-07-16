@@ -104,7 +104,7 @@ export function exportTools(sidecar: SidecarClient): ToolDef[] {
           projectId: { type: 'string' },
           music_preset: { type: 'string', enum: ['none', 'silent', 'ambient', 'upbeat'] },
         },
-        required: ['projectId'],
+        required: ['projectId', 'music_preset'],
         additionalProperties: false,
       },
       handler: (args) =>

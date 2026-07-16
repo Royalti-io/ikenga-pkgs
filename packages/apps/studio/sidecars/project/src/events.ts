@@ -32,6 +32,9 @@ export interface RenderProgressPayload {
   /** 0..1 */
   progress: number;
   frame?: number;
+  /** Human-readable progress line (e.g. fal queue logs, fallback explanations).
+   *  Optional; consumers that don't read it are unaffected. */
+  message?: string;
   /**
    * Discriminates per-cell renders from full-composition exports (WP-07c).
    * Defaults to 'render' when absent so existing consumers are unaffected.

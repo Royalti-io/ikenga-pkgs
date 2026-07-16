@@ -23,9 +23,10 @@ if [[ "${1:-}" == "--watch" ]]; then
 fi
 
 echo "==> bundling $OUTPUT (target: node, format: esm)"
-# @modelcontextprotocol/sdk is pure JS; bundle it. better-sqlite3 / chokidar
-# are NOT touched by the MCP — only the sidecar opens those — so no need
-# to mark them external here.
+# @modelcontextprotocol/sdk is kept as a RUNTIME import (--external below) so it
+# resolves from the parent studio pkg's hoisted node_modules — the MCP's own
+# package.json declares no deps. better-sqlite3 / chokidar are NOT touched by
+# the MCP (only the sidecar opens those), so they need no --external here.
 bun build $WATCH_FLAG \
   --target=node \
   --format=esm \

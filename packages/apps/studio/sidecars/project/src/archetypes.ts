@@ -104,13 +104,21 @@ function findBuiltinArchetype(archetypeId: string): unknown | undefined {
 }
 
 function findArchetypeDefinition(projectRoot: string, archetypeId: string): unknown | undefined {
-  // 1. Project-custom (flat file).
-  const projectCustom = join(projectRoot, 'archetypes', `${archetypeId}.json`);
-  if (existsSync(projectCustom)) {
-    try {
-      return JSON.parse(readFileSync(projectCustom, 'utf8')) as unknown;
-    } catch {
-      return undefined;
+  // 1. Project-custom. `archetype.save_custom` writes a NESTED file at
+  //    <root>/archetypes/<id>/archetype.json (see mcp/src/catalog.ts
+  //    writeCustomArchetype); the flat <root>/archetypes/<id>.json form is
+  //    accepted for back-compat. Check both before falling through to built-ins.
+  const projectCustomCandidates = [
+    join(projectRoot, 'archetypes', archetypeId, 'archetype.json'),
+    join(projectRoot, 'archetypes', `${archetypeId}.json`),
+  ];
+  for (const projectCustom of projectCustomCandidates) {
+    if (existsSync(projectCustom)) {
+      try {
+        return JSON.parse(readFileSync(projectCustom, 'utf8')) as unknown;
+      } catch {
+        return undefined;
+      }
     }
   }
   // 2. Built-in archetype skills (@ikenga/studio-archetypes).

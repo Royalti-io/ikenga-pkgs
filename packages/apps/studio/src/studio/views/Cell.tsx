@@ -709,7 +709,12 @@ export function CellView() {
     : activeRecord;
   const activeRecordId = keeperRecord?.status === 'done' ? keeperRecord.id : null;
   const [videoState, setVideoState] = useState<CellVideoAvailability>('unavailable');
-  useEffect(() => { setVideoState('unavailable'); }, [activeRecordId]);
+  // On a keeper/variant switch, reset to 'loading' (not 'unavailable') when a
+  // record exists — the child's read_bytes fetch is in flight, not missing.
+  // Resetting to 'unavailable' painted the alarming "Preview bytes
+  // unavailable on this build" overlay for the whole fetch on every switch,
+  // even on builds where bytes-over-bridge works fine.
+  useEffect(() => { setVideoState(activeRecordId ? 'loading' : 'unavailable'); }, [activeRecordId]);
 
   // Generate = persist the prompt/seed/anchors + fire the render (Track A) or
   // package the prompt for an external generator (Track B / handoff).

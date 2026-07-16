@@ -409,6 +409,18 @@ export function CastWorldView() {
   // create-under-old-id step throws after the original is already gone, the
   // inner catch best-effort recreates the original from the snapshot so the
   // refs survive the failure (rather than leaving them dangling).
+  //
+  // LEAK (known, low-sev): each regenerate writes a NEW asset file under
+  // assets/images/ and re-points the record at it, but the OLD plate file is
+  // never unlinked (anchors.remove only drops the record, not the bytes), so N
+  // regenerations leave N−1 orphaned pngs that still show in asset.list. This
+  // can't be fixed by making remove() unlink-on-delete — the delete→create(
+  // same-id) mutation pattern this AND toggleLock rely on leaves the asset
+  // transiently unreferenced between the two calls, so unlink-on-delete would
+  // nuke the plate we're about to re-pin. The real fix is either an
+  // `anchor.update` RPC (metadata changes without delete→create) or a separate
+  // asset-GC pass run after mutations settle. Tracked as a follow-up; left
+  // alone here because a blind unlink would corrupt the lock/regenerate path.
   const regenerate = useCallback(async (row: DisplayAnchor) => {
     if (!row.raw || !GENERATE_KINDS.includes(row.kind as GenerateKind)) return;
     setBusyId(row.id);
@@ -433,7 +445,11 @@ export function CastWorldView() {
         await anchorApi.create(client, {
           ...fresh,
           id: original.id,
-          metadata: { ...fresh.metadata, locked: row.locked },
+          // Merge — start from the original's metadata so externally-authored
+          // keys an anchor can carry (notes, variant, palette, …) survive the
+          // refresh, then layer the fresh generation facts (prompt/model/seed)
+          // + the locked flag on top. (Matches toggleLock's spread below.)
+          metadata: { ...original.metadata, ...fresh.metadata, locked: row.locked },
         });
       } catch (createErr) {
         // create under the original id failed — best-effort restore the
@@ -449,8 +465,15 @@ export function CastWorldView() {
     }
   }, [project?.project_id, refetchAnchors]);
 
-  // Lock (mints + pins a seed for an unseeded anchor) / unlock — same
-  // delete→create(same id) pattern; there is no anchor.update.
+  // Lock / unlock — same delete→create(same id) pattern; there is no
+  // anchor.update RPC.
+  //
+  // Locking an UNSEEDED generatable anchor regenerates the plate UNDER THE SAME
+  // ID with a newly minted seed, so the displayed plate IS the locked-seed
+  // plate (a metadata-only lock would badge a plate that doesn't match the
+  // pinned seed — silently breaking the anti-drift promise in the file header).
+  // Locking a seeded anchor / unlocking / non-generatable kinds stay
+  // metadata-only.
   //
   // M4 — the original is deleted before the replacement is created (create()
   // rejects a duplicate id). If that create throws, the inner catch
@@ -463,19 +486,44 @@ export function CastWorldView() {
     try {
       const client = await getMcpClient();
       const nextLocked = !row.locked;
-      const seed = row.seed ?? (nextLocked ? Math.floor(Math.random() * 90_000) + 10_000 : undefined);
       const original = row.raw;
-      await anchorApi.delete(client, original.id);
-      try {
-        await anchorApi.create(client, {
-          ...original,
-          metadata: { ...original.metadata, locked: nextLocked, ...(seed != null ? { seed } : {}) },
+      const needsRegen =
+        nextLocked && row.seed == null && GENERATE_KINDS.includes(row.kind as GenerateKind);
+
+      if (needsRegen) {
+        const mintedSeed = Math.floor(Math.random() * 90_000) + 10_000;
+        const fresh = await anchorApi.generate(client, {
+          project_id: project?.project_id,
+          kind: row.kind as GenerateKind,
+          name: row.name,
+          prompt: row.description || row.name,
+          seed: mintedSeed,
         });
-      } catch (createErr) {
-        // create under the original id failed — best-effort restore the
-        // original so cell.anchors[] refs aren't left dangling.
-        try { await anchorApi.create(client, original); } catch { /* original unrecoverable; surface the real error */ }
-        throw createErr;
+        await anchorApi.delete(client, fresh.id);
+        await anchorApi.delete(client, original.id);
+        try {
+          await anchorApi.create(client, {
+            ...fresh,
+            id: original.id,
+            metadata: { ...original.metadata, ...fresh.metadata, locked: true, seed: mintedSeed },
+          });
+        } catch (createErr) {
+          try { await anchorApi.create(client, original); } catch { /* original unrecoverable */ }
+          throw createErr;
+        }
+      } else {
+        await anchorApi.delete(client, original.id);
+        try {
+          await anchorApi.create(client, {
+            ...original,
+            metadata: { ...original.metadata, locked: nextLocked },
+          });
+        } catch (createErr) {
+          // create under the original id failed — best-effort restore the
+          // original so cell.anchors[] refs aren't left dangling.
+          try { await anchorApi.create(client, original); } catch { /* original unrecoverable; surface the real error */ }
+          throw createErr;
+        }
       }
       await refetchAnchors();
     } catch (err) {
@@ -483,7 +531,7 @@ export function CastWorldView() {
     } finally {
       setBusyId(null);
     }
-  }, [refetchAnchors]);
+  }, [project?.project_id, refetchAnchors]);
 
   const openInStoryboard = useCallback((cellUid: string) => {
     setCellUid(cellUid);

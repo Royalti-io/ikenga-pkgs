@@ -72,12 +72,21 @@ export function resolveEngine(contentPath: string): string {
       return 'excalidraw';
     case 'tsx':
       throw new EngineResolutionError('engine-not-available-in-p1', 'remotion is P2');
-    default:
-      // No file-backed content (or an unrecognized path) → fal, the network AI
-      // generation engine. fal drives from the cell's `prompt` (+ optional
-      // anchor image ref), not from on-disk source, so it is the correct
-      // resolution when there is no .html/.excalidraw content to render.
+    case '':
+      // No file-backed content → fal, the network AI generation engine. fal
+      // drives from the cell's `prompt` (+ optional anchor image ref), not from
+      // on-disk source, so it is the correct resolution when there is no
+      // .html/.excalidraw content to render.
       return 'fal';
+    default:
+      // An UNRECOGNIZED extension is NOT silently routed to fal — that would
+      // send a mistyped/unexpected content path (e.g. a stray .htm or .json)
+      // to the paid network engine with no signal. Fail honestly instead; a
+      // caller who wants fal on such a cell passes an explicit renderer.
+      throw new EngineResolutionError(
+        'unresolvable-engine',
+        `no adapter for .${ext} content (expected .html/.excalidraw, or empty for fal); set an explicit renderer to override`,
+      );
   }
 }
 

@@ -26,10 +26,10 @@
 //     carries a $/generation figure yet). Surfaced with an explicit "estimate"
 //     qualifier so it reads as a guess, not a quote.
 //   • Run breakdown   — TODO: there is no `breakdown.*` MCP verb yet (grepped
-//     mcp-client.ts / real-mcp.ts — absent). The button is wired to a local
-//     stub that surfaces this honestly instead of silently doing nothing or
-//     faking a network call. Swap `runBreakdownStub` for a real
-//     `breakdownApi.run(client, …)` call the moment that seam exists.
+//     mcp-client.ts / real-mcp.ts — absent). The header CTA is DISABLED +
+//     labelled "soon" so it doesn't fake a load while the seam is unbuilt.
+//     Swap `runBreakdown` for a real `breakdownApi.run(client, …)` call (and
+//     drop the disabled chrome) the moment that verb exists.
 //
 // Line→shot linking: the schema does not carry a per-line shot tag on
 // `.fountain` text, so the rail links the Nth non-dialogue action paragraph to
@@ -278,7 +278,7 @@ export function BreakdownView() {
       }
     })();
     return () => { cancelled = true; };
-  }, [hasRealCells]);
+  }, [hasRealCells, project?.project_id]);
 
   // ── engines (real only — powers the Track A/B heuristic) ──
   const [engines, setEngines] = useState<EngineCapability[]>([]);
@@ -295,7 +295,7 @@ export function BreakdownView() {
       }
     })();
     return () => { cancelled = true; };
-  }, [hasRealCells]);
+  }, [hasRealCells, project?.project_id]);
 
   // ── fountain script (real: storyboard.read_fountain; mock: DEMO_FOUNTAIN) ──
   const [fountain, setFountain] = useState<{
@@ -316,7 +316,7 @@ export function BreakdownView() {
       }
     })();
     return () => { cancelled = true; };
-  }, [hasRealCells]);
+  }, [hasRealCells, project?.project_id]);
 
   const scriptText = hasRealCells ? fountain.text : DEMO_FOUNTAIN;
   const scriptExists = hasRealCells ? fountain.exists : true;
@@ -369,16 +369,13 @@ export function BreakdownView() {
   const shotRefs = useRef<Map<string, HTMLElement>>(new Map());
   const railRef = useRef<HTMLDivElement>(null);
 
-  // ── "Run breakdown" — no breakdown.* MCP verb exists yet (see header) ──
-  const [runState, setRunState] = useState<'idle' | 'running'>('idle');
-  const runBreakdownStub = async () => {
-    setRunState('running');
-    // TODO(studio-mcp): wire to a real `breakdownApi.run(client, { project_id })`
-    // once a `breakdown.*` tool exists. There is currently no server-side seam
-    // that reparses a script into cells + anchors in one pass — this button is
-    // intentionally a stub, not a silent no-op, so the gap stays visible.
-    await new Promise((r) => setTimeout(r, 700));
-    setRunState('idle');
+  // ── "Run breakdown" — there is no `breakdown.*` MCP verb yet (see header).
+  // The header CTA is disabled + labelled "soon" so it doesn't fake a network
+  // load while the server-side seam is unbuilt. Drop the disabled chrome and
+  // swap runBreakdown for a real `breakdownApi.run(client, { project_id })`
+  // call when that verb lands.
+  const runBreakdown = async () => {
+    /* TODO(studio-mcp): breakdownApi.run(client, { project_id }) */
   };
 
   // ── gates ── (standalone/mock has no `project` object at all — those gates
@@ -397,7 +394,7 @@ export function BreakdownView() {
     return (
       <EmptyState glyph="✂" title="Breakdown needs a script" hint="no script.fountain in this project">
         <p className="mt-1 max-w-xs text-[11px] leading-relaxed text-fg-faint">
-          Breakdown links a `.fountain` screenplay to shots. Add one on the Script tab (Fountain) or ask your Chi to draft a screenplay, then the shot-by-shot breakdown appears here.
+          Breakdown links a `.fountain` screenplay to shots. Ask your Chi to draft a screenplay for this project (or drop a <span className="font-mono text-fg-muted">script.fountain</span> into the project folder), then the shot-by-shot breakdown appears here.
         </p>
       </EmptyState>
     );
@@ -453,9 +450,10 @@ export function BreakdownView() {
 
         <button
           type="button"
-          onClick={() => void runBreakdownStub()}
-          disabled={runState === 'running'}
-          className="flex items-center gap-3 rounded border px-4 py-2.5 text-left transition-transform hover:-translate-y-px disabled:opacity-70"
+          onClick={() => void runBreakdown()}
+          disabled
+          title="Coming soon — no breakdown backend (breakdown.* MCP verb) is wired yet"
+          className="flex cursor-not-allowed items-center gap-3 rounded border px-4 py-2.5 text-left opacity-70"
           style={{
             borderColor: 'color-mix(in oklab, var(--agent) 55%, var(--border))',
             background: 'linear-gradient(180deg, color-mix(in oklab, var(--agent) 28%, var(--bg-raised)), color-mix(in oklab, var(--agent) 18%, var(--bg-sunken)))',
@@ -464,9 +462,9 @@ export function BreakdownView() {
         >
           <span className="flex h-[18px] w-[18px] items-center justify-center text-sm" style={{ color: 'var(--agent)' }}>◆</span>
           <span className="flex flex-col items-start gap-0.5">
-            <span className="text-[12.5px] font-semibold">{runState === 'running' ? 'Reparsing…' : 'Run breakdown'}</span>
+            <span className="text-[12.5px] font-semibold">Run breakdown · soon</span>
             <span className="font-mono text-[10px]" style={{ color: 'color-mix(in oklab, var(--agent) 55%, var(--fg-muted))' }}>
-              script → board + assets, one pass
+              awaiting breakdown MCP verb
             </span>
           </span>
         </button>
@@ -474,10 +472,10 @@ export function BreakdownView() {
 
       {/* ── pre-run cost estimate ── */}
       <div className="flex-none border-b border-soft bg-sunken px-6 py-2 font-mono text-[10.5px] text-fg-muted">
-        Re-running will regenerate <span className="tabular-nums text-fg">{shots.length}</span> cells
+        On run, breakdown will propose <span className="tabular-nums text-fg">{shots.length}</span> cells
         {' + '}<span className="tabular-nums text-fg">{anchors.length}</span> anchors ·{' '}
         est <span className="tabular-nums" style={{ color: 'var(--achievement)' }}>${estCost.toFixed(2)}</span>, Track A only
-        <span className="text-fg-faint"> (estimate — no live pricing seam yet)</span>
+        <span className="text-fg-faint"> (estimate — no live pricing seam yet; breakdown backend pending)</span>
       </div>
 
       {/* ── 4-zone body ── */}

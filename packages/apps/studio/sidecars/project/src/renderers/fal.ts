@@ -9,7 +9,7 @@
  * renders directory.
  *
  * ─── Key resolution ───────────────────────────────────────────────────────
- * The fal credential comes from `ctx.vault.get('fal.key')` (the Stronghold
+ * The fal credential comes from `ctx.vault.get('studio.fal')` (the Stronghold
  * vault surface, wired in-shell) with a `process.env.FAL_KEY` fallback for
  * headless / CI / stdio-driven runs. No key is ever hardcoded.
  *
@@ -82,7 +82,8 @@ function nowIso(): string {
 async function resolveKey(ctx: RenderContext): Promise<string | undefined> {
   let fromVault: string | undefined;
   try {
-    fromVault = await ctx.vault.get('fal.key');
+    // Vault key follows the studio.<adapter> convention (veo/kling/runway).
+    fromVault = await ctx.vault.get('studio.fal');
   } catch {
     fromVault = undefined;
   }
@@ -100,18 +101,35 @@ function resolveOutputPath(cell: Cell, ctx: RenderContext): string {
 }
 
 /** Resolve the video model id (call override → cell metadata → env → default). */
-function resolveVideoModel(cell: Cell, opts: RenderOptions): string {
+function resolveVideoModel(
+  cell: Cell,
+  opts: RenderOptions,
+  flags?: { hasImage?: boolean },
+): string {
   const fromMeta = (cell.metadata as Record<string, unknown> | undefined)?.fal_model;
-  const raw =
+  const override =
     opts.variant ||
     (typeof fromMeta === 'string' ? fromMeta : '') ||
     process.env.FAL_VIDEO_MODEL ||
-    FAL_VIDEO_MODEL_DEFAULT;
+    '';
   // The Canvas picker uses friendly short names (ltx-video, flux, …); fal's
   // API requires the full <owner>/<app> id. Pass through anything already
   // owner-qualified, otherwise prefix the default owner so e.g. "ltx-video"
   // resolves to "fal-ai/ltx-video".
-  return raw.includes('/') ? raw : `fal-ai/${raw}`;
+  const raw = override || FAL_VIDEO_MODEL_DEFAULT;
+  const qualified = raw.includes('/') ? raw : `fal-ai/${raw}`;
+  // Image-to-video: a text-to-video endpoint ignores `image_url` (silent drift
+  // — the plate stops anchoring the output) or 422s. Auto-switch to the i2v
+  // sibling (`fal-ai/ltx-video/image-to-video`) ONLY when no override was
+  // supplied (we fell through to the default) AND an anchor image is present.
+  // An explicit override is honored verbatim — even if its value happens to
+  // equal the default id — so a caller can force t2v with an image by pinning
+  // the model; if you want i2v with a custom base, pass the i2v endpoint id.
+  const fromDefault = override.length === 0;
+  if (flags?.hasImage && fromDefault) {
+    return `${FAL_VIDEO_MODEL_DEFAULT}/image-to-video`;
+  }
+  return qualified;
 }
 
 /** Extract a negative prompt from the cell's open metadata bag, if present. */
@@ -158,32 +176,45 @@ async function downloadTo(url: string, outPath: string): Promise<void> {
   writeFileSync(outPath, buf);
 }
 
+/** Result of resolving a cell's image reference: a fetchable url, or why not. */
+interface ImageRef {
+  url: string | undefined;
+  /** Set when an anchor was present but its file could not be uploaded — the
+   * render falls back to text-only, and the caller surfaces this cause. */
+  uploadError?: string;
+}
+
 /**
  * Resolve the cell's first image/character/location anchor to a fetchable
  * url. `http(s)` uris pass through; local files are uploaded to fal storage
  * (fal.config must already be applied) so the model can fetch them. Returns
- * `undefined` when no usable anchor exists — a text-only render is valid.
+ * `{ url: undefined }` when no usable anchor exists — a text-only render is
+ * valid. An upload failure is returned as `{ uploadError }` (NOT swallowed)
+ * so the render record + progress log explain the text-only fallback.
  */
-async function resolveImageRefUrl(
-  cell: Cell,
-  ctx: RenderContext,
-): Promise<string | undefined> {
-  if (!cell.anchors || cell.anchors.length === 0) return undefined;
+async function resolveImageRefUrl(cell: Cell, ctx: RenderContext): Promise<ImageRef> {
+  if (!cell.anchors || cell.anchors.length === 0) return { url: undefined };
 
   let anchors: Array<{ id: string; kind: string; asset?: { uri?: string; mime?: string } }>;
   try {
     anchors = readProject(ctx.projectRoot).anchors as typeof anchors;
   } catch {
-    return undefined;
+    return { url: undefined };
   }
   const byId = new Map(anchors.map((a) => [a.id, a]));
+
+  // If a usable anchor is found but its file can't be resolved/uploaded, we
+  // keep trying the remaining anchors; this holds the last reason so a
+  // fully-text-only outcome still explains WHY (rather than looking like the
+  // cell never had an anchor).
+  let fallbackError: string | undefined;
 
   for (const id of cell.anchors) {
     const a = byId.get(id);
     if (!a || !IMAGE_ANCHOR_KINDS.has(a.kind)) continue;
     const uri = a.asset?.uri;
     if (!uri) continue;
-    if (/^https?:\/\//i.test(uri)) return uri;
+    if (/^https?:\/\//i.test(uri)) return { url: uri };
 
     // Local file — resolve to an absolute path and upload for a fetchable url.
     // An anchor's AssetRef.uri is the assets-relative id (e.g. 'images/x.png'),
@@ -197,17 +228,27 @@ async function resolveImageRefUrl(
       const underAssets = resolve(ctx.projectRoot, 'assets', uri);
       abs = existsSync(underAssets) ? underAssets : resolve(ctx.projectRoot, uri);
     }
-    if (!existsSync(abs)) continue;
+    if (!existsSync(abs)) {
+      // Missing on disk — same silent-drift class as an upload failure. Record
+      // the reason and try the remaining anchors before falling back.
+      fallbackError = `anchor ${a.id} (${a.kind}) reference file not found on disk (${uri})`;
+      continue;
+    }
     try {
       const bytes = readFileSync(abs);
       const blob = new Blob([bytes], { type: a.asset?.mime ?? 'application/octet-stream' });
-      return await fal.storage.upload(blob);
-    } catch {
-      // Upload failed — fall through to a text-only render rather than aborting.
-      return undefined;
+      return { url: await fal.storage.upload(blob) };
+    } catch (e) {
+      // Upload failed — do NOT swallow: surface the cause so the caller can log
+      // why this image-to-video render fell back to text-only (a silent
+      // downgrade on a money-spending op hides a broken reference plate).
+      return {
+        url: undefined,
+        uploadError: `anchor ${a.id} (${a.kind}) upload failed: ${(e as Error).message}`,
+      };
     }
   }
-  return undefined;
+  return { url: undefined, uploadError: fallbackError };
 }
 
 /**
@@ -219,13 +260,19 @@ async function resolveImageRefUrl(
 function buildVideoInput(args: {
   cell: Cell;
   imageUrl?: string;
+  aspect?: AspectRatio;
 }): Record<string, unknown> {
-  const { cell, imageUrl } = args;
+  const { cell, imageUrl, aspect } = args;
   const input: Record<string, unknown> = { prompt: cell.prompt };
   const negative = readNegativePrompt(cell);
   if (negative) input.negative_prompt = negative;
   if (imageUrl) input.image_url = imageUrl;
   if (typeof cell.seed === 'number') input.seed = cell.seed;
+  // aspect_ratio is honored by text-to-video models but REJECTED by the
+  // image-to-video sibling (which derives framing from the image), so only set
+  // it for text-to-video renders. A cell can still force the field verbatim via
+  // metadata.fal_input if a specific i2v model needs it.
+  if (!imageUrl && aspect) input.aspect_ratio = aspect;
   // Model-specific extras (aspect_ratio / duration / num_frames / start_image_url …)
   // differ per fal model and a *hard 422* on an unaccepted field is common — e.g.
   // `fal-ai/ltx-video/image-to-video` rejects both aspect_ratio and duration (it
@@ -276,7 +323,7 @@ export const falAdapter: RendererAdapter = {
         severity: 'warning',
         code: 'fal-key-missing',
         message:
-          'No fal key available (vault `fal.key` / FAL_KEY unset) — render will fail until a key is provided',
+          'No fal key available (vault `studio.fal` / FAL_KEY unset) — render will fail until a key is provided',
       });
     }
 
@@ -304,7 +351,7 @@ export const falAdapter: RendererAdapter = {
     const key = await resolveKey(ctx);
     if (!key) {
       throw new Error(
-        '[fal] fal.key not set — provide it via the vault (`fal.key`) or the FAL_KEY env var',
+        '[fal] studio.fal not set — provide it via the vault (`studio.fal`) or the FAL_KEY env var',
       );
     }
     // NOTE: fal.config mutates global SDK state. Safe today because the render
@@ -313,29 +360,41 @@ export const falAdapter: RendererAdapter = {
     // clobbering an in-flight job's key.
     fal.config({ credentials: key });
 
-    const model = resolveVideoModel(cell, opts);
     const aspect: AspectRatio = opts.aspect_ratio ?? ctx.aspectRatio;
-    const imageUrl = await resolveImageRefUrl(cell, ctx);
-    const input = buildVideoInput({ cell, imageUrl });
+    const imageRef = await resolveImageRefUrl(cell, ctx);
+    const imageUrl = imageRef.url;
+    if (imageRef.uploadError) {
+      // Don't abort — a text-only render is valid — but make the fallback loud
+      // so progress + the record explain why an anchor-driven render didn't use
+      // the reference plate. recordId is in scope (declared at the top of render).
+      ctx.emit({
+        type: 'render.progress',
+        payload: {
+          recordId,
+          cellId: cell.uid,
+          engine: 'fal',
+          progress: null,
+          message: `[fal] ${imageRef.uploadError}; falling back to text-only`,
+        },
+      });
+    }
+    // Resolve the model AFTER the image ref so image-to-video can switch to the
+    // i2v sibling endpoint (see resolveVideoModel).
+    const model = resolveVideoModel(cell, opts, { hasImage: !!imageUrl });
+    const input = buildVideoInput({ cell, imageUrl, aspect });
 
     const outPath = resolveOutputPath(cell, ctx);
 
-    // Cancellation: race the subscribe against ctx.signal (best-effort — the
-    // simple subscribe API exposes no server-side cancel handle).
-    let abortReject: ((e: Error) => void) | undefined;
-    const abortPromise = new Promise<never>((_, reject) => {
-      abortReject = reject;
-    });
-    const onAbort = () => {
-      abortReject?.(Object.assign(new Error('[fal] render aborted via ctx.signal'), {
-        cancelled: true,
-      }));
-    };
+    // Never submit a fal job after the signal already aborted. The simple
+    // subscribe API submits (and bills) server-side on call, and ctx.signal is
+    // not threaded into the SDK's HTTP request, so without this guard a cancel
+    // that lands during the awaits above would still spend money. Checked
+    // BEFORE the abort-listener setup below so we never create an abort promise
+    // that would later reject with no consumer (an unhandledRejection).
     if (ctx.signal.aborted) {
-      // fire on next tick so the race below is already set up
-      queueMicrotask(onAbort);
-    } else {
-      ctx.signal.addEventListener('abort', onAbort, { once: true });
+      throw Object.assign(new Error('[fal] render aborted before submit'), {
+        cancelled: true,
+      });
     }
 
     let lastMessage = '';
@@ -354,6 +413,21 @@ export const falAdapter: RendererAdapter = {
         },
       });
     };
+
+    // Cancellation: race the subscribe against ctx.signal (best-effort — the
+    // simple subscribe API exposes no server-side cancel handle). The guard
+    // above already handled the pre-abort case, so the signal is not yet
+    // aborted here — just attach the listener (no microtask dance needed).
+    let abortReject: ((e: Error) => void) | undefined;
+    const abortPromise = new Promise<never>((_, reject) => {
+      abortReject = reject;
+    });
+    const onAbort = () => {
+      abortReject?.(Object.assign(new Error('[fal] render aborted via ctx.signal'), {
+        cancelled: true,
+      }));
+    };
+    ctx.signal.addEventListener('abort', onAbort, { once: true });
 
     let res: Awaited<ReturnType<typeof fal.subscribe>>;
     try {
@@ -410,7 +484,10 @@ export const falAdapter: RendererAdapter = {
       variant: opts.variant ?? 'default',
       status: 'done',
       output: { uri: outPath, mime: 'video/mp4' },
-      cost_estimate: cost ?? 0,
+      // Pass the real cost through unchanged (undefined when fal returns none —
+      // the common case for video models). Forcing a 0 here made the Ledger
+      // display every fal render as free despite real credit spend.
+      cost_estimate: cost,
       cost_actual: cost,
       started_at: startedAt,
       finished_at: finishedAt,
@@ -421,6 +498,7 @@ export const falAdapter: RendererAdapter = {
         image_ref: imageUrl,
         request_id: requestId,
         elapsed_ms: finishedAtMs - startedAtMs,
+        ...(imageRef.uploadError ? { image_ref_error: imageRef.uploadError } : {}),
       },
     };
     return record;
@@ -446,7 +524,7 @@ export async function generateStill(
   const key = (await opts.keyGetter()) ?? process.env.FAL_KEY;
   if (!key) {
     throw new Error(
-      '[fal] fal.key not set — provide it via keyGetter (vault) or the FAL_KEY env var',
+      '[fal] studio.fal not set — provide it via keyGetter (vault `studio.fal`) or the FAL_KEY env var',
     );
   }
   // NOTE: fal.config mutates global SDK state. Safe today because generateStill

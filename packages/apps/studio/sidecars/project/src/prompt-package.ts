@@ -17,7 +17,8 @@
  */
 
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   DEFAULT_RESOLUTION,
@@ -29,7 +30,6 @@ import {
 } from '@ikenga/studio-schema';
 
 import { readProject } from './storyboard-fs.js';
-import { resolveAsset } from './assets.js';
 
 // ─────────────────────────────────────────────────────────────────────────
 // Types
@@ -57,6 +57,8 @@ export interface ShapeInputs {
   duration_ms: number;
   aspect_ratio: AspectRatio;
   ref_image_uri: string | null;
+  /** Why the ref is / isn't usable (local file, missing, …) — shapers surface it. */
+  ref_note?: string | null;
   /** Optional audio-cue reference (from `Cell.audio_cue`) — used by the veo shaper. */
   audio_cue_uri: string | null;
 }
@@ -67,6 +69,8 @@ export interface PromptPackage {
   platform: PromptPlatform;
   prompt: string;
   ref_image_uri: string | null;
+  /** Portability note for the ref image (local file → upload to target; missing → none). */
+  ref_note?: string | null;
   aspect_ratio: AspectRatio;
   duration_ms: number;
   camera: CameraSpec;
@@ -192,31 +196,61 @@ const SHAPERS: Record<PromptPlatform, (i: ShapeInputs) => string> = {
 // Anchor kinds that carry a usable reference plate (mirror of fal.ts).
 const REF_ANCHOR_KINDS = new Set<Anchor['kind']>(['character', 'location', 'image']);
 
+interface RefImage {
+  uri: string | null;
+  /** Portability note for the shaper + bundle (local file / missing / …). */
+  note: string | null;
+}
+
 /**
- * Resolve a cell's FIRST character/location/image anchor to an absolute uri,
- * or `null` when the cell has no such anchor. `http(s)`/`file://` uris pass
- * through; project-relative anchor uris resolve through `resolveAsset` (which
- * yields an absolute `file://` uri when the file exists on disk).
+ * Resolve a cell's FIRST character/location/image anchor to a uri the handoff
+ * bundle can carry. `http(s)` uris pass through (cloud-fetchable). A LOCAL file
+ * (file:// or project-relative AssetRef.uri) is written as a PORTABLE
+ * project-relative path — never a machine-local `file:///home/…` uri that cloud
+ * targets (Higgsfield/Flow/Veo) can't fetch — plus a note telling the filmmaker
+ * to upload it themselves. A missing file yields `{ uri: null }` + a note
+ * rather than a fake uri, so the bundle never carries a silently-broken ref.
  */
-function resolveRefImageUri(
+function resolveRefImage(
   projectRoot: string,
   cell: Cell,
   anchorsById: Map<string, Anchor>,
-): string | null {
-  if (!cell.anchors || cell.anchors.length === 0) return null;
+): RefImage {
+  if (!cell.anchors || cell.anchors.length === 0) return { uri: null, note: null };
   for (const id of cell.anchors) {
     const a = anchorsById.get(id);
     if (!a || !REF_ANCHOR_KINDS.has(a.kind)) continue;
     const uri = a.asset?.uri;
     if (!uri) continue;
-    if (/^(https?|file):\/\//i.test(uri)) return uri;
-    // Project-relative — resolve to an absolute file:// uri via the asset seam.
-    const resolved = resolveAsset(projectRoot, uri).result.asset as
-      | { uri?: string }
-      | undefined;
-    return resolved?.uri ?? uri;
+    if (/^https?:\/\//i.test(uri)) return { uri, note: null };
+
+    // Local file. Resolve to an absolute path to check existence, but emit a
+    // portable project-relative form (AssetRef.uri is assets-relative, e.g.
+    // 'images/<uuid>.png') so the bundle is honest about being a local asset.
+    let abs: string;
+    if (uri.startsWith('file://')) abs = fileURLToPath(uri);
+    else if (isAbsolute(uri)) abs = uri;
+    else abs = resolve(projectRoot, 'assets', uri);
+    if (!existsSync(abs)) {
+      return { uri: null, note: `reference file not found on disk (${uri})` };
+    }
+    const portable = isAbsolute(uri) || uri.startsWith('file://')
+      ? (relative(projectRoot, abs) || uri)
+      : uri;
+    if (portable.startsWith('..')) {
+      // Outside the project root (rare — importAsset places files under
+      // assets/). Don't pretend it's a project-relative path.
+      return {
+        uri: portable,
+        note: `external local file (${portable}) — copy it into the project and re-reference, or upload it to the target platform before generating`,
+      };
+    }
+    return {
+      uri: portable,
+      note: `local project file — upload \`${portable}\` to the target platform before generating`,
+    };
   }
-  return null;
+  return { uri: null, note: null };
 }
 
 function packageCell(
@@ -231,7 +265,7 @@ function packageCell(
     camera_move: cell.camera_move,
     camera_text: cell.camera_text,
   };
-  const ref = resolveRefImageUri(projectRoot, cell, anchorsById);
+  const ref = resolveRefImage(projectRoot, cell, anchorsById);
   const audioCue = cell.audio_cue?.uri ?? null;
   const inputs: ShapeInputs = {
     label: cell.label,
@@ -239,14 +273,16 @@ function packageCell(
     camera,
     duration_ms: cell.duration_ms,
     aspect_ratio: aspect,
-    ref_image_uri: ref,
+    ref_image_uri: ref.uri,
+    ref_note: ref.note,
     audio_cue_uri: audioCue,
   };
   return {
     cellId: cell.uid,
     platform,
     prompt: SHAPERS[platform](inputs),
-    ref_image_uri: ref,
+    ref_image_uri: ref.uri,
+    ref_note: ref.note,
     aspect_ratio: aspect,
     duration_ms: cell.duration_ms,
     camera,

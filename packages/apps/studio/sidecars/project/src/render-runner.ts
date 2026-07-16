@@ -458,9 +458,9 @@ export class RenderRunner {
       aspectRatio: aspect,
       resolution,
       // Minimal env-based vault outside the shell: network adapters (fal) read
-      // their key here. For 'fal.key' return FAL_KEY from the env; else nothing.
+      // their key here. For 'studio.fal' return FAL_KEY from the env; else nothing.
       // (In-shell the real Stronghold vault surface replaces this.)
-      vault: { get: async (key: string) => (key === 'fal.key' ? process.env.FAL_KEY : undefined) },
+      vault: { get: async (key: string) => (key === 'studio.fal' ? process.env.FAL_KEY : undefined) },
       emit: (event) => {
         // Forward the adapter's render.progress events onto the pkg event bus.
         const p = (event.payload ?? {}) as {
@@ -469,6 +469,7 @@ export class RenderRunner {
           engine?: string;
           progress?: number | null;
           frame?: number;
+          message?: string;
         };
         emitRenderProgress(this.writer, row.project_id, {
           recordId: p.recordId ?? row.record_id,
@@ -476,6 +477,10 @@ export class RenderRunner {
           engine: p.engine ?? row.engine,
           progress: typeof p.progress === 'number' ? p.progress : 0,
           frame: p.frame,
+          // Thread the human-readable line through so a fal fallback
+          // ("anchor upload failed; text-only") or queue log actually reaches
+          // the UI, not just the record metadata.
+          ...(p.message ? { message: p.message } : {}),
         });
       },
       signal: controller.signal,

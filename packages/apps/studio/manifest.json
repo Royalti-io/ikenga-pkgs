@@ -169,6 +169,12 @@
         "description": "Renderer used when a cell does not pin one. 'auto' resolves the best available adapter."
       },
       {
+        "key": "fal_api_key",
+        "type": "secret",
+        "label": "fal API key",
+        "description": "fal.ai — the shipping AI-generation engine (Track A). Read by the adapter as vault key `studio.fal`; FAL_KEY env is the headless fallback."
+      },
+      {
         "key": "veo_api_key",
         "type": "secret",
         "label": "Veo API key",
@@ -211,6 +217,7 @@
       "https://*.supabase.co"
     ],
     "vault.keys": [
+      "studio.fal",
       "studio.veo",
       "studio.kling",
       "studio.runway"
