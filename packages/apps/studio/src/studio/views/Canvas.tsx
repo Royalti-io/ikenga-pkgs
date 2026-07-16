@@ -356,10 +356,18 @@ export function CanvasView() {
   // (handoff — no API, prompt-package + ingest_external round trip). UI-local:
   // it isn't a persisted Cell field, just which generation path the Generate
   // button takes.
+  // '' is Auto and MUST send no variant at all. fal's resolveVideoModel treats
+  // ANY variant as a deliberate override that wins over the cell's own
+  // metadata.fal_model / FAL_VIDEO_MODEL and suppresses its fromDefault branch
+  // — the one that swaps in the image-to-video sibling when the cell has an
+  // anchor plate. A picker that always sent its default would silently stop
+  // anchors conditioning the shot (or 422 the call). Only an explicit pick
+  // may override.
+  const FAL_MODEL_AUTO = '';
   const FAL_MODELS = ['ltx-video', 'flux', 'flux-i2v'] as const;
   const HANDOFF_PLATFORMS: PromptPlatform[] = ['higgsfield', 'flow', 'veo', 'generic'];
   interface GenChoice { mode: 'fal' | 'handoff'; model: string; platform: PromptPlatform; }
-  const DEFAULT_GEN_CHOICE: GenChoice = { mode: 'fal', model: FAL_MODELS[0], platform: 'higgsfield' };
+  const DEFAULT_GEN_CHOICE: GenChoice = { mode: 'fal', model: FAL_MODEL_AUTO, platform: 'higgsfield' };
   const [genChoice, setGenChoiceMap] = useState<Record<string, GenChoice>>({});
   const [genBusy, setGenBusy] = useState<Record<string, boolean>>({});
   const [genError, setGenErrorMap] = useState<Record<string, string>>({});
@@ -385,12 +393,13 @@ export function CanvasView() {
       const client = await getMcpClient();
       // H2 — thread the user's fal model pick (ltx-video / flux / flux-i2v)
       // as the render `variant`. The fal adapter's resolveVideoModel reads
-      // opts.variant first, so this is what makes the picker reach fal.
+      // opts.variant first, so this is what makes the picker reach fal — and
+      // why Auto must send nothing at all (see FAL_MODEL_AUTO).
       await compositionApi.render(client, {
         project_id: project?.project_id ?? '',
         cell_uid: uid,
         engine: 'fal',
-        variant: choiceFor(uid).model,
+        variant: choiceFor(uid).model || undefined,
       });
       bumpActivePoll();
       await Promise.all([refetchStoryboard(), refreshRenders()]);
@@ -767,7 +776,13 @@ export function CanvasView() {
               onChange={(e) => patchChoice(item.uid, { model: e.target.value })}
               className="min-w-0 flex-1 rounded border border-soft bg-raised px-1 py-0.5 font-mono text-[9.5px] text-fg"
               aria-label="fal model"
+              title={
+                choice.model
+                  ? `Pinned to ${choice.model} — overrides this cell's own model setting, and an attached anchor will not switch it to image-to-video.`
+                  : "Auto — uses this cell's own model setting if it has one, and otherwise switches to image-to-video when an anchor is attached."
+              }
             >
+              <option value={FAL_MODEL_AUTO}>auto · i2v if anchored</option>
               {FAL_MODELS.map((m) => (
                 <option key={m} value={m}>{m}</option>
               ))}

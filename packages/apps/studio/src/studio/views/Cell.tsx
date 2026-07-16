@@ -63,6 +63,7 @@ import {
 import { pollRenderUntilDone } from '../lib/render-poll';
 import { recordByUid, fmtRelative, base64ToBlob, copyText, engineLabel } from './composition/format';
 import type { CellVideoAvailability } from './composition/CellVideo';
+import { DEFAULT_RESOLUTION } from '../mcp-types';
 import type { Rung, AspectRatio, Anchor, RenderStatus, EngineCapability, PromptPackage, RenderRecord } from '../mcp-types';
 import { EmptyState } from '../components/EmptyState';
 import { SafeZoneBands } from '../media-controls';
@@ -99,11 +100,31 @@ const RUNG_DIR: Record<Rung, string> = {
   '0_beat_sheet': 'beatsheet',
 };
 
-const ASPECT_RES: Record<AspectRatio, string> = {
-  '16:9': '1920×1080',
-  '9:16': '1080×1920',
-  '1:1': '1080×1080',
-};
+// The size the renderers actually draw at (hyperframes' resolveResolution →
+// DEFAULT_RESOLUTION). Read from the schema rather than restated here: this
+// number is both shown to the user and used to lay the draft out, so a local
+// copy drifting from the frame would make the draft lie about its geometry.
+function aspectRes(a: AspectRatio): string {
+  const { w, h } = DEFAULT_RESOLUTION[a];
+  return `${w}×${h}`;
+}
+
+// The frame a composition declares for itself. hyperframes' render() resolves
+// `opts.aspect_ratio ?? contentDeclaredAspect(content) ?? project aspect`, so a
+// portrait-authored cell in a 16:9 project renders PORTRAIT — the content beats
+// the project. Same semantics as that reader (hyperframes.ts:189), deliberately
+// down to the double-quoted-digits regex: a dim it cannot parse is a dim the
+// renderer does not honour either, and only both dims together declare a frame.
+const DECLARED_W = /data-width="(\d+)"/;
+const DECLARED_H = /data-height="(\d+)"/;
+
+function declaredAspect(html: string): AspectRatio | undefined {
+  const w = Number(DECLARED_W.exec(html)?.[1]);
+  const h = Number(DECLARED_H.exec(html)?.[1]);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) return undefined;
+  if (w === h) return '1:1';
+  return h > w ? '9:16' : '16:9';
+}
 
 function previewFrameStyle(aspect: AspectRatio): React.CSSProperties {
   if (aspect === '9:16') return { height: '100%', aspectRatio: '9 / 16', maxWidth: '100%' };
@@ -119,6 +140,9 @@ interface StripCell {
   rung: Rung;
   color: CellColor;
   block_id?: string;
+  /** Real cells only (Cell.duration_ms). The mock fixture carries no timing,
+   *  so the strip sub-row simply omits it rather than inventing a number. */
+  duration_ms?: number;
 }
 
 // ─── per-cell edit buffers (module-level → survive view remount) ─────────
@@ -132,6 +156,12 @@ interface StripCell {
 const editBuffers = new Map<string, string>();
 const savedContent = new Map<string, string>();
 const savedAtMap = new Map<string, number>();
+// Save failures are per-cell too. saveState is a single view-level state and
+// the view never remounts on a cell switch, so a failure that resolves after
+// the user has moved on must be parked against the cell it belongs to — not
+// stamped onto whatever cell happens to be open — and restored when they come
+// back to it, so the retry banner is never silently lost.
+const saveErrors = new Map<string, string>();
 const bufKey = (pid: string | null, uid: string) => `${pid ?? 'mock'}::${uid}`;
 
 // ─── rendered-cell preview (reuses the Wave-2 read_bytes → blob pattern) ──
@@ -198,9 +228,161 @@ function RenderedCellVideo({
   );
 }
 
+// ─── draft preview (CE-A's namesake — an approximation, never the frame) ──
+//
+// Draws the editor buffer's frame-0 DOM into a sandboxed srcdoc pane so an
+// un-rendered cell isn't a dead stage while you author it. Everything about it
+// is deliberately weaker than the mp4, and the UI says so rather than letting
+// the two blur:
+//   • srcdoc gets a NULL origin, so it cannot reach the fonts this pkg inlines
+//     into its own document — the cell's real typefaces are simply not there
+//     and headings fall back to a system face.
+//   • The pkg CSP governs the child, so nothing remote loads. Nothing here may
+//     depend on the network (the CE-A mockup's <link> to Google Fonts is the
+//     one thing from it that must NOT be carried over).
+//   • A relative URL has nothing to resolve against either — the draft is the
+//     BUFFER, not the cell's directory — so a <link> stylesheet or an
+//     <img src="./plate.png"> that the frame draws fine is simply absent here.
+//   • sandbox="" also means no scripts, so a cell that animates or measures
+//     itself renders only its static first paint.
+// What survives is what the buffer carries inline — its own <style>, its markup,
+// a data: URI. The disclosure under the stage is written to that line and must
+// not drift past it. The rendered mp4 stays authoritative wherever one exists;
+// this augments it.
+
+// All three attribute quotings, because the placeholder below only earns its
+// keep if it catches every anchor: a miss paints the broken-image glyph the
+// placeholder exists to prevent. insertAnchor emits double quotes, but the
+// editor is a plain HTML buffer a human (or a Chi) can hand-author.
+const DRAFT_ANCHOR_IMG = /<img\b[^>]*\bdata-anchor=(?:"([^"]*)"|'([^']*)'|([^\s>]*))[^>]*>/gi;
+
+// The same reasoning one step out. A plain <img src="./plate.png"> resolves
+// against nothing here, so left alone it paints the very broken-image glyph the
+// anchor placeholder exists to prevent — the frame draws it, the draft cannot.
+// A data: URI is carried BY the buffer, so it does load and must be left be.
+const DRAFT_IMG = /<img\b[^>]*>/gi;
+const DRAFT_IMG_SRC = /\bsrc=(?:"([^"]*)"|'([^']*)'|([^\s>]*))/i;
+
+function draftPlaceholder(label: string): string {
+  return `<span class="ikenga-draft-ph">&#9251; ${label}</span>`;
+}
+
+function buildDraftDoc(html: string): string {
+  // An anchor <img> carries no src until the render runner resolves it, so
+  // leaving it be paints a broken-image glyph that exists in no real frame. A
+  // labelled placeholder names what will land there instead of miming it.
+  const body = html
+    .replace(
+      DRAFT_ANCHOR_IMG,
+      (_m, dq: string | undefined, sq: string | undefined, uq: string | undefined) =>
+        draftPlaceholder(dq || sq || uq || 'anchor'),
+    )
+    // Anchors are already spans by now, so this only sees the rest.
+    .replace(DRAFT_IMG, (m) => {
+      const s = DRAFT_IMG_SRC.exec(m);
+      const src = (s?.[1] ?? s?.[2] ?? s?.[3] ?? '').trim();
+      return /^data:/i.test(src) ? m : draftPlaceholder(src || 'image');
+    });
+  // No background/colour of our own: a cell styles its own full frame, so
+  // inventing one here would paint a look the render does not produce. An
+  // unstyled cell reading as browser-default is the truthful answer.
+  return (
+    '<!doctype html><html><head><meta charset="utf-8">' +
+    '<style>' +
+    'html,body{margin:0;height:100%;background:transparent;}' +
+    'body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;}' +
+    '.ikenga-draft-ph{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;' +
+    'font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;' +
+    'color:#b08340;border:1px dashed #7a5a2c;border-radius:6px;}' +
+    '</style></head><body>' +
+    body +
+    '</body></html>'
+  );
+}
+
+function DraftPreview({ html, ready, aspect }: { html: string; ready: boolean; aspect: AspectRatio }) {
+  const { w: compW, h: compH } = DEFAULT_RESOLUTION[aspect];
+  const hostRef = useRef<HTMLDivElement>(null);
+  // The render draws at composition resolution; this stage is a few hundred
+  // CSS px. An iframe sized to the STAGE would lay a px-authored cell out at a
+  // width the frame never has — different wrapping, different everything — so
+  // the geometry, the one thing a draft can be faithful about, would be the
+  // part it got wrong. The viewport is the frame's true size; only the
+  // presentation is scaled.
+  //
+  // The offset is not cosmetic bookkeeping: the stage is only frame-shaped for
+  // 9:16 and 1:1, and the cell's frame need not be the stage's shape at all, so
+  // there is real leftover room. The mp4 beside this is object-contain, which
+  // CENTRES in it — pinning the scaled draft at the origin instead made the
+  // Rendered↔Draft toggle throw the content across the stage, which reads as a
+  // broken pane rather than as the swap it is. Contain + centre is that same
+  // rule done by hand, because a transform is what the scaling needs.
+  const [fit, setFit] = useState<{ scale: number; x: number; y: number } | null>(null);
+  useEffect(() => {
+    const el = hostRef.current;
+    if (!el) { setFit(null); return; }
+    const ro = new ResizeObserver((entries) => {
+      const r = entries[0]?.contentRect;
+      if (!r || r.width === 0 || r.height === 0) return;
+      const scale = Math.min(r.width / compW, r.height / compH);
+      setFit({ scale, x: (r.width - compW * scale) / 2, y: (r.height - compH * scale) / 2 });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [ready, compW, compH]);
+
+  if (!ready) {
+    return (
+      <div className="grid place-items-center gap-1 px-4 text-center">
+        <div className="text-[13px] text-fg-muted">Nothing to draft yet</div>
+        <div className="max-w-[18rem] font-mono text-[10px] leading-relaxed text-fg-faint">
+          the draft preview draws this cell's source — it loads first
+        </div>
+      </div>
+    );
+  }
+  return (
+    <>
+      <div ref={hostRef} className="absolute inset-0 overflow-hidden">
+        {fit && fit.scale > 0 && (
+          <iframe
+            title="Draft preview of this cell's HTML"
+            srcDoc={buildDraftDoc(html)}
+            sandbox=""
+            // `block` so the offset below is measured from the host's corner and
+            // not from an inline line-box the maths knows nothing about.
+            className="block border-0"
+            style={{
+              width: compW,
+              height: compH,
+              transform: `translate(${fit.x}px, ${fit.y}px) scale(${fit.scale})`,
+              transformOrigin: 'top left',
+            }}
+          />
+        )}
+      </div>
+      <span
+        className="pointer-events-none absolute left-2 top-2 z-10 rounded px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider"
+        style={{
+          background: 'color-mix(in oklab, var(--bg-sunken) 82%, transparent)',
+          color: 'var(--fg-muted)',
+          border: '1px solid var(--border-soft)',
+        }}
+      >
+        Draft preview
+      </span>
+    </>
+  );
+}
+
 // ─── render lifecycle (enqueue + poll; honest indeterminate progress) ────
 
 type RenderState = 'idle' | 'queued' | 'running' | 'done' | 'failed';
+
+/** What a render enqueue is billed against. Omitted engine → the sidecar
+ *  resolves one from the cell's content_path (registry.resolveEngineWithRequest);
+ *  omitted variant → the adapter's own model resolution. */
+type RenderOpts = { engine?: string; variant?: string };
 
 function useRenderLifecycle(
   cellUid: string | null,
@@ -211,6 +393,11 @@ function useRenderLifecycle(
   // progress is only ever a real fraction in the mock timer path; real mode
   // keeps it 0 (the sidecar reports no true %) so the UI renders indeterminate.
   const [progress, setProgress] = useState(0);
+  // What the last enqueue actually dispatched. A retry has to replay THIS
+  // rather than re-read the desk (which may have been switched since the
+  // failure), and the in-flight readout names it rather than guessing — the
+  // spend is against these, so nothing else may claim to speak for it.
+  const [lastOpts, setLastOpts] = useState<RenderOpts | null>(null);
   const timersRef = useRef<{ kick?: ReturnType<typeof setTimeout>; tick?: ReturnType<typeof setInterval> }>({});
   const abortRef = useRef<{ aborted: boolean }>({ aborted: false });
   const hooksRef = useRef(hooks);
@@ -223,12 +410,15 @@ function useRenderLifecycle(
     abortRef.current.aborted = true;
   }, []);
 
-  const trigger = useCallback(async (opts?: { engine?: string }) => {
+  // `variant` is the engine-specific model pick (fal's resolveVideoModel reads
+  // opts.variant first). Omitted → the adapter's own default.
+  const trigger = useCallback(async (opts?: RenderOpts) => {
     if (state === 'queued' || state === 'running') return;
     cancel();
     abortRef.current = { aborted: false };
     setState('queued');
     setProgress(0);
+    setLastOpts({ engine: opts?.engine, variant: opts?.variant });
 
     if (real.isReal && real.projectId && cellUid) {
       try {
@@ -237,6 +427,7 @@ function useRenderLifecycle(
           project_id: real.projectId,
           cell_uid: cellUid,
           engine: opts?.engine,
+          variant: opts?.variant,
         });
         hooksRef.current.onEnqueued?.();
         const rec = await pollRenderUntilDone(client, record_id, {
@@ -280,10 +471,11 @@ function useRenderLifecycle(
     cancel();
     setState('idle');
     setProgress(0);
+    setLastOpts(null);
     return cancel;
   }, [cellUid, cancel]);
 
-  return { state, progress, trigger };
+  return { state, progress, trigger, lastOpts };
 }
 
 // Nominal narration window for the excerpt highlight (P1 stand-in for real
@@ -292,15 +484,37 @@ const NARRATION_WINDOW_MS = 3200;
 
 // ─── Generate tab (production-desk graft) ────────────────────────────────
 //
-// Seed prompt text for a cell that has never been authored (Cell.prompt is
-// empty) — an editable starting point, not fabricated "real" render data.
-// Mirrors the concept fixture ("The Forge" · sc1_sh2 · Adaora at the anvil).
+// Prompt text for the STANDALONE/MOCK fixture only ("The Forge" · sc1_sh2 ·
+// Adaora at the anvil) so the demo desk has something to look at. A real
+// project's cell never gets seeded with it: an unauthored Cell.prompt starts
+// empty, because persistGenPatch writes the prompt straight to the user's
+// cell on disk and a render spends money on it — text the user did not write
+// must never reach either.
 const FIXTURE_PROMPT_SEED =
   "Adaora at the anvil, hammer raised overhead, firelight catching the sweat on her brow — " +
   'mid-strike stillness before the blow. Ember-noir lighting, warm orange key against deep ' +
   'shadow, cinematic shallow depth of field. The Workshop behind her, forge glowing.';
 
 const HANDOFF_ENGINE_ID = 'higgsfield';
+
+// fal is the one Track-A adapter with a model choice (renderers/fal.ts →
+// resolveVideoModel reads opts.variant first). Same short names + same
+// `variant` threading as the Canvas per-shot picker — one pattern, one call.
+const FAL_ENGINE_ID = 'fal';
+// '' is Auto and MUST send no variant at all. resolveVideoModel treats ANY
+// variant as a deliberate override that wins over the cell's own
+// metadata.fal_model / FAL_VIDEO_MODEL and, critically, suppresses its
+// fromDefault branch — the one that swaps in the image-to-video sibling when
+// the cell has an anchor plate. A picker that always sends its default would
+// silently stop anchors conditioning the shot (or 422 the call), which is the
+// whole reason this surface exists. Only an explicit pick may override.
+const FAL_MODEL_AUTO = '';
+const FAL_MODELS = ['ltx-video', 'flux', 'flux-i2v'] as const;
+
+// The draft preview mirrors CodeMirror's buffer, which changes on every
+// keystroke; re-mounting a srcdoc pane that often thrashes. First paint after
+// a mode switch is immediate, subsequent edits settle.
+const DRAFT_PREVIEW_DEBOUNCE_MS = 400;
 
 function randomSeed(): number {
   return Math.floor(100_000 + Math.random() * 899_999);
@@ -333,7 +547,14 @@ export function CellView() {
     if (hasRealCells) {
       return hydratedCells.map((c) => {
         const d = toDisplayCell(c);
-        return { uid: d.uid, beat: d.beat, rung: d.rung, color: d.color, block_id: d.block_id };
+        return {
+          uid: d.uid,
+          beat: d.beat,
+          rung: d.rung,
+          color: d.color,
+          block_id: d.block_id,
+          duration_ms: d.raw.duration_ms,
+        };
       });
     }
     return MOCK_CELLS.map((c) => ({
@@ -356,10 +577,19 @@ export function CellView() {
 
   // ── editor content + save state ──
   const [value, setValue] = useState('');
+  // Which cell `value` holds. A selection change re-renders before the load
+  // effect below runs, so for that pass `value` is still the PREVIOUS cell's
+  // source — any surface that attributes the buffer to a cell must check this
+  // first, or it paints one cell's content under another's name.
+  const [valueUid, setValueUid] = useState<string | null>(null);
   const [contentState, setContentState] = useState<'idle' | 'loading' | 'ready' | 'unavailable'>('idle');
   const [saveState, setSaveState] = useState<'saved' | 'dirty' | 'saving' | 'error'>('saved');
   const [saveError, setSaveError] = useState<string | null>(null);
   const editorRef = useRef<CodeEditorHandle>(null);
+  // Reads the cell that is open *now*, so an in-flight save can tell whether
+  // the selection moved out from under it while its writes were awaiting.
+  const cellUidRef = useRef(cellUid);
+  cellUidRef.current = cellUid;
 
   // Load the active cell's content — reuse a preserved buffer if present, else
   // read the REAL content.html (real) / the mock fixture (standalone).
@@ -369,9 +599,12 @@ export function CellView() {
     if (editBuffers.has(key)) {
       const buf = editBuffers.get(key)!;
       setValue(buf);
+      setValueUid(cellUid);
       setContentState('ready');
-      setSaveError(null);
-      setSaveState(buf !== savedContent.get(key) ? 'dirty' : 'saved');
+      const parked = saveErrors.get(key);
+      setSaveError(parked ?? null);
+      if (parked) setSaveState('error');
+      else setSaveState(buf !== savedContent.get(key) ? 'dirty' : 'saved');
       return;
     }
     let cancelled = false;
@@ -381,6 +614,7 @@ export function CellView() {
       editBuffers.set(key, html);
       savedContent.set(key, html);
       setValue(html);
+      setValueUid(cellUid);
       setContentState('ready');
       setSaveState('saved');
       return;
@@ -395,6 +629,7 @@ export function CellView() {
         editBuffers.set(key, html);
         savedContent.set(key, html);
         setValue(html);
+        setValueUid(cellUid);
         setContentState('ready');
         setSaveState('saved');
       } catch (err) {
@@ -411,6 +646,7 @@ export function CellView() {
     if (!cellUid) return;
     const key = bufKey(pid, cellUid);
     editBuffers.set(key, next);
+    saveErrors.delete(key);
     setSaveState(next !== savedContent.get(key) ? 'dirty' : 'saved');
     setSaveError((e) => (e ? null : e));
   }, [cellUid, pid]);
@@ -434,14 +670,22 @@ export function CellView() {
       }
       savedContent.set(key, html);
       savedAtMap.set(key, Date.now());
+      saveErrors.delete(key);
       // The buffer may have moved on while the awaits were in flight — a
       // trailing unconditional 'saved' would clobber that dirtiness and the
       // newer keystrokes would read as persisted when they aren't.
       const current = editBuffers.get(key) ?? html;
+      // …and the SELECTION may have moved too. saveState belongs to whichever
+      // cell is open now, so only the save for that cell may touch it; the
+      // per-key maps above already carry the outcome for the cell we left.
+      if (cellUidRef.current !== cellUid) return;
       setSaveState(current === html ? 'saved' : 'dirty');
     } catch (err) {
+      const message = (err as Error).message;
+      saveErrors.set(key, message);
+      if (cellUidRef.current !== cellUid) return;
       setSaveState('error');
-      setSaveError((err as Error).message);
+      setSaveError(message);
     }
   }, [cellUid, pid, value, contentState, saveState, hasRealCells, refetchStoryboard, refreshRenders]);
 
@@ -506,6 +750,10 @@ export function CellView() {
   const [refPickerOpen, setRefPickerOpen] = useState(false);
   const [engines, setEngines] = useState<EngineCapability[]>([]);
   const [genEngine, setGenEngine] = useState<string>(HANDOFF_ENGINE_ID);
+  // Which fal model the render resolves to — threaded as the render `variant`,
+  // not a persisted Cell field (same as the Canvas per-shot picker). Starts on
+  // Auto: an unchosen default must not reach the adapter as an override.
+  const [genModel, setGenModel] = useState<string>(FAL_MODEL_AUTO);
   const [genPatchDirty, setGenPatchDirty] = useState(false);
 
   // Load the render-engine capability matrix once (real or mock — cheap probe).
@@ -532,22 +780,22 @@ export function CellView() {
 
   const engineDisplayName = useCallback((id: string): string => {
     if (id === HANDOFF_ENGINE_ID) return 'Higgsfield';
-    if (id.includes('fal') || id.includes('ltx')) return `fal ▸ ${id}`;
     return engineLabel(id);
   }, []);
 
   // Sync the Generate tab's local fields from the active cell whenever the
-  // selection changes — real Cell.prompt/seed/anchors when present, an
-  // editable fixture seed when the cell has never been authored.
+  // selection changes — real Cell.prompt/seed/anchors when present. A real
+  // cell that has never been authored starts EMPTY (the fixture text is the
+  // demo desk's alone); Generate stays disabled until the user writes one.
   useEffect(() => {
     if (!cellUid) return;
-    setGenPrompt(rawCell?.prompt || FIXTURE_PROMPT_SEED);
+    setGenPrompt(hasRealCells ? rawCell?.prompt ?? '' : FIXTURE_PROMPT_SEED);
     setGenSeed(rawCell?.seed ?? randomSeed());
     setGenSeedLocked(rawCell?.seed != null);
     setGenAnchorIds(rawCell?.anchors ?? []);
     setGenPatchDirty(false);
     setRefPickerOpen(false);
-  }, [cellUid, rawCell?.prompt, rawCell?.seed, rawCell?.anchors]);
+  }, [cellUid, hasRealCells, rawCell?.prompt, rawCell?.seed, rawCell?.anchors]);
 
   // Default the engine pick once the capability matrix (or the cell's last
   // engine) is known.
@@ -570,13 +818,19 @@ export function CellView() {
   // Persist prompt/seed/anchors to the Cell doc (real mode only — the Cell
   // schema carries these fields directly; mock/standalone has no disk to
   // write them to, so the fixture just holds the in-memory edit).
-  const persistGenPatch = useCallback(async () => {
+  //
+  // `seed` is a parameter, not a read of genSeed: a caller that rolls a new
+  // seed and persists in the same handler would otherwise write the value this
+  // closure captured on the previous render — the render would run on the old
+  // roll while the desk displayed the new one, which is exactly the
+  // reproducibility the seed lock is supposed to guarantee.
+  const persistGenPatch = useCallback(async (seed: number = genSeed) => {
     if (!hasRealCells || !cellUid) return;
     try {
       const client = await getMcpClient();
       await storyboardApi.write_cell(client, cellUid, {
         prompt: genPrompt,
-        seed: genSeed,
+        seed,
         anchors: genAnchorIds,
       });
       setGenPatchDirty(false);
@@ -606,6 +860,37 @@ export function CellView() {
   // local pick of which existing render to preview, not a fabricated one).
   const [keeperOverrideId, setKeeperOverrideId] = useState<string | null>(null);
   useEffect(() => { setKeeperOverrideId(null); }, [cellUid]);
+
+  // ── draft preview: the editor buffer, settled ──
+  // CodeMirror reports every keystroke; re-mounting a srcdoc pane that often
+  // thrashes the pane and the parser. Trailing-edge only, so a pause paints.
+  // A CELL SWITCH must never trail, though: the new cell's buffer resolves
+  // synchronously, so a debounce carried across the switch would paint the
+  // previous cell's html in the stage under this cell's label. The uid rides
+  // with the html so the pane can only ever draw a draft it owns — a switch
+  // reads as "nothing to draft yet" for a frame instead of misattributing.
+  const [draft, setDraft] = useState<{ uid: string | null; html: string }>({ uid: null, html: '' });
+  const draftUidRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (valueUid !== cellUid) return;
+    const commit = () => {
+      draftUidRef.current = cellUid;
+      setDraft({ uid: cellUid, html: value });
+    };
+    if (draftUidRef.current !== cellUid) { commit(); return; }
+    const t = setTimeout(commit, DRAFT_PREVIEW_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [value, cellUid, valueUid]);
+
+  const draftReady = contentState === 'ready' && valueUid === cellUid && draft.uid === cellUid;
+  const draftHtml = draftReady ? draft.html : '';
+
+  // null = follow the cell. The mp4 is the truth surface, so it leads wherever
+  // one exists; the draft leads only on a cell that has nothing authoritative
+  // to show yet (which is precisely where CE-A's living preview earns its
+  // keep). An explicit pick always wins, and resets when the cell changes.
+  const [previewModeOverride, setPreviewModeOverride] = useState<'rendered' | 'draft' | null>(null);
+  useEffect(() => { setPreviewModeOverride(null); }, [cellUid]);
 
   // ── Higgsfield handoff (Track B — no API; prompt package + return leg) ──
   const [handoffPkg, setHandoffPkg] = useState<PromptPackage | null>(null);
@@ -689,7 +974,7 @@ export function CellView() {
   }, [cellUid, hasRealCells, refetchStoryboard]);
 
   // ── render lifecycle + preview record ──
-  const { state: renderState, progress: renderProgress, trigger: triggerRender } = useRenderLifecycle(
+  const { state: renderState, progress: renderProgress, trigger: triggerRender, lastOpts: lastRenderOpts } = useRenderLifecycle(
     cellUid,
     { isReal: hasRealCells, projectId: project?.project_id ?? null },
     {
@@ -716,17 +1001,54 @@ export function CellView() {
   // even on builds where bytes-over-bridge works fine.
   useEffect(() => { setVideoState(activeRecordId ? 'loading' : 'unavailable'); }, [activeRecordId]);
 
+  const previewMode: 'rendered' | 'draft' = previewModeOverride ?? (activeRecordId ? 'rendered' : 'draft');
+
+  // Both tracks write the prompt to the user's cell and then spend something on
+  // it (a fal call, or the author's time on an external generator), so neither
+  // may run on a prompt nobody wrote.
+  const promptMissing = genPrompt.trim().length === 0;
+
+  // One desk, one selection. Every render trigger in this view — the toolbar,
+  // the empty stage, Generate — spends on the engine/model the Generate tab
+  // has ON SCREEN, so no button can quietly bill a model the user isn't
+  // looking at. The engine radio list is the server's full video-capable
+  // matrix (hyperframes included), so this is a general render pick, not a
+  // fal-only one. Higgsfield is the exception: it is a handoff, not a
+  // renderer, and has no adapter to enqueue against — a render under it
+  // carries no engine and the sidecar resolves one from the cell's
+  // content_path, which is what the readouts below say it does.
+  const renderOpts = useMemo<RenderOpts>(() => ({
+    engine: genEngine === HANDOFF_ENGINE_ID ? undefined : genEngine,
+    // Only fal reads a model variant; other adapters would choke on one.
+    // Auto ('') must send nothing — see FAL_MODEL_AUTO.
+    variant: genEngine === FAL_ENGINE_ID ? genModel || undefined : undefined,
+  }), [genEngine, genModel]);
+
+  // Names what a trigger will actually run on, so a button or a progress
+  // readout can never imply an engine the enqueue didn't ask for.
+  const describeRenderOpts = useCallback((o: RenderOpts): string => {
+    if (!o.engine) return "engine resolved from this cell's content";
+    return engineDisplayName(o.engine) + (o.variant ? ` · ${o.variant}` : '');
+  }, [engineDisplayName]);
+
   // Generate = persist the prompt/seed/anchors + fire the render (Track A) or
   // package the prompt for an external generator (Track B / handoff).
   const runGenerate = useCallback(async () => {
+    if (promptMissing) return;
     if (genEngine === HANDOFF_ENGINE_ID) {
       await runHandoffPackage();
       return;
     }
-    if (!genSeedLocked) setGenSeed(randomSeed());
-    await persistGenPatch();
-    await triggerRender({ engine: genEngine });
-  }, [genEngine, genSeedLocked, persistGenPatch, triggerRender, runHandoffPackage]);
+    // Decide the roll ONCE and hand it on explicitly. setGenSeed only schedules
+    // an update — reading genSeed back out here (or letting persistGenPatch
+    // read it) would persist and render the pre-click seed while the desk
+    // showed the new one, so the seed on screen would not be the seed that made
+    // the shot.
+    const seed = genSeedLocked ? genSeed : randomSeed();
+    setGenSeed(seed);
+    await persistGenPatch(seed);
+    await triggerRender(renderOpts);
+  }, [promptMissing, genEngine, genSeedLocked, genSeed, renderOpts, persistGenPatch, triggerRender, runHandoffPackage]);
 
   const storeStatus: RenderStatus | undefined = cellUid ? renderStatus[cellUid] : undefined;
   const stripStatus = useCallback(
@@ -741,6 +1063,17 @@ export function CellView() {
   const rendering =
     renderState === 'queued' || renderState === 'running' || storeStatus === 'queued' || storeStatus === 'running';
   const failed = renderState === 'failed' || storeStatus === 'failed';
+
+  // What the running render is really on. Only the opts THIS view dispatched
+  // may speak for a render it started; a render started elsewhere (Canvas, a
+  // Chi) is named by the record the sidecar wrote. Naming a fixed engine here
+  // reads as fact and was wrong for every render that wasn't HyperFrames.
+  const inFlightLabel = lastRenderOpts
+    ? describeRenderOpts(lastRenderOpts)
+    : activeRecord?.engine
+      ? engineDisplayName(activeRecord.engine) +
+        (activeRecord.model_id ? ` · ${activeRecord.model_id}` : '')
+      : "engine resolved from this cell's content";
 
   // ── narration (honest) ──
   const [narrationSync, setNarrationSync] = useState(false);
@@ -758,8 +1091,27 @@ export function CellView() {
   })();
 
   // ── header derived bits ──
+  // The PROJECT's frame — which is all this is, and all the readout may say it
+  // is. It is not this cell's: hyperframes lets the cell's own declared dims
+  // beat it, and the frontend is never told the project's `resolution` override
+  // at all, so any per-cell number sourced from here would be a guess wearing a
+  // fact's clothes.
   const aspect: AspectRatio = project?.aspect_ratio ?? '16:9';
   const isPortrait = aspect === '9:16';
+
+  // The frame the DRAFT is laid out in. The draft draws this buffer, so the
+  // buffer's own data-width/data-height is the authority — and it is the one the
+  // renderer reads first, ahead of the project's aspect. Deriving from the
+  // project alone lays a portrait cell out landscape and gets the one thing a
+  // draft can be faithful about exactly backwards. A buffer that declares
+  // nothing gets the project's aspect, the same fallback the renderer takes;
+  // the disclosure then says which of the two it got, because "declared" and
+  // "assumed" are different claims and only one of them is the cell's.
+  const draftDeclaredAspect = useMemo(
+    () => (draftReady ? declaredAspect(draftHtml) : undefined),
+    [draftReady, draftHtml],
+  );
+  const draftAspect: AspectRatio = draftDeclaredAspect ?? aspect;
   const contentPath = cell
     ? (rawCell?.content_path ?? `cells/${RUNG_DIR[cell.rung]}/${cell.uid}/content.html`)
     : '';
@@ -798,9 +1150,15 @@ export function CellView() {
               key={c.uid}
               role="tab"
               aria-selected={active}
-              aria-label={`${c.beat} cell, ${c.uid}, ${RUNG_LABEL[c.rung]} rung`}
+              aria-label={
+                `${c.beat} cell, ${c.uid}, ${RUNG_LABEL[c.rung]} rung` +
+                (c.duration_ms ? `, ${fmtSeconds(c.duration_ms)} long` : '')
+              }
               onClick={() => setCellUid(c.uid)}
-              title={`${c.uid} · ${c.beat} · ${RUNG_LABEL[c.rung]}`}
+              title={
+                `${c.uid} · ${c.duration_ms ? `${fmtSeconds(c.duration_ms)} · ` : ''}` +
+                `${c.beat} · ${RUNG_LABEL[c.rung]}`
+              }
               className="flex min-w-[172px] flex-1 items-center gap-2.5 rounded-md border p-1.5 text-left transition-colors"
               style={{
                 borderColor: active ? `var(${COLOR_VAR[c.color]})` : 'var(--border-soft)',
@@ -823,6 +1181,9 @@ export function CellView() {
                 <span className="truncate font-mono text-[11px] text-fg">{c.uid}</span>
                 <span className="flex items-center gap-1.5 font-mono text-[10px] text-fg-muted">
                   <StatusDot status={st} />
+                  {c.duration_ms ? (
+                    <span className="flex-none text-fg-faint">{fmtSeconds(c.duration_ms)} ·</span>
+                  ) : null}
                   <span className="truncate" style={{ color: `var(${COLOR_VAR[c.color]})` }}>{c.beat}</span>
                 </span>
               </span>
@@ -942,8 +1303,9 @@ export function CellView() {
               </button>
               <button
                 type="button"
-                onClick={() => void triggerRender()}
+                onClick={() => void triggerRender(renderOpts)}
                 disabled={renderState === 'queued' || renderState === 'running'}
+                title={`Render this cell — ${describeRenderOpts(renderOpts)}`}
                 className={
                   'flex items-center gap-1.5 rounded px-2 py-1 ring-1 ring-inset ' +
                   (renderState === 'idle' || renderState === 'done'
@@ -1195,8 +1557,12 @@ export function CellView() {
                     setGenSeed={setGenSeed}
                     genSeedLocked={genSeedLocked}
                     setGenSeedLocked={setGenSeedLocked}
+                    isFal={genEngine === FAL_ENGINE_ID}
+                    genModel={genModel}
+                    setGenModel={setGenModel}
                     onGenerate={() => void runGenerate()}
                     generating={rendering || handoffBusy}
+                    promptMissing={promptMissing}
                     isHandoff={genEngine === HANDOFF_ENGINE_ID}
                     handoffPkg={handoffPkg}
                     handoffError={handoffError}
@@ -1219,11 +1585,51 @@ export function CellView() {
             <div className={'flex min-h-0 flex-col bg-base ' + (focusMode ? 'w-full' : 'w-[46%]')}>
               <div className="flex items-center gap-2 border-b border-soft bg-surface px-3 py-1.5 text-[11px] text-fg-muted">
                 <span>Preview</span>
+                {/* Named as the PROJECT's frame, because that is the only one
+                    of the two this is. A cell can declare its own and win — the
+                    draft's disclosure carries that number, sourced from the
+                    buffer that actually declares it. */}
                 <span className="font-mono text-[10px] uppercase tracking-wider text-fg-faint">
-                  {aspect} · {ASPECT_RES[aspect]}
+                  Project {aspect} · {aspectRes(aspect)}
                 </span>
+                {/* Rendered vs Draft is a truth distinction, not a display
+                    option — both are always named so it is never ambiguous
+                    which surface is on screen. */}
+                <div
+                  role="group"
+                  aria-label="Preview source"
+                  className="ml-1 flex items-center gap-0.5 rounded bg-raised p-0.5"
+                >
+                  {(['rendered', 'draft'] as const).map((m) => (
+                    <button
+                      key={m}
+                      type="button"
+                      onClick={() => setPreviewModeOverride(m)}
+                      aria-pressed={previewMode === m}
+                      title={
+                        m === 'rendered'
+                          ? 'The rendered mp4 — the authoritative frame'
+                          : "Your editor source, drawn approximately — only what the buffer carries inline, so no fonts, stylesheets, images, or scripts"
+                      }
+                      className={
+                        'rounded px-2 py-0.5 text-[10.5px] ' +
+                        (previewMode === m ? 'bg-surface text-fg' : 'text-fg-faint hover:text-fg-muted')
+                      }
+                    >
+                      {m === 'rendered' ? 'Rendered' : 'Draft'}
+                    </button>
+                  ))}
+                </div>
                 <div className="flex-1" />
-                {activeRecordId && videoState === 'ready' ? (
+                {previewMode === 'draft' ? (
+                  <span className="inline-flex items-center gap-1.5 text-fg-faint">
+                    <span
+                      className="h-[7px] w-[7px] rounded-full border"
+                      style={{ borderColor: 'var(--fg-faint)' }}
+                    />
+                    <span>Approximation — not the rendered frame</span>
+                  </span>
+                ) : activeRecordId && videoState === 'ready' ? (
                   <span className="inline-flex items-center gap-1.5">
                     <span className="h-[7px] w-[7px] rounded-full" style={{ background: 'var(--live)', boxShadow: '0 0 0 3px var(--live-soft)' }} />
                     <span>Rendered</span>
@@ -1244,15 +1650,18 @@ export function CellView() {
                   className="relative flex items-center justify-center overflow-hidden rounded-sm bg-sunken"
                   style={previewFrameStyle(aspect)}
                 >
-                  {isPortrait && <SafeZoneBands />}
+                  {previewMode === 'draft' && (
+                    <DraftPreview html={draftHtml} ready={draftReady} aspect={draftAspect} />
+                  )}
 
                   {/* real rendered mp4 */}
-                  {activeRecordId && (
+                  {previewMode === 'rendered' && activeRecordId && (
                     <RenderedCellVideo recordId={activeRecordId} onState={setVideoState} />
                   )}
 
                   {/* honest overlays for every non-playing state */}
-                  {(!activeRecordId || videoState === 'unavailable' || videoState === 'error') && (
+                  {previewMode === 'rendered' &&
+                    (!activeRecordId || videoState === 'unavailable' || videoState === 'error') && (
                     <div className="grid place-items-center px-4 text-center">
                       {rendering ? (
                         <div className="grid gap-3 justify-items-center">
@@ -1265,7 +1674,7 @@ export function CellView() {
                           <div className="relative h-1 w-48 overflow-hidden rounded-full bg-raised">
                             <div className="studio-indet rounded-full" />
                           </div>
-                          <div className="font-mono text-[10px] text-fg-muted">HyperFrames · software GPU</div>
+                          <div className="font-mono text-[10px] text-fg-muted">{inFlightLabel}</div>
                         </div>
                       ) : failed ? (
                         <div className="grid gap-2 justify-items-center">
@@ -1273,7 +1682,8 @@ export function CellView() {
                           <div className="text-[13px] text-fg-muted">Render failed</div>
                           <button
                             type="button"
-                            onClick={() => void triggerRender()}
+                            onClick={() => void triggerRender(lastRenderOpts ?? renderOpts)}
+                            title={`Retry — ${describeRenderOpts(lastRenderOpts ?? renderOpts)}`}
                             className="rounded px-2 py-1 text-[11px] ring-1 ring-inset ring-[var(--border)] text-fg hover:bg-raised"
                           >
                             ↻ Try again
@@ -1297,7 +1707,8 @@ export function CellView() {
                           <div className="text-[13px] text-fg-muted">Not rendered yet</div>
                           <button
                             type="button"
-                            onClick={() => void triggerRender()}
+                            onClick={() => void triggerRender(renderOpts)}
+                            title={`Render this cell — ${describeRenderOpts(renderOpts)}`}
                             className="rounded px-3 py-1 text-[11px] ring-1 ring-inset"
                             style={{
                               background: 'color-mix(in oklab, var(--primary) 60%, transparent)',
@@ -1316,8 +1727,40 @@ export function CellView() {
                       )}
                     </div>
                   )}
+
+                  {/* Last in the stage on purpose: the bands mark the frame's
+                      safe zone, so they must sit over whatever is previewing.
+                      With no z-index of their own they rely on paint order,
+                      and the draft's iframe host is positioned too. */}
+                  {isPortrait && <SafeZoneBands />}
                 </div>
               </div>
+
+              {/* Says in prose what the draft is and is not — a badge alone
+                  leaves the reader to infer how far to trust the pane, and
+                  points at the mp4 whenever a real one exists to compare. */}
+              {previewMode === 'draft' && draftReady && (
+                <div className="border-t border-soft bg-surface px-3 py-1.5 text-[10px] leading-relaxed text-fg-faint">
+                  Draft of your editor source, laid out at {aspectRes(draftAspect)}
+                  {draftDeclaredAspect
+                    ? ` — the ${draftAspect} frame this cell's HTML declares — `
+                    : ` — this project's ${aspect} frame, as the HTML declares none — `}
+                  and scaled to fit. Only what the buffer carries inline is drawn: no fonts,
+                  stylesheets, images, or scripts load here, so it approximates the first frame
+                  rather than reproducing it.{' '}
+                  {activeRecordId ? (
+                    <button
+                      type="button"
+                      onClick={() => setPreviewModeOverride('rendered')}
+                      className="underline hover:text-fg-muted"
+                    >
+                      A rendered mp4 exists for this cell — show it
+                    </button>
+                  ) : (
+                    <span>This cell has not been rendered yet.</span>
+                  )}
+                </div>
+              )}
 
               {/* ═══ A/B variants tray — every polled render for this cell, pick the keeper ═══ */}
               <div className="border-t border-soft bg-surface">
@@ -1393,8 +1836,13 @@ export function CellView() {
                     <button
                       type="button"
                       onClick={() => void runGenerate()}
-                      title="Generate another variant"
-                      className="flex aspect-video w-[132px] flex-none items-center justify-center rounded-md border border-dashed text-fg-faint hover:text-fg-muted"
+                      disabled={promptMissing}
+                      title={
+                        promptMissing
+                          ? 'Write a prompt in the Generate tab first'
+                          : 'Generate another variant'
+                      }
+                      className="flex aspect-video w-[132px] flex-none items-center justify-center rounded-md border border-dashed text-fg-faint hover:text-fg-muted disabled:cursor-not-allowed disabled:opacity-40"
                       style={{ borderColor: 'var(--border)' }}
                     >
                       +
@@ -1469,6 +1917,11 @@ function StatusDot({ status }: { status: RenderStatus | undefined }) {
   return <span className="h-[6px] w-[6px] rounded-full" style={{ background: 'var(--fg-faint)' }} />;
 }
 
+/** Cell duration as the locked strip renders it (CE-C's "{dur}s · beat"). */
+function fmtSeconds(ms: number): string {
+  return `${(ms / 1000).toFixed(1)}s`;
+}
+
 function fmtHHMM(ms: number): string {
   const d = new Date(ms);
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
@@ -1502,8 +1955,12 @@ function GenerateTab(props: {
   setGenSeed: (n: number) => void;
   genSeedLocked: boolean;
   setGenSeedLocked: (v: boolean | ((o: boolean) => boolean)) => void;
+  isFal: boolean;
+  genModel: string;
+  setGenModel: (m: string) => void;
   onGenerate: () => void;
   generating: boolean;
+  promptMissing: boolean;
   isHandoff: boolean;
   handoffPkg: PromptPackage | null;
   handoffError: string | null;
@@ -1521,7 +1978,8 @@ function GenerateTab(props: {
   const {
     genPrompt, setGenPrompt, refAnchors, drawerAnchors, genAnchorIds, toggleGenAnchor,
     refPickerOpen, setRefPickerOpen, trackAEngines, genEngine, setGenEngine, engineDisplayName,
-    genSeed, setGenSeed, genSeedLocked, setGenSeedLocked, onGenerate, generating, isHandoff,
+    genSeed, setGenSeed, genSeedLocked, setGenSeedLocked, isFal, genModel, setGenModel,
+    onGenerate, generating, promptMissing, isHandoff,
     handoffPkg, handoffError, handoffCopied, onCopyHandoffPrompt, ingestPath, setIngestPath,
     ingestBusy, ingestError, onIngest, hasRealCells, genPatchDirty, COLOR_VAR,
   } = props;
@@ -1693,6 +2151,34 @@ function GenerateTab(props: {
           </div>
         </div>
 
+        {/* fal model — the one Track-A adapter with a model choice, so the
+            picker appears only for it rather than implying every engine has
+            one. Threaded as the render `variant`, not a persisted Cell field. */}
+        {isFal && (
+          <div className="grid gap-1.5">
+            <div className="flex items-center justify-between font-mono text-[10px] uppercase tracking-wider text-fg-faint">
+              <span>Model</span>
+              <span className="normal-case tracking-normal text-fg-faint">fal endpoint</span>
+            </div>
+            <select
+              value={genModel}
+              onChange={(e) => setGenModel(e.target.value)}
+              aria-label="fal model"
+              className="w-full rounded-lg border border-[var(--border)] bg-raised px-2.5 py-2 font-mono text-[12.5px] text-fg outline-none focus:border-[var(--agent)]"
+            >
+              <option value={FAL_MODEL_AUTO}>auto — image-to-video when anchored</option>
+              {FAL_MODELS.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+            </select>
+            <div className="text-[11px] leading-relaxed text-fg-faint">
+              {genModel === FAL_MODEL_AUTO
+                ? "Uses this cell's own model setting if it has one, and otherwise switches to image-to-video when an anchor is attached — so the reference plate conditions the shot."
+                : 'Pinned — overrides this cell\'s own model setting, and an attached anchor will not switch this to image-to-video.'}
+            </div>
+          </div>
+        )}
+
         {/* seed */}
         {!isHandoff && (
           <div className="grid gap-1.5">
@@ -1789,14 +2275,20 @@ function GenerateTab(props: {
           <button
             type="button"
             onClick={onGenerate}
-            disabled={generating}
-            className="flex h-10 items-center justify-center gap-1.5 rounded-lg font-medium disabled:cursor-wait disabled:opacity-60"
+            disabled={generating || promptMissing}
+            title={promptMissing ? 'Write a prompt first — this cell has none yet' : undefined}
+            className={
+              'flex h-10 items-center justify-center gap-1.5 rounded-lg font-medium ' +
+              (promptMissing ? 'cursor-not-allowed opacity-40' : 'disabled:cursor-wait disabled:opacity-60')
+            }
             style={{ background: 'var(--agent)', color: 'hsl(270,40%,97%)' }}
           >
             {generating ? '● Generating…' : isHandoff ? '✦ Package prompt' : '✦ Generate shot'}
           </button>
           <div className="text-center text-[11px] text-fg-faint">
-            {isHandoff
+            {promptMissing
+              ? 'Write a prompt above to generate this shot.'
+              : isHandoff
               ? 'Packages the prompt for Higgsfield — nothing renders here directly.'
               : 'Adds a new variant to the tray below — nothing is overwritten.'}
           </div>
