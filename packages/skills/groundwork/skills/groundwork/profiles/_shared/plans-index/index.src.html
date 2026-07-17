@@ -266,6 +266,16 @@
             window.parent.postMessage({ __iyke: true, kind: 'host.sendToActiveSession', request_id: reqId, payload: args }, '*');
           });
         },
+        openArtifact: (href) => {
+          if (!inShell) return Promise.resolve({ ok: false, reason: 'no-shell' });
+          return new Promise((resolve) => {
+            const reqId = 'oart-' + Math.random().toString(36).slice(2) + '-' + Date.now();
+            const onMsg = (ev) => { const m = ev.data; if (!m || !m.__iyke || m.kind !== 'host.openArtifact:result' || m.request_id !== reqId) return; window.removeEventListener('message', onMsg); clearTimeout(timer); resolve(m.payload || { ok: false, reason: 'empty-payload' }); };
+            const timer = setTimeout(() => { window.removeEventListener('message', onMsg); resolve({ ok: false, reason: 'timeout' }); }, 15000);
+            window.addEventListener('message', onMsg);
+            window.parent.postMessage({ __iyke: true, kind: 'host.openArtifact', request_id: reqId, payload: { href } }, '*');
+          });
+        },
         pin: () => { post('pin', {}); },
         notes: { send: (text, opts) => { post('notes.send', { text, ...opts }); if (!inShell) { try { navigator.clipboard.writeText(text); } catch (e) {} } } },
         inShell,
@@ -357,8 +367,17 @@
 
     function PlanCard({ p, art }) {
       const openLink = (href, e) => {
-        // in-shell: route a "open this" note to the active session; standalone: follow href
-        if (art.inShell && art.sendToActiveSession) { e.preventDefault(); art.sendToActiveSession({ prompt: 'Open `' + href + '` (groundwork artifact).', source: 'plans-index' }); }
+        // Disabled cards (missing artifact) never navigate.
+        if (e.currentTarget && e.currentTarget.classList.contains('is-disabled')) { e.preventDefault(); return; }
+        // Standalone (browser): let the anchor's target="_blank" open a new tab.
+        if (!art.inShell) return;
+        // In-shell: ask the host to open it as a NEW tab in the focused pane
+        // (target="_blank" is popup-blocked by the viewer sandbox). If the host
+        // is an older build without the openArtifact verb, fall back to
+        // same-frame navigation (allowed in the sandbox) so the link still works.
+        e.preventDefault();
+        const p = art.openArtifact ? art.openArtifact(href) : Promise.resolve({ ok: false });
+        p.then((r) => { if (!r || !r.ok) window.location.assign(href); });
       };
       return (
         <div className="card">
