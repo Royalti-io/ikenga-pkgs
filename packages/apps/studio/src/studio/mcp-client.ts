@@ -270,6 +270,159 @@ export const storyboardApi = {
     c.callTool<{ ok: true }>('storyboard.set_approved', { cell_uid, approved }),
 };
 
+/** One shot `breakdown.run` projected out of the script — an action paragraph
+ *  plus the OTIO ids derived from its position. `uid` is the cell uid AND the
+ *  `[[tag]]` written back into script.fountain, so it's the exact join key the
+ *  Breakdown rail links on. */
+export interface BreakdownShot {
+  /** OTIO shot id `sc<N>_sh<M>` — the cell uid and the script tag. */
+  uid: string;
+  /** OTIO scene id `sc<N>`. */
+  beat_id: string;
+  /** The action paragraph text, verbatim from the script. */
+  action: string;
+}
+
+/** What a `breakdown.run` call actually did — the discriminant to switch on.
+ *  See `BreakdownRun` for the per-outcome field rules.
+ *
+ *   • `scaffolded`          — board was empty; cells created and tags written.
+ *   • `retagged`            — board had cells; NOTHING created, tags written.
+ *   • `already-tagged`      — board had cells, every paragraph already tagged
+ *                             correctly. A true no-op — nothing was written.
+ *   • `ambiguous-needs-chi` — board had cells but which paragraph belongs to
+ *                             which shot is judgment. Nothing written. Read
+ *                             `ambiguous` and hand off to the Chi.
+ *   • `script-write-failed` — script.fountain could not be written. `created`
+ *                             may still be non-empty (scaffold got that far).
+ *                             Read `script_error`.
+ *   • `planned`             — dry run. NOTHING happened; read `would_create` /
+ *                             `would_tag`.
+ *   • `demo-inert`          — MOCK CLIENT ONLY. Demo mode has no project on
+ *                             disk and no script.fountain, so the verb cannot
+ *                             run at all. Nothing happened and every count is
+ *                             `null`. Render `message`, not numbers. The
+ *                             sidecar never emits this. */
+export type BreakdownOutcome =
+  | 'scaffolded'
+  | 'retagged'
+  | 'already-tagged'
+  | 'ambiguous-needs-chi'
+  | 'script-write-failed'
+  | 'planned'
+  | 'demo-inert';
+
+/** Why retag refused to auto-match. Facts about the script and the board, never
+ *  a judgment about which reading is right.
+ *
+ *   • `count-mismatch`     — N paragraphs vs M shots (the real forge project:
+ *                            8 vs 6). There is no forced pairing.
+ *   • `tag-order-conflict` — an authored `[[tag]]` disagrees with board order.
+ *   • `unresolved-tag`     — an authored `[[tag]]` names no shot on this board. */
+export type BreakdownAmbiguityReason = 'count-mismatch' | 'tag-order-conflict' | 'unresolved-tag';
+
+/** Result of `breakdown.run`. **Switch on `outcome`.** Do not infer success
+ *  from the absence of a throw — a hand-off and a failed write both arrive here
+ *  as normal results, because both carry facts the user needs.
+ *
+ *  Honesty rules this shape exists to enforce — the previous version of this
+ *  contract reported a fabricated `tagged: 6` / `script_bytes: 1024` against a
+ *  script that was never written, and the UI printed it verbatim:
+ *
+ *   • `tagged` is the LIST of uids whose tag this call wrote. Its length is a
+ *     measured count. There is no "tags written" number to invent — if nothing
+ *     was written the list is empty, so say "no tags written".
+ *   • `script_bytes` is `null` whenever nothing was written. **Never render a
+ *     byte count when it is null**, and never substitute a placeholder.
+ *   • `scenes` / `paragraphs` / `cell_count` are measured off the script and
+ *     the board this call actually read.
+ *   • `created` is empty in retag mode BY DESIGN (D-8) — an existing board is
+ *     never scaffolded onto. Empty `created` is not a failure.
+ *   • Every created cell comes back with `shot_type:'unset'`, `prompt:''`,
+ *     `anchors:[]`, `duration_ms:0`. That is not missing data to paper over —
+ *     those fields need an LLM (the `studio-breakdown` skill / Chi) and `run`
+ *     refuses to guess. Present the board as a scaffold awaiting judgment.
+ *   • Genuine errors still arrive as a THROW from the client (see real-mcp
+ *     `raw`): `error: 'no-script' | 'no-action-paragraphs' | 'invalid-args'`.
+ *     `cells-exist` is GONE — an existing board is now the retag path, not a
+ *     refusal. */
+export interface BreakdownRun {
+  /** What happened. Branch on this. */
+  outcome: BreakdownOutcome;
+  /** Which half of D-8 ran. `retag` never creates.
+   *  `null` on `demo-inert` — no board and no script were ever read, so no mode
+   *  was ever chosen. Claiming one would be a guess. */
+  mode: 'scaffold' | 'retag' | null;
+  /** True when this was a plan-only call (nothing written to disk). */
+  dry_run: boolean;
+  /** Distinct scenes the parser found in script.fountain. Measured.
+   *  `null` ONLY on `demo-inert` — no script was ever parsed, so there is no
+   *  number. Do not coalesce null to 0; 0 reads as a measurement. */
+  scenes: number | null;
+  /** Action paragraphs the parser found in script.fountain. Measured.
+   *  `null` on `demo-inert` — see `scenes`. */
+  paragraphs: number | null;
+  /** Cells on the board when the call started. Measured.
+   *  `null` on `demo-inert` — see `scenes`. */
+  cell_count: number | null;
+  /** The shots the script projects to. SCAFFOLD MODE ONLY — `[]` in retag. */
+  planned: BreakdownShot[];
+  /** uids of the cells actually created. Always `[]` in retag mode / dry run. */
+  created: string[];
+  /** The newly created Cell records. Scaffold only; absent on a dry run. */
+  cells?: Cell[];
+  /** Existing cells left untouched. In retag mode that is every cell. */
+  skipped: string[];
+  /** uids that WOULD be created — dry run only. */
+  would_create?: string[];
+  /** uids whose tag WOULD be written — dry run only. */
+  would_tag?: string[];
+  /** uids whose `[[tag]]` THIS call wrote into script.fountain. */
+  tagged: string[];
+  /** uids whose paragraph already carried the right tag — left untouched. */
+  already_tagged: string[];
+  /** Did script.fountain actually get written this call? */
+  script_written: boolean;
+  /** UTF-8 byte size of the script after tagging, or `null` when nothing was
+   *  written. Render nothing when null — there is no number to show. */
+  script_bytes: number | null;
+  /** Present iff `outcome === 'script-write-failed'`. */
+  script_error?: string;
+  /** Present iff `outcome === 'ambiguous-needs-chi'` — the facts that made the
+   *  paragraph→shot mapping a judgment call. `detail` is a plain-language
+   *  explanation safe to show the user. */
+  ambiguous?: {
+    paragraphs: number;
+    cells: number;
+    reason: BreakdownAmbiguityReason;
+    detail: string;
+  };
+  /** Plain-language note about a result that carries no numbers to show —
+   *  currently only `demo-inert`. Safe to render verbatim. */
+  message?: string;
+}
+
+export const breakdownApi = {
+  /** Link the open project's script.fountain to its storyboard, deterministically.
+   *  The active project is injected real-side.
+   *
+   *  Two modes, auto-selected (D-8): an EMPTY board is scaffolded (one rung-0
+   *  cell per action paragraph + `[[sc<N>_sh<M>]]` tags); a board that already
+   *  has cells is RETAGGED — nothing is created, and only the `[[tag]]`s are
+   *  written, using each cell's uid. Retag auto-matches only when the reading is
+   *  forced (one paragraph per cell, in order, no authored tag contradicting it);
+   *  otherwise it returns `outcome: 'ambiguous-needs-chi'` rather than guessing.
+   *
+   *  Spends nothing — no render, no anchor generation, no approval gate.
+   *  Never deletes a cell and never overwrites an authored tag.
+   *  Pass `{ dry_run: true }` to preview (`outcome: 'planned'`).
+   *
+   *  **Switch on `result.outcome`.** A resolved promise does not mean the board
+   *  changed. */
+  run: (c: McpClient, args?: { dry_run?: boolean }) =>
+    c.callTool<BreakdownRun>('breakdown.run', args ?? {}),
+};
+
 /** A cell's authored source file (storyboard.read_cell_content). `exists:false`
  *  (empty html) is a real cell with no source written yet, NOT an error. */
 export interface CellContent {

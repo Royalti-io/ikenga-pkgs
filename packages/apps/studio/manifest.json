@@ -221,6 +221,9 @@
       "studio.veo",
       "studio.kling",
       "studio.runway"
+    ],
+    "engine": [
+      "invoke"
     ]
   }
 }

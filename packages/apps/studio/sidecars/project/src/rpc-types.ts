@@ -87,6 +87,8 @@ export type RpcMethod =
   | 'storyboard.upsert_beat'
   | 'storyboard.upsert_rung'
   | 'storyboard.set_approved'
+  // breakdown.* (plans/studio/19 WP-3 — deterministic script→cells scaffold)
+  | 'breakdown.run'
   // anchor.*
   | 'anchor.list'
   | 'anchor.create'

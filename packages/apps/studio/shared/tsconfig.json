@@ -16,6 +16,6 @@
     "rootDir": ".",
     "baseUrl": "."
   },
-  "include": ["schema.ts"],
+  "include": ["schema.ts", "fountain.ts"],
   "exclude": ["node_modules", "dist"]
 }

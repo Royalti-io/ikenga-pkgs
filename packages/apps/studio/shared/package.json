@@ -19,17 +19,23 @@
       "types": "./dist/schema.d.ts",
       "import": "./dist/schema.js"
     },
+    "./fountain": {
+      "types": "./dist/fountain.d.ts",
+      "import": "./dist/fountain.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
     "dist",
     "schema.ts",
+    "fountain.ts",
     "README.md"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test --experimental-strip-types \"*.test.ts\"",
     "clean": "rm -rf dist"
   },
   "dependencies": {

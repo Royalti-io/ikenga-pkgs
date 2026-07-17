@@ -57,6 +57,7 @@ import type {
 import { startWatcher, type WatcherHandle } from './watcher.js';
 import { requestProjectAccess } from './trust.js';
 import * as storyboard from './storyboard.js';
+import * as breakdown from './breakdown.js';
 import * as anchors from './anchors.js';
 import * as assets from './assets.js';
 import * as archetypes from './archetypes.js';
@@ -423,6 +424,15 @@ function buildHandlers(db: Db): BuiltHandlers {
           params.rung,
           params.rungKey as string | undefined,
         );
+        if (r.project) syncOpenProject(params.projectId as string, r.project);
+        return r.result;
+      }
+
+      // ── breakdown.* ──
+      // Deterministic script→cells scaffold (plans/studio/19 D-2). Needs a
+      // project root (NOT in NO_ROOT). Zero spend — never reaches the queue.
+      case 'breakdown.run': {
+        const r = breakdown.run(root, { dryRun: Boolean(params.dry_run) });
         if (r.project) syncOpenProject(params.projectId as string, r.project);
         return r.result;
       }

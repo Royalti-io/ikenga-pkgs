@@ -355,6 +355,50 @@ function callMockTool(
       return { cellId: uid };
     }
 
+    // ─── breakdown ─────────────────────────────────────────────────
+    // breakdown.run is INERT in demo mode, and says so (plans/studio/19,
+    // Round-2 defect #3).
+    //
+    // The verb's entire job is: read `<root>/script.fountain` from disk, and
+    // write `[[tag]]`s back into it. In mock mode there is no project root and
+    // no script file — the Breakdown view feeds itself `DEMO_FOUNTAIN`, a JS
+    // template literal in a bundled module. It cannot be parsed from disk and
+    // it cannot be written to. So there is no honest way to simulate this call.
+    //
+    // The previous mock pretended anyway: it reported `tagged: 6` and
+    // `script_bytes: 1024` for a write that never happened (1024 was invented
+    // outright), and the UI printed "6 tags written into the script" verbatim.
+    // It also pushed 6 cells into MOCK_CELLS, so every other view silently grew
+    // from 6 rows to 12. Both are gone.
+    //
+    // What's left is the truth: nothing happened, and here's why. Every count
+    // is `null` — "not determined" — rather than a 0 that reads as a measurement.
+    // A UI that switches on `outcome` gets `demo-inert` and has nothing numeric
+    // to print, which is the intended outcome: it is impossible to render a
+    // fabricated figure from this result.
+    case 'breakdown.run': {
+      return {
+        outcome: 'demo-inert',
+        // No board and no script were read, so no mode was ever chosen. Naming
+        // one ('scaffold'/'retag') would be a guess about work that never ran.
+        mode: null,
+        dry_run: Boolean(args.dry_run),
+        scenes: null,
+        paragraphs: null,
+        cell_count: null,
+        planned: [],
+        created: [],
+        skipped: [],
+        tagged: [],
+        already_tagged: [],
+        script_written: false,
+        script_bytes: null,
+        message:
+          'Demo data — there is no project on disk, so there is no script.fountain to read '
+          + 'or tag. Open a real project to run the breakdown.',
+      };
+    }
+
     // ─── composition ───────────────────────────────────────────────
     case 'composition.render': {
       const cellUid = (args.cell_uid as string) ?? MOCK_CELLS[0].uid;

@@ -86,7 +86,12 @@ export interface ExportRecord {
 export interface EngineCapability {
   id: string;
   aspect_ratios: AspectRatio[];
-  max_duration_ms: number;
+  /** Nullable on the wire: the fal adapter really reports `null` here
+   *  (renderers/fal.ts) meaning "no advertised cap", and this was typed as a
+   *  plain `number` — every consumer that only survived it did so by accident,
+   *  because `null` is falsy. Callers must treat `null` as "unknown / no cap",
+   *  NOT as zero. */
+  max_duration_ms: number | null;
   supported_codecs: string[];
   requires_network: boolean;
   // G2 capability booleans (renderers/types.ts `RendererAdapter.capabilities`).

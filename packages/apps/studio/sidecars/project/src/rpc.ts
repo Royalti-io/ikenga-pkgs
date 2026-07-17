@@ -139,6 +139,7 @@ const EXTENDED_METHODS = new Set<string>([
   'storyboard.upsert_beat',
   'storyboard.upsert_rung',
   'storyboard.set_approved',
+  'breakdown.run',
   'anchor.list',
   'anchor.create',
   'anchor.generate',

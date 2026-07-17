@@ -15,6 +15,7 @@ import type { SidecarClient } from '../sidecar-client.js';
 import type { Catalog } from '../catalog.js';
 import { projectTools } from './project.js';
 import { storyboardTools } from './storyboard.js';
+import { breakdownTools } from './breakdown.js';
 import { anchorTools } from './anchor.js';
 import { assetTools } from './asset.js';
 import { compositionTools } from './composition.js';
@@ -33,6 +34,7 @@ export function buildTools(opts: {
   return [
     ...projectTools(sidecar, registry),
     ...storyboardTools(sidecar),
+    ...breakdownTools(sidecar),
     ...anchorTools(sidecar),
     ...assetTools(sidecar),
     ...compositionTools(sidecar, registry),

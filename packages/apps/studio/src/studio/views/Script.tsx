@@ -237,7 +237,7 @@ export function ScriptView() {
 
   const activeBeat = beatAtMs(rows, playheadMs);
 
-  const scenes = useMemo(() => parseFountain(FOUNTAIN_SAMPLE), []);
+  const scenes = useMemo(() => parseFountain(FOUNTAIN_SAMPLE).scenes, []);
 
   // Real Fountain source (Wave-5): lazily read <project>/script.fountain over
   // the storyboard.read_fountain seam the first time the user switches to
@@ -273,7 +273,7 @@ export function ScriptView() {
   }, [hasRealCells, mode]);
 
   const realScenes = useMemo(
-    () => (fountain.exists && fountain.text ? parseFountain(fountain.text) : []),
+    () => (fountain.exists && fountain.text ? parseFountain(fountain.text).scenes : []),
     [fountain.exists, fountain.text],
   );
 

@@ -407,6 +407,49 @@ export function openFolder(): Promise<HostCallResult> {
   return callHostTool('host.openFolder', {});
 }
 
+/** Result of {@link sendToChi}. Mirrors the shell's `host.sendToActiveSession`
+ *  structured payload 1:1 (shell/src/components/pkg/pkg-iframe-host.tsx) —
+ *  `{ ok: true, threadId }` on success, `{ ok: false, reason }` on refusal.
+ *  `reason` is `'scope-denied'` when the manifest lacks `permissions.engine:
+ *  ["invoke"]`, `'no-active-session'` when a shell IS present but no chat
+ *  pane is currently focused, `'no-host'` when there is no shell at all (see
+ *  {@link isStandalone}) — a distinct case because standalone dev has no
+ *  panes for a "focus a chat pane" instruction to point at — or any other
+ *  string the shell's refusal path grows in future. */
+export type SendToChiResult =
+  | { ok: true; threadId: string }
+  | { ok: false; reason: 'scope-denied' | 'no-active-session' | 'no-host' | string };
+
+/** Dispatch a prompt into the user's Chi — seeds a user turn in the focused
+ *  chat pane's existing thread via `host.sendToActiveSession`. Gated on this
+ *  pkg's manifest declaring `permissions.engine: ["invoke"]` (see
+ *  manifest.json); without it the shell refuses with `reason: 'scope-denied'`
+ *  and `reason: 'no-active-session'` when a shell is present but no chat pane
+ *  is focused. Degrades gracefully in standalone dev (no parent shell) —
+ *  returns `{ ok: false, reason: 'no-host' }` rather than throwing, same as
+ *  every other helper in this file when `_app` is unset. `'no-host'` is
+ *  distinct from `'no-active-session'` on purpose: standalone dev has no
+ *  panes at all, so "open your Chi in a pane" is not an actionable message
+ *  there the way it is when a shell exists but nothing is focused. Never
+ *  throws. */
+export async function sendToChi(prompt: string, source?: string): Promise<SendToChiResult> {
+  if (isStandalone() || !_app) {
+    return { ok: false, reason: 'no-host' };
+  }
+  try {
+    const res = await callHostTool('host.sendToActiveSession', { prompt, source });
+    const sc = res.structuredContent as { ok?: boolean; threadId?: string; reason?: string } | undefined;
+    if (sc?.ok === true && typeof sc.threadId === 'string') {
+      return { ok: true, threadId: sc.threadId };
+    }
+    return { ok: false, reason: sc?.reason ?? 'no-active-session' };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[studio] sendToChi failed', err);
+    return { ok: false, reason: err instanceof Error ? err.message : 'no-active-session' };
+  }
+}
+
 /** A published sidebar-menu item. Mirrors the shell's `PkgMenuItem`
  *  (shell/src/lib/pkg/pkg-menu-store.ts) 1:1 so the M-A "production ledger"
  *  menu can publish sections / badges / a `kind:'seg'` layout strip /

@@ -320,6 +320,51 @@ export function createRealMcpClient(): McpClient {
           bytes: (body.bytes as number) ?? 0,
         };
       }
+      // breakdown.run (WP-3, D-8) — deterministic script↔board linking. Needs
+      // the active projectId injected (the default fall-through passes args
+      // verbatim, and the sidecar rejects a call with no project root).
+      // The result's snake_case wire shape already matches the UI BreakdownRun
+      // contract, so only the ok-wrapper is stripped (raw() already did that);
+      // `cells` is passed through as the created Cell records and cached so a
+      // subsequent write_cell doesn't re-read them.
+      //
+      // NO INVENTED DEFAULTS HERE. The old mapper coerced every count with
+      // `?? 0`, which would quietly turn a missing field into a confident
+      // "0 scenes / 0 bytes". A missing field means the sidecar didn't say —
+      // so the counts pass through as-is and `script_bytes` keeps its `null`
+      // (meaning "nothing was written"), which the UI must not render as a
+      // number. If the sidecar ever omits one of these, the UI should show
+      // undefined rather than a fabricated zero.
+      case 'breakdown.run': {
+        const a = requireActive('breakdown.run');
+        const body = await raw('breakdown.run', {
+          projectId: a.projectId,
+          dry_run: args.dry_run,
+        });
+        const cells = (body.cells as Cell[] | undefined) ?? undefined;
+        cacheCells(cells);
+        return {
+          outcome: body.outcome as string,
+          mode: body.mode as string,
+          dry_run: Boolean(body.dry_run),
+          scenes: body.scenes as number,
+          paragraphs: body.paragraphs as number,
+          cell_count: body.cell_count as number,
+          planned: (body.planned as unknown[]) ?? [],
+          created: (body.created as string[]) ?? [],
+          ...(cells ? { cells } : {}),
+          skipped: (body.skipped as string[]) ?? [],
+          ...(body.would_create ? { would_create: body.would_create as string[] } : {}),
+          ...(body.would_tag ? { would_tag: body.would_tag as string[] } : {}),
+          tagged: (body.tagged as string[]) ?? [],
+          already_tagged: (body.already_tagged as string[]) ?? [],
+          script_written: Boolean(body.script_written),
+          // `null` is load-bearing: "no write happened, so there is no size".
+          script_bytes: (body.script_bytes as number | null) ?? null,
+          ...(body.script_error ? { script_error: body.script_error as string } : {}),
+          ...(body.ambiguous ? { ambiguous: body.ambiguous } : {}),
+        };
+      }
       // anchor.list needs the active projectId injected (the default
       // fall-through passes args verbatim, which the sidecar would reject).
       case 'anchor.list': {
