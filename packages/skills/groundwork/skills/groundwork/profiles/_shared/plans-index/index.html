@@ -266,6 +266,16 @@
             window.parent.postMessage({ __iyke: true, kind: 'host.sendToActiveSession', request_id: reqId, payload: args }, '*');
           });
         },
+        openArtifact: (href) => {
+          if (!inShell) return Promise.resolve({ ok: false, reason: 'no-shell' });
+          return new Promise((resolve) => {
+            const reqId = 'oart-' + Math.random().toString(36).slice(2) + '-' + Date.now();
+            const onMsg = (ev) => { const m = ev.data; if (!m || !m.__iyke || m.kind !== 'host.openArtifact:result' || m.request_id !== reqId) return; window.removeEventListener('message', onMsg); clearTimeout(timer); resolve(m.payload || { ok: false, reason: 'empty-payload' }); };
+            const timer = setTimeout(() => { window.removeEventListener('message', onMsg); resolve({ ok: false, reason: 'timeout' }); }, 15000);
+            window.addEventListener('message', onMsg);
+            window.parent.postMessage({ __iyke: true, kind: 'host.openArtifact', request_id: reqId, payload: { href } }, '*');
+          });
+        },
         pin: () => { post('pin', {}); },
         notes: { send: (text, opts) => { post('notes.send', { text, ...opts }); if (!inShell) { try { navigator.clipboard.writeText(text); } catch (e) {} } } },
         inShell,
@@ -727,13 +737,18 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
     art
   }) {
     const openLink = (href, e) => {
-      if (art.inShell && art.sendToActiveSession) {
+      if (e.currentTarget && e.currentTarget.classList.contains('is-disabled')) {
         e.preventDefault();
-        art.sendToActiveSession({
-          prompt: 'Open `' + href + '` (groundwork artifact).',
-          source: 'plans-index'
-        });
+        return;
       }
+      if (!art.inShell) return;
+      e.preventDefault();
+      const p = art.openArtifact ? art.openArtifact(href) : Promise.resolve({
+        ok: false
+      });
+      p.then(r => {
+        if (!r || !r.ok) window.location.assign(href);
+      });
     };
     return React.createElement("div", {
       className: "card"
