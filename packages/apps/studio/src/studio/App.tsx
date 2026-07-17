@@ -192,6 +192,11 @@ type ResumeState =
 export function App() {
   const isProjectOpen = useProjectStore(selectIsProjectOpen);
   const openProjectSummary = useProjectStore(selectOpenProject);
+  // Standalone-only exit: the shell rail owns Close/Switch in-shell, but
+  // standalone (pnpm dev) has no rail — so the header's project title is the
+  // only way back to the Launcher (which doubles as the switcher: recents +
+  // archetype gallery). F-2.
+  const closeProject = useProjectStore((s) => s.closeProject);
   // Sync window-parent probe (stable for the iframe's lifetime): shell vs
   // standalone. Gates the banner LayoutSwitcher (see the header comment).
   const standalone = isStandalone();
@@ -312,9 +317,15 @@ export function App() {
             {openProjectSummary?.name && (
               <>
                 <span className="text-fg-faint">·</span>
-                <span className="truncate font-mono text-[11px] text-fg-muted">
+                <button
+                  type="button"
+                  onClick={() => closeProject()}
+                  title="Close project — back to the launcher"
+                  aria-label="Close project and return to the launcher"
+                  className="truncate rounded font-mono text-[11px] text-fg-muted hover:text-fg hover:underline focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[color-mix(in_oklab,var(--info)_45%,transparent)]"
+                >
                   {openProjectSummary.name}
-                </span>
+                </button>
                 {openProjectSummary.aspect_ratio && (
                   <span className="rounded bg-raised px-1.5 py-0.5 font-mono text-[10px] text-fg-faint">
                     {openProjectSummary.aspect_ratio}

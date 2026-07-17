@@ -62,6 +62,10 @@ const ICON = {
   breakdown: 'trending-up',
   ledger: 'check-check',
   handoff: 'send',
+  // Close-project returns to the Launcher, so it borrows the Launcher's own
+  // glyph — the visual "back to the desk". (The shell ICONS map has no
+  // x/exit/log-out entry; an unmapped name silently renders as the Package box.)
+  close: 'sun',
 } as const;
 
 // Layout glyphs for the seg strip (founder call 2026-07-12: icons, not text).
@@ -89,7 +93,10 @@ async function loadRecentsForMenu(): Promise<void> {
     const rows = (projects ?? [])
       .map(normalizeRecent)
       .filter((r): r is RecentRow => r !== null && r.exists) // skip exists:false rows
-      .slice(0, 3); // up to 3 jump rows
+      // Up to 4 — one row of headroom so the in-project "Switch project" section
+      // still shows 3 targets after filtering out the currently-open project.
+      // Both builders re-slice to 3 for their own surface.
+      .slice(0, 4);
     if (token !== recentsLoadToken) return; // a newer load superseded this one
     recents = rows;
   } catch {
@@ -140,7 +147,7 @@ function buildProjectMenu(project: OpenProjectSummary): PublishedMenuItem[] {
   // an invented one (and on an old shell, no empty badge pill).
   const meta = projectMeta(project) || null;
 
-  return [
+  const items: PublishedMenuItem[] = [
     // Project header — the locked M-A two-line block in the implicit first group.
     //
     // `subtitle` and `badge` carry the SAME meta string on purpose, and the row
@@ -235,13 +242,44 @@ function buildProjectMenu(project: OpenProjectSummary): PublishedMenuItem[] {
       active: focusedView === 'archetype',
     },
   ];
+
+  // ── Switch project (F-2, SHOULD) — a studio-owned switcher published INSIDE
+  // the project menu, so there's a way to jump to another project without first
+  // closing this one. Reuses the SAME recents rows + `recent:<path>` id as
+  // buildNoProjectMenu, so a click routes through the one real openProjectByPath
+  // flow (which replaces the open project in place). Excludes the currently-open
+  // project by path — you can't "switch" to where you already are. The section
+  // simply doesn't render while recents are still loading or none qualify.
+  const switchRows = recents.filter((r) => r.path && r.path !== project.path).slice(0, 3);
+  for (const row of switchRows) {
+    items.push({
+      id: `recent:${row.path}`,
+      label: row.name,
+      icon: ICON.recent,
+      section: 'Switch project',
+      badge: formatAgo(row.lastOpened).replace(' ago', '') || null,
+    });
+  }
+
+  // ── Close project (F-2, MUST) — the reliable in-shell exit. closeProject()
+  // flips isOpen=false, the menu republishes as buildNoProjectMenu (Launcher +
+  // recents), and the board returns to the Launcher. Its own section so it reads
+  // as a session control, not a view row.
+  items.push({
+    id: 'project:close',
+    label: 'Close project',
+    icon: ICON.close,
+    section: 'Project',
+  });
+
+  return items;
 }
 
 function buildNoProjectMenu(): PublishedMenuItem[] {
   const items: PublishedMenuItem[] = [
     { id: 'launcher', label: 'Launcher', icon: ICON.launcher, active: true },
   ];
-  for (const row of recents) {
+  for (const row of recents.slice(0, 3)) {
     items.push({
       id: `recent:${row.path}`,
       label: row.name,
@@ -307,12 +345,26 @@ function scheduleRepublish(): void {
 // hatch. A real fix needs the shell to re-emit repeat clicks (or clear
 // activeFeature on project close).
 function routeFeature(feature: string): void {
+  if (feature === 'project:close') {
+    // F-2: the reliable in-shell exit. Flips isOpen=false → the project-store
+    // subscription republishes buildNoProjectMenu and App re-renders the
+    // Launcher. Idempotent, so a stale re-emit that slips the outer gate is
+    // harmless (already closed).
+    useProjectStore.getState().closeProject();
+    return;
+  }
   if (feature.startsWith('layout:')) {
     const id = feature.slice('layout:'.length) as LayoutId;
     if (LAYOUT_ORDER.includes(id)) useLayoutStore.getState().setLayout(id);
     return;
   }
   if (feature.startsWith('recent:')) {
+    // Serves BOTH the no-project Launcher jump rows AND the in-project "Switch
+    // project" section (F-2). openProjectByPath REPLACES whatever is open:
+    // project.open re-points the sidecar's single open project by path, then
+    // openProject swaps the store (project_id change re-runs App's per-project
+    // hydrate/persist effects). No closeProject-first — closeProject touches
+    // only local state, so it wouldn't change what the sidecar sees anyway.
     const path = feature.slice('recent:'.length);
     if (!path) return;
     const row = recents.find((r) => r.path === path);
@@ -337,8 +389,11 @@ function routeFeature(feature: string): void {
 export function initStudioMenu(): () => void {
   if (isStandalone()) return () => {};
 
-  // Seed recents for the no-project state (the launcher-open state on first mount).
-  if (!useProjectStore.getState().isOpen) void loadRecentsForMenu();
+  // Seed recents for BOTH states — the no-project Launcher jump rows AND the
+  // in-project "Switch project" section. An `isOpen` gate here would starve the
+  // switcher whenever an optimistic resume opens straight into a project (the
+  // common case), so load unconditionally.
+  void loadRecentsForMenu();
   publishNow();
 
   // Republish trigger A — project open/close + identity (name/archetype/aspect).
@@ -346,8 +401,11 @@ export function initStudioMenu(): () => void {
     const openChanged = state.isOpen !== prev.isOpen;
     if (!openChanged && state.project === prev.project) return;
     if (openChanged) {
-      if (state.isOpen) recents = []; // clear stale recents while a project is open
-      else void loadRecentsForMenu(); // returning to the desk → refresh jump rows
+      // Refresh recents in BOTH directions: returning to the desk repopulates the
+      // Launcher jump rows; opening a project refreshes the in-project "Switch
+      // project" section (the just-opened project self-filters out of it in
+      // buildProjectMenu, so we no longer clear the list on open).
+      void loadRecentsForMenu();
     }
     scheduleRepublish();
   });

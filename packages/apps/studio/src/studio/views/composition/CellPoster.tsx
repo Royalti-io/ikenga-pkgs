@@ -126,9 +126,27 @@ export function CellPoster({ recordId, alt = '', className, style }: CellPosterP
 
   useEffect(() => {
     if (!recordId || cache.has(recordId)) return;
-    // Not covered by a grid's batch prefetch (a lone poster request) — fetch
-    // it solo through the same cache/batch machinery.
-    void fetchBatch([recordId]);
+    // DON'T race the grid's batch prefetch. React flushes passive effects
+    // child→parent within one commit, so this per-card effect runs BEFORE
+    // Canvas's prefetchPosters effect — a synchronous solo fetch here would fire
+    // one single-record render.list_posters per card and beat the batch (which
+    // then finds every id already in-flight and no-ops). Defer to a microtask:
+    // it can't run until the whole synchronous effect-flush pass (including
+    // Canvas's prefetch, whose fetchBatch synchronously reserves its ids in
+    // `inFlight`) has completed. By then a batched id is already in-flight, so
+    // fetchBatch's own cache/in-flight guard collapses this call to a no-op and
+    // the card gets its poster from the shared batch via the subscription above.
+    // Only a GENUINE miss — a lone <CellPoster> no batch covered (e.g. a
+    // Composition clip outside a grid) — actually issues a solo fetch, and only
+    // after the batch has had its reservation pass.
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (cancelled || cache.has(recordId)) return;
+      void fetchBatch([recordId]);
+    });
+    return () => {
+      cancelled = true;
+    };
   }, [recordId]);
 
   if (!recordId) return null;
