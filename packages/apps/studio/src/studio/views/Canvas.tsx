@@ -643,6 +643,17 @@ export function CanvasView() {
     return (
       <div
         role="button"
+        // Marks this tile as a canvas ITEM for the primitive's hit-testing.
+        // `@ikenga/contract/canvas` decides "did the pointer land on an item?"
+        // via ITEM_SELECTOR = '.home-widget, .home-greeting, [data-canvas-item]'
+        // — the first two are the shell home canvas's own classes, so
+        // `[data-canvas-item]` is the opt-in for every other consumer. Without
+        // it `itemEl` is always null here, which means (a) every mousedown on a
+        // cell falls through to beginPan + preventDefault, so pressing a cell
+        // pans the board instead of pressing the cell, and (b) in edit mode
+        // beginDrag never fires and the click clears the selection instead —
+        // i.e. cells can't be rearranged at all.
+        data-canvas-item=""
         tabIndex={state.isSelected ? 0 : -1}
         onMouseEnter={() => setHoverBeat(item.uid)}
         onMouseLeave={() => setHoverBeat(null)}
@@ -1087,6 +1098,10 @@ export function CanvasView() {
             return (
               <div
                 role="button"
+                // Same canvas-item opt-in as the shot card above — see the note
+                // there. Lofi/beat-sheet tiles are items too, so they need it to
+                // be draggable in edit mode and to not swallow presses as pans.
+                data-canvas-item=""
                 tabIndex={state.isSelected ? 0 : -1}
                 onMouseEnter={() => setHoverBeat(item.uid)}
                 onMouseLeave={() => setHoverBeat(null)}
