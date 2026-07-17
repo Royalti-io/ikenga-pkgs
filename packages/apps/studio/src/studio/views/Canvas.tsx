@@ -1,38 +1,47 @@
 // com.ikenga.studio · Canvas view
 //
-// Beat × rung storyboard. Mounts @ikenga/contract/canvas (WP-07 commit 16 —
-// G-CANVAS: the local stub is gone, this is the real extracted home-page
-// Canvas). Reads REAL cells hydrated from disk (storyboard.read) when a real
-// project is open, else the __mocks__/cells.ts fixture for standalone dev.
-// Reads `cellUid` from the shared store for selection and writes back on every
-// selection change, which lights up click-to-focus cross-linking across panes.
+// The Rail — a 1D storyboard. Cells lay out in document flow (scene groups of
+// wrapping shot cards) under a project-wide forge-progress rail. Reads REAL
+// cells hydrated from disk (storyboard.read) when a real project is open, else
+// the __mocks__/cells.ts fixture for standalone dev. Reads `cellUid` from the
+// shared store for selection and writes back on every selection change, which
+// lights up click-to-focus cross-linking across panes.
 //
-// Wave 4 — Canvas truth:
-//   • Tiles show REAL per-cell render status (storyboard-store renderStatus,
-//     kept fresh by the adaptive poll) — a tick/tint for rendered cells, a
-//     pulsing beacon while rendering, honest neutral when un-rendered. No fake
-//     "cell.html" placeholder, no fabricated %.
+// Canvas truth:
+//   • Cards show REAL per-cell render status (storyboard-store renderStatus,
+//     kept fresh by the adaptive poll) — a poster/tick for rendered cells, a
+//     pulsing beacon while rendering, honest neutral when un-rendered. Against
+//     a real project there is no fake "cell.html" placeholder and no fabricated
+//     %: the only progress bar is the mock fixture's own `progress` field, and
+//     it is gated on `!hasRealCells` so a real cell can never show one.
+//   • The rail summarises the SAME hydrated cells the board renders — it is a
+//     projection of `railShots`, not a second data source.
+//   • No money anywhere on this board. fal reports no cost field for the models
+//     this account runs, so any figure here would be fiction. The only numerals
+//     are seed, elapsed, clip duration and shot/scene counts. Spend, if the
+//     engine ever reports it, belongs in the Ledger view.
 //   • Add / delete cells via the real storyboard.create_cell / delete_cell MCP
 //     seams (behind a focus-trapped confirm for delete).
-//   • Interactive zoom controls (+/−/Fit buttons, keyboard +/-/0) wired to the
-//     canvas pan/zoom model; the raw pan/scale debug HUD is gone.
 //
-// Visual contract: designs/canvas.html. Role-mapped tokens only (--live for the
-// emerald/rendered role, --info for the in-flight role — per the design
-// contract's beat-accent mapping), no raw hex fallbacks.
+// Rung: `rung` is how a shot is MADE, not how finished it is. `beat` is null on
+// every cell of every real project, so rungs cannot be fidelity levels of one
+// shared shot — there is nothing to pair them on. And the exporter's rung filter
+// is optional (exporter.ts resolveCells): Composition.tsx passes `undefined` for
+// a real project, so EVERY rung composes into the final video. A board that
+// showed hi-fi only would show a film that isn't the film that exports, so the
+// board boards every rung and surfaces the rung as a chip on the card — a badge,
+// never an axis. What the rung DOES gate is the generation surface: only a hi-fi
+// cell has a path to pick (see `Track`).
+//
+// Visual contract: designs/redesign-ai/canvas-gen-c-novel.html (the rail, the
+// drop zone, the seed-lock line, inline failure reasons) grafted with the scene
+// grouping + loupe poster from canvas-gen-a-production-desk.html. Role-mapped
+// tokens only (--live for the emerald/rendered role, --info for the in-flight
+// and Track-B role, --agent for Track A), no raw hex fallbacks.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
-import {
-  Canvas,
-  type CanvasHandle,
-  type ItemId,
-  type ItemRenderState,
-  type Placement,
-  type Viewport,
-} from '@ikenga/contract/canvas';
-import '@ikenga/contract/canvas/canvas.css';
 import {
   selectCellUid,
   selectHoverBeat,
@@ -78,57 +87,33 @@ import { COMPOSITION_TIMELINE } from '../__mocks__/composition';
 import { buildTimelineModel, clipAt } from '../lib/composition-model';
 import { EmptyState } from '../components/EmptyState';
 
-// @ikenga/contract/canvas ships `ItemId` as an opaque branded string but does
-// not export a helper to brand one — consumers mint their own ids from
-// already-typed sources. This is the same one-line cast the stub had.
-const asItemId = (s: string): ItemId => s as ItemId;
+// ─── Density ────────────────────────────────────────────────────────────
+//
+// `strip` is the compact board (wrapping ~198px tickets — scan the whole film);
+// `loupe` is the judging density (2-up, 16:9 poster — decide whether a
+// generated shot is good). Mirrors the shell's grid/loupe idiom.
+//
+// NOT spelled `data-density` on the DOM: theme.ts mirrors the shell's OWN
+// `data-density` (compact/comfortable chrome density) onto <html>, and a
+// same-named attribute here would read as the same axis. This one is
+// `data-canvas-density`.
 
-const COLUMN_X = (col: number) => col * 200;
-const CELL_W = 176; // ~w-44 in the design
-const CELL_H = 132; // 96 thumb + ~36 footer
-// hi-fi cells carry the per-shot generation card (engine picker / generate /
-// status / anchors / approve-reject) — a real cell needs more room than the
-// plain lofi/beat-sheet tile. Row gutters below are sized off this.
-const HIFI_CELL_H = 292;
-const ROW_GAP = 48;
-const ROW_Y: Record<Rung, number> = {
-  '2_hifi':       0,
-  '1_lofi':       HIFI_CELL_H + ROW_GAP,
-  '0_beat_sheet': HIFI_CELL_H + ROW_GAP + CELL_H + ROW_GAP,
-};
+type Density = 'strip' | 'loupe';
 
-// Bias each beat to its own column so the storyboard reads left→right per rung.
-function columnsByBeat(cells: MockCell[]): Record<string, number> {
-  const map: Record<string, number> = {};
-  let col = 0;
-  for (const c of cells) if (!(c.beat in map)) map[c.beat] = col++;
-  return map;
+const DENSITY_STORAGE_PREFIX = 'studio:canvas-density:';
+const densityStorageKey = (projectId: string | null) =>
+  `${DENSITY_STORAGE_PREFIX}${projectId ?? 'no-project'}`;
+
+function readDensity(projectId: string | null): Density {
+  try {
+    const v = localStorage.getItem(densityStorageKey(projectId));
+    return v === 'loupe' || v === 'strip' ? v : 'strip';
+  } catch {
+    return 'strip';
+  }
 }
 
-// ─── Rung labels — also canvas items so they pan with the cells ─────────
-
-interface RungLabel {
-  kind: 'rung-label';
-  id: string;
-  text: string;
-  rung: Rung;
-}
-
-const RUNG_LABELS: RungLabel[] = [
-  { kind: 'rung-label', id: 'gutter-2_hifi',       text: 'hi-fi',      rung: '2_hifi'       },
-  { kind: 'rung-label', id: 'gutter-1_lofi',       text: 'lo-fi',      rung: '1_lofi'       },
-  { kind: 'rung-label', id: 'gutter-0_beat_sheet', text: 'beat sheet', rung: '0_beat_sheet' },
-];
-
-// ─── Item discriminator for the Canvas generic ──────────────────────────
-
-type Item =
-  | (MockCell & { kind: 'cell' })
-  | RungLabel;
-
-const isCell = (item: Item): item is MockCell & { kind: 'cell' } => item.kind === 'cell';
-
-// ─── Per-color thumb tint (role-mapped tokens; no raw hex) ──────────────
+// ─── Per-color poster tint (role-mapped tokens; no raw hex) ─────────────
 
 const THUMB_TINT: Record<CellColor, string> = {
   amber:   'bg-[color-mix(in_oklab,var(--achievement)_18%,var(--bg-raised))]',
@@ -137,6 +122,22 @@ const THUMB_TINT: Record<CellColor, string> = {
   sky:     'bg-[color-mix(in_oklab,var(--info)_18%,var(--bg-raised))]',
   violet:  'bg-[color-mix(in_oklab,var(--agent)_18%,var(--bg-raised))]',
   neutral: 'bg-raised',
+};
+
+// ─── Rung chip ──────────────────────────────────────────────────────────
+//
+// hi-fi is the default and carries NO chip: a badge on every card is noise.
+// Only the two rungs that are made a different way get labelled. (Cell.tsx has
+// the same label set; this map is deliberately partial.)
+//
+// Neutral chrome, not a role colour: --live/--info/--agent/--achievement/--danger
+// are all already spoken for here as STATUS or TRACK roles (TILE_STATUS,
+// RAIL_NODE_STYLE, the track dot), so a rung chip in --info would read as
+// "Track B". The rung is not a state — it reuses the anchor-chip idiom.
+
+const RUNG_CHIP: Partial<Record<Rung, string>> = {
+  '1_lofi': 'lo-fi',
+  '0_beat_sheet': 'beat sheet',
 };
 
 // ─── Render-status → honest tile state ──────────────────────────────────
@@ -164,11 +165,88 @@ const TILE_STATUS: Record<TileState, { label: string; varName: string }> = {
   none:      { label: 'not rendered', varName: '--fg-faint' },
 };
 
-function rungLabel(rung: Rung): string {
-  if (rung === '2_hifi') return 'hi-fi';
-  if (rung === '1_lofi') return 'lo-fi';
-  return 'beat sheet';
+// ─── Track ──────────────────────────────────────────────────────────────
+//
+// Track is not a free choice on every card. Only a hi-fi cell has a generation
+// path to pick: fal (Track A) or a handoff (Track B). A lo-fi cell is authored
+// as an excalidraw drawing and renders locally off its own content_path
+// (registry.ts resolveEngine: '.excalidraw' → the excalidraw adapter); a beat
+// sheet is text. Neither has a prompt to send or a clip to hand back, so
+// neither is Track A or Track B — they are `local`.
+
+type Track = 'a' | 'b' | 'local';
+
+// ─── Rail nodes ─────────────────────────────────────────────────────────
+//
+// One node per boarded shot, every rung, in board order, colour-coded by state.
+// `next` is the single shot the forge would take next (see `railShots`), NOT a
+// guess about the engine's queue.
+
+type RailNodeState = 'idle' | 'done' | 'running' | 'next' | 'handoff' | 'failed';
+
+const RAIL_NODE_STYLE: Record<RailNodeState, React.CSSProperties> = {
+  idle: {
+    borderColor: 'var(--border)',
+    background: 'var(--bg-raised)',
+    color: 'var(--fg-faint)',
+  },
+  done: {
+    borderColor: 'var(--live)',
+    background: 'color-mix(in oklab, var(--live) 22%, var(--bg-sunken))',
+    color: 'var(--live)',
+  },
+  running: {
+    borderColor: 'var(--live)',
+    background: 'var(--bg-raised)',
+    color: 'var(--live)',
+    boxShadow: '0 0 0 3px color-mix(in oklab, var(--live) 18%, transparent)',
+  },
+  next: {
+    borderColor: 'var(--achievement)',
+    background: 'var(--bg-raised)',
+    color: 'var(--achievement)',
+    boxShadow: '0 0 0 3px color-mix(in oklab, var(--achievement) 15%, transparent)',
+  },
+  handoff: {
+    borderColor: 'var(--info)',
+    background: 'var(--bg-raised)',
+    color: 'var(--info)',
+  },
+  failed: {
+    borderColor: 'var(--danger)',
+    background: 'color-mix(in oklab, var(--danger) 22%, var(--bg-sunken))',
+    color: 'var(--danger)',
+  },
+};
+
+function nodeStateFor(tstate: TileState, track: Track, isUpNext: boolean): RailNodeState {
+  switch (tstate) {
+    case 'rendered':  return 'done';
+    case 'rendering': return 'running';
+    case 'failed':    return 'failed';
+    default:
+      // A Track-B shot has no forge to run — it's waiting on a returned clip.
+      if (track === 'b') return 'handoff';
+      // A local shot is on the board with no forge to run and no clip coming.
+      // `idle` (dashed, --border, --fg-faint) already says exactly that.
+      if (track === 'local') return 'idle';
+      // Only the ONE shot the forge would take next is `next`. Every other
+      // queued shot is `idle`: marking them all `next` would make the rail
+      // read "3 up next" while a single card carried the badge.
+      return isUpNext ? 'next' : 'idle';
+  }
 }
+
+// ─── Card border accent per state (C's .cell.done/.running/.next/…) ─────
+
+const CARD_ACCENT: Record<RailNodeState, string> = {
+  idle:    'border-dashed border-[var(--border)]',
+  done:    'border-[color-mix(in_oklab,var(--live)_45%,var(--border))]',
+  running: 'border-[var(--live)] shadow-[0_0_0_1px_color-mix(in_oklab,var(--live)_25%,transparent)]',
+  next:    'border-[color-mix(in_oklab,var(--achievement)_55%,var(--border))]',
+  handoff: 'border-dashed border-[color-mix(in_oklab,var(--info)_45%,var(--border))]',
+  failed:  'border-[color-mix(in_oklab,var(--danger)_55%,var(--border))]',
+};
 
 function fmtDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`;
@@ -176,11 +254,17 @@ function fmtDuration(ms: number): string {
   return `${s % 1 === 0 ? s.toFixed(0) : s.toFixed(1)}s`;
 }
 
+/** m:ss — the running shot's wall clock since the record's started_at. */
+function fmtElapsed(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'beat';
 const rnd = () => Math.random().toString(36).slice(2, 8);
 
-// Project.aspect_ratio → the inner thumb frame's box style.
+// Project.aspect_ratio → the inner poster frame's box style.
 function aspectFrameStyle(aspect: AspectRatio): React.CSSProperties {
   if (aspect === '9:16') return { height: '100%', aspectRatio: '9 / 16' };
   if (aspect === '1:1') return { height: '100%', aspectRatio: '1 / 1' };
@@ -255,6 +339,35 @@ function Modal({
   );
 }
 
+// ─── Board shape ────────────────────────────────────────────────────────
+
+/** One boarded cell, any rung, folded with everything the rail and its card both need. */
+interface BoardShot {
+  item: MockCell;
+  /** 1-based rail position across the whole project (all scenes). */
+  n: number;
+  tstate: TileState;
+  track: Track;
+  upNext: boolean;
+  nodeState: RailNodeState;
+}
+
+// `scene_id` is an OTIO id (schema: 'sc3'). Lift the ordinal that is actually in
+// the id rather than printing the wire token — but ONLY when it matches the
+// documented shape. Any other id is shown verbatim: there is no scene entity and
+// no scene name, so an unrecognised id gets echoed, never re-titled.
+function sceneTitle(key: string): string {
+  if (!key) return 'Storyboard';
+  const m = /^sc(\d+)$/i.exec(key);
+  return m ? `Scene ${Number(m[1])}` : key;
+}
+
+interface SceneGroup {
+  key: string;
+  title: string;
+  shots: BoardShot[];
+}
+
 // ─── View ───────────────────────────────────────────────────────────────
 
 export function CanvasView() {
@@ -265,17 +378,26 @@ export function CanvasView() {
   const setHoverBeat = useSharedStore((s) => s.setHoverBeat);
 
   const project = useProjectStore(selectOpenProject);
+  const projectId = project?.project_id ?? null;
   const aspect: AspectRatio = project?.aspect_ratio ?? '16:9';
   const isPortrait = aspect === '9:16';
 
-  const [viewport, setViewport] = useState<Viewport>({ x: 80, y: 30, scale: 0.9 });
-  const [editMode, setEditMode] = useState(false);
+  // Density is a per-project preference — a vertical-video project and a 16:9
+  // explainer want different defaults, and the choice should survive the pane's
+  // remount the same way Cell.tsx's draft mirror does.
+  const [density, setDensityState] = useState<Density>(() => readDensity(projectId));
+  useEffect(() => { setDensityState(readDensity(projectId)); }, [projectId]);
+  const setDensity = (d: Density) => {
+    setDensityState(d);
+    try { localStorage.setItem(densityStorageKey(projectId), d); } catch { /* best-effort */ }
+  };
+  const isLoupe = density === 'loupe';
 
   // add/delete cell + error UI — the create/delete busy+error pair rides the
   // shared useAsyncAction (one modal open at a time, so one instance covers both).
   const [addOpen, setAddOpen] = useState(false);
   const [newBeat, setNewBeat] = useState('');
-  const [newRung, setNewRung] = useState<Rung>('0_beat_sheet');
+  const [newRung, setNewRung] = useState<Rung>('2_hifi');
   const [confirmDelete, setConfirmDelete] = useState<{ uid: string; beat: string } | null>(null);
   const cellMutation = useAsyncAction();
   const busy = cellMutation.busy;
@@ -312,12 +434,13 @@ export function CanvasView() {
 
   useEffect(() => { void refetchStoryboard(); }, [refetchStoryboard]);
 
-  // ── per-shot generation (hi-fi cells only) ──────────────────────────────
-  // Anchors resolve id → name/kind for the shot tile's ref chips. Shared store
+  // ── per-shot generation (gated on Track — hi-fi cells only) ─────────────
+  // Anchors resolve id → name/kind for the shot card's ref chips. Shared store
   // (review §2.4) — an unreachable anchor.list just leaves chips showing the
   // raw id, same as the old best-effort local fetch.
   const anchors = useAnchorsStore(selectAnchors);
   const ensureAnchors = useAnchorsStore((s) => s.ensure);
+  const refreshAnchors = useAnchorsStore((s) => s.refresh);
   useEffect(() => {
     if (project?.project_id) ensureAnchors(project.project_id);
   }, [project?.project_id, ensureAnchors]);
@@ -327,7 +450,7 @@ export function CanvasView() {
     return m;
   }, [anchors]);
 
-  // Latest render record per cell — for the cost/error/model readout. Prefers
+  // Latest render record per cell — for the status/error/model readout. Prefers
   // the record whose status matches the folded renderStatus (the canonical
   // one per foldRenderStatus's active-wins rule); falls back to the last seen.
   const recordByUid = useMemo(() => {
@@ -339,11 +462,6 @@ export function CanvasView() {
     }
     return m;
   }, [renderRecords, renderStatusMap]);
-  const totalSpend = useMemo(
-    () => Object.values(recordByUid).reduce((sum, r) => sum + (r.cost_actual ?? r.cost_estimate ?? 0), 0),
-    [recordByUid],
-  );
-  const fmtCost = (n: number) => `$${n.toFixed(2)}`;
 
   // Batched poster prefetch (review §2.5) — one render.list_posters round trip
   // for every done tile's poster instead of N concurrent per-tile
@@ -391,8 +509,155 @@ export function CanvasView() {
       return next;
     });
 
+  // ── the board: every cell, every rung, grouped by the script's scenes ───
+  //
+  // Board order is the order the exporter composes in, so the board shows the
+  // film the export actually produces. `rung` is untouched schema.
+
+  // A scene is only ever named by the script's own ScriptBeat.scene_id /
+  // shot_id — there is no scene entity to invent a title from, so an unscened
+  // storyboard is one flat group rather than a fabricated "Scene 1 — …".
+  const sceneByBeatId = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const b of projectDoc?.script?.beats ?? []) if (b.scene_id) m[b.id] = b.scene_id;
+    return m;
+  }, [projectDoc]);
+  const shotIdByBeatId = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const b of projectDoc?.script?.beats ?? []) if (b.shot_id) m[b.id] = b.shot_id;
+    return m;
+  }, [projectDoc]);
+
+  // One derivation feeds both the rail and the stage, so a node and the card
+  // under it can never disagree about which shot is #4 or what state it's in.
+  const board = useMemo<{ scenes: SceneGroup[]; railShots: BoardShot[] }>(() => {
+    // Group first — board order IS rail order, so the numbering has to run over
+    // the grouped sequence, not the raw cell array.
+    const order: string[] = [];
+    const byKey = new Map<string, MockCell[]>();
+    for (const c of displayCells) {
+      const key = sceneByBeatId[c.raw?.beat_id ?? c.beat] ?? '';
+      if (!byKey.has(key)) { byKey.set(key, []); order.push(key); }
+      byKey.get(key)?.push(c);
+    }
+    const grouped = order.map((key) => ({ key, cells: byKey.get(key) ?? [] }));
+    const flatCells = grouped.flatMap((g) => g.cells);
+
+    // The track is rung-derived, NOT read from genChoice alone: DEFAULT_GEN_CHOICE
+    // is fal, so a lower-rung cell would otherwise default to Track A and offer a
+    // fal Generate that would send its excalidraw drawing to the network engine.
+    const trackFor = (item: MockCell): Track =>
+      item.rung !== '2_hifi'
+        ? 'local'
+        : (genChoice[item.uid] ?? DEFAULT_GEN_CHOICE).mode === 'fal' ? 'a' : 'b';
+
+    const stateOf = (item: MockCell) => {
+      const tstate: TileState = hasRealCells
+        ? tileStateFor(renderStatusMap[item.uid])
+        : item.progress != null && item.progress < 1
+          ? 'rendering'
+          : 'none';
+      return { tstate, track: trackFor(item) };
+    };
+
+    // "Up next" — the first Track-A shot that hasn't been forged. One shot, or
+    // none. Its uid drives both the gold rail node and the card's corner flag.
+    const upNextUid =
+      flatCells
+        .map((item) => ({ item, ...stateOf(item) }))
+        .find((s) => s.track === 'a' && (s.tstate === 'none' || s.tstate === 'queued' || s.tstate === 'cancelled'))
+        ?.item.uid ?? null;
+
+    const shotFor = (item: MockCell, n: number): BoardShot => {
+      const { tstate, track } = stateOf(item);
+      const upNext = item.uid === upNextUid;
+      return { item, n, tstate, track, upNext, nodeState: nodeStateFor(tstate, track, upNext) };
+    };
+
+    let n = 0;
+    const scenes = grouped.map((g) => ({
+      key: g.key,
+      title: sceneTitle(g.key),
+      shots: g.cells.map((item) => shotFor(item, ++n)),
+    }));
+    return { scenes, railShots: scenes.flatMap((s) => s.shots) };
+    // DEFAULT_GEN_CHOICE is a render-local literal; genChoice is the real input.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayCells, sceneByBeatId, hasRealCells, renderStatusMap, genChoice]);
+  const { scenes, railShots } = board;
+
+  // Roving tabindex needs exactly ONE tabbable card at all times, or the board
+  // has no keyboard entry point. Cards are `tabIndex={uid === keyboardEntryUid}`,
+  // so a uid that matches no card leaves every card at -1 and a keyboard user
+  // can never reach a shot. (The deleted Canvas primitive hid this: its
+  // container carried `role="application" tabIndex={0}`, so tab always landed
+  // somewhere.) `selectedCellUid` is shared cross-view state and routinely names
+  // a cell this board does not carry — a cursor restored from a previous session,
+  // a cell since deleted, another project's — so it only wins when it is
+  // actually ON the board. Otherwise the first shot in board order takes it.
+  const keyboardEntryUid = useMemo(() => {
+    const onBoard = selectedCellUid && railShots.some((s) => s.item.uid === selectedCellUid);
+    return onBoard ? selectedCellUid : (railShots[0]?.item.uid ?? null);
+  }, [selectedCellUid, railShots]);
+
+  const railStat = useMemo(() => {
+    let done = 0, running = 0, next = 0, failed = 0;
+    for (const s of railShots) {
+      if (s.nodeState === 'done') done += 1;
+      else if (s.nodeState === 'running') running += 1;
+      else if (s.nodeState === 'next') next += 1;
+      else if (s.nodeState === 'failed') failed += 1;
+    }
+    return { done, running, next, failed, total: railShots.length };
+  }, [railShots]);
+
+  // Wall clock for the running shots' elapsed readout. Only ticks while
+  // something is actually rendering — an idle board does no work.
+  const anyRendering = railShots.some((s) => s.tstate === 'rendering');
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!anyRendering) return;
+    setNowMs(Date.now());
+    const t = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [anyRendering]);
+
+  // Each leg is counted, never inferred by subtraction: `length - trackACount`
+  // would file every local cell under "handoff". The three legs sum to
+  // railShots.length, so the strip accounts for the whole board.
+  const trackACount = railShots.filter((s) => s.track === 'a').length;
+  const trackBCount = railShots.filter((s) => s.track === 'b').length;
+  const localCount = railShots.filter((s) => s.track === 'local').length;
+  const remainingTrackA = useMemo(
+    () => railShots.filter((s) => s.track === 'a' && s.tstate !== 'rendered' && s.tstate !== 'rendering'),
+    [railShots],
+  );
+
+  // The seed-lock disclosure. Only claims a lock that actually exists: every
+  // Track-A shot must carry a seed AND they must all be the same one. Anything
+  // else (some pinned, some not; two different seeds) is not a lock, so the
+  // line stays off rather than overstating reproducibility.
+  const seedLock = useMemo(() => {
+    const trackA = railShots.filter((s) => s.track === 'a');
+    if (trackA.length === 0) return null;
+    const seeds = trackA
+      .map((s) => s.item.raw?.seed)
+      .filter((s): s is number => typeof s === 'number');
+    if (seeds.length !== trackA.length) return null;
+    if (new Set(seeds).size !== 1) return null;
+    const styleIds = projectDoc?.script?.style_anchors ?? [];
+    const styleName = styleIds.length === 1 ? anchorById[styleIds[0]]?.name : undefined;
+    return `${styleName ? `${styleName} · ` : ''}seed ${seeds[0]} locked across all Track A shots`;
+  }, [railShots, projectDoc, anchorById]);
+
+  // The aspect chip's "~Ns" is the sum of the boarded cells' real duration_ms.
+  const boardDurationMs = useMemo(
+    () => railShots.reduce((sum, s) => sum + (durationByUid[s.item.uid] ?? 0), 0),
+    [railShots, durationByUid],
+  );
+
   // The shared shot-generate pipeline. Canvas drives it per-card (no focused
-  // render lifecycle — the storyboard store's adaptive poll refreshes tiles),
+  // render lifecycle — the storyboard store's adaptive poll refreshes cards),
   // keeping its own per-uid genBusy/genError presentation. The hook owns the
   // engine capability + enqueue + Track-B legs, so the old hardcoded
   // `engine: 'fal'` becomes a resolution against the server's reported matrix.
@@ -421,6 +686,12 @@ export function CanvasView() {
     } finally {
       setGenBusy((prev) => ({ ...prev, [uid]: false }));
     }
+  }
+
+  // Sequential, not Promise.all — each leg refetches the storyboard, and firing
+  // N enqueues at once would race those refetches against each other.
+  async function forgeAllRemaining() {
+    for (const s of remainingTrackA) await generateShot(s.item.uid);
   }
 
   async function cancelShot(uid: string) {
@@ -474,69 +745,6 @@ export function CanvasView() {
     }
   }
 
-  const items = useMemo<Item[]>(() => {
-    const cells: Item[] = displayCells.map((c) => ({ ...c, kind: 'cell' as const }));
-    return [...RUNG_LABELS, ...cells];
-  }, [displayCells]);
-
-  const [layout, setLayout] = useState<Record<ItemId, Placement>>({});
-  useEffect(() => {
-    const colByBeat = columnsByBeat(displayCells);
-    const map: Record<ItemId, Placement> = {};
-    for (const c of displayCells) {
-      map[asItemId(c.uid)] = {
-        x: COLUMN_X(colByBeat[c.beat] ?? 0),
-        y: ROW_Y[c.rung],
-        w: CELL_W,
-        h: c.rung === '2_hifi' ? HIFI_CELL_H : CELL_H,
-      };
-    }
-    for (const l of RUNG_LABELS) {
-      map[asItemId(l.id)] = { x: -70, y: ROW_Y[l.rung] + 60, w: 60, h: 14 };
-    }
-    setLayout(map);
-  }, [displayCells]);
-
-  const canvasRef = useRef<CanvasHandle | null>(null);
-  const stageWrapRef = useRef<HTMLDivElement>(null);
-  const selectedId: ItemId | null =
-    selectedCellUid ? asItemId(selectedCellUid) : null;
-
-  // ── zoom controls, wired to the canvas primitive's own pan/zoom model ──
-  // The primitive is uncontrolled for pan/zoom (it owns internal state and only
-  // notifies via onViewportChange); its keyboard handler zooms when the canvas
-  // root holds focus. So the +/− buttons focus that root and replay the native
-  // zoom keydown — driving the real model rather than a parallel one.
-  const canvasRootEl = (): HTMLElement | null =>
-    stageWrapRef.current?.querySelector<HTMLElement>('.ikenga-canvas') ?? null;
-  const nudgeZoom = (dir: 'in' | 'out') => {
-    const root = canvasRootEl();
-    if (!root) return;
-    root.focus();
-    window.dispatchEvent(
-      new KeyboardEvent('keydown', { code: dir === 'in' ? 'Equal' : 'Minus', bubbles: true }),
-    );
-  };
-  const fitView = () => canvasRef.current?.autoFit(true);
-
-  // Keyboard 0 / f → fit (native +/- zoom is handled by the primitive on
-  // canvas-root focus). Guarded to real key presses inside the canvas surface.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!e.isTrusted) return;
-      const wrap = stageWrapRef.current;
-      const active = document.activeElement as HTMLElement | null;
-      if (!wrap || !active || !wrap.contains(active)) return;
-      if (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable) return;
-      if (e.key === '0' || e.key === 'f' || e.key === 'F') {
-        canvasRef.current?.autoFit(true);
-        e.preventDefault();
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
-
   async function createCell() {
     if (busy) return;
     const label = newBeat.trim() || 'new beat';
@@ -571,7 +779,7 @@ export function CanvasView() {
         setPaneView(focusedPane, 'cell');
         setAddOpen(false);
         setNewBeat('');
-        setNewRung('0_beat_sheet');
+        setNewRung('2_hifi');
       },
       { onError: (err) => `Couldn't create the cell — ${(err as Error).message}` },
     );
@@ -606,33 +814,53 @@ export function CanvasView() {
     );
   }
 
-  // Per-shot generation card — rendered for a real hi-fi cell (`item.raw`
-  // present, see MockCell.raw doc). Plain closure fn (not a component) so it
-  // shares every handler/selector declared above without re-plumbing props.
-  function renderShotCard(
-    item: MockCell & { kind: 'cell' },
-    raw: Cell,
-    state: ItemRenderState,
-    tstate: TileState,
-    sMeta: { label: string; varName: string },
-    dur: number | undefined,
-  ) {
+  // Per-shot card. Plain closure fn (not a component) so it shares every
+  // handler/selector declared above without re-plumbing props.
+  function renderShotCard(s: BoardShot) {
+    const { item, tstate, track, nodeState, upNext } = s;
+    // MOCK_CELLS carry no authored prompt/anchors/seed (see MockCell.raw) — the
+    // generation surface is gated on `raw` so the fixture never gets a Generate
+    // button for data it doesn't have.
+    const raw = item.raw;
     const choice = choiceFor(item.uid);
     const record = recordByUid[item.uid];
     const busy = genBusy[item.uid] ?? false;
     const shotError = genError[item.uid];
-    const isTrackA = choice.mode === 'fal';
+    const isSelected = selectedCellUid === item.uid;
     const hoverLinked = hoverBeat === item.uid;
-    const scrubActive = !state.isSelected && activeAtPlayheadUid === item.uid;
-    const cost =
-      record?.cost_actual != null
-        ? fmtCost(record.cost_actual)
-        : record?.cost_estimate != null
-          ? `est. ${fmtCost(record.cost_estimate)}`
-          : isTrackA
-            ? '—'
-            : 'no fal cost';
+    const scrubActive = !isSelected && activeAtPlayheadUid === item.uid;
+    const sMeta = TILE_STATUS[tstate];
+    const dur = durationByUid[item.uid];
+    const tint = THUMB_TINT[item.color];
     const failedReason = tstate === 'failed' ? (record?.error ?? shotError) : undefined;
+    const mockProgress =
+      !hasRealCells && item.progress != null && item.progress < 1 ? item.progress : null;
+
+    const startedAt = record?.started_at ? Date.parse(record.started_at) : NaN;
+    const elapsedMs = Number.isFinite(startedAt) ? nowMs - startedAt : null;
+
+    const shotId = (raw && shotIdByBeatId[raw.beat_id]) || item.uid;
+
+    // Status line — the specific reason, never a bare "failed". No money: the
+    // right-hand slot carries the seed for a Track-A shot, and nothing at all
+    // for Track B or a local one (no fal seed exists for either).
+    const statusLabel =
+      tstate === 'rendered'
+        ? 'Done'
+        : tstate === 'rendering'
+          ? elapsedMs != null ? `Running · ${fmtElapsed(elapsedMs)}` : 'Running'
+          : tstate === 'queued'
+            ? 'Queued'
+            : tstate === 'failed'
+              ? `Failed — ${failedReason ?? 'reason not reported'}`
+              : tstate === 'cancelled'
+                ? 'Cancelled'
+                : track === 'a'
+                  ? 'Not started'
+                  : track === 'b'
+                    ? 'Awaiting clip'
+                    : 'Not rendered';
+    const statusVar = nodeState === 'handoff' ? '--info' : sMeta.varName;
 
     const openInCellView = () => {
       setCellUid(item.uid);
@@ -641,20 +869,14 @@ export function CanvasView() {
     };
 
     return (
-      <div
+      <article
+        key={item.uid}
         role="button"
-        // Marks this tile as a canvas ITEM for the primitive's hit-testing.
-        // `@ikenga/contract/canvas` decides "did the pointer land on an item?"
-        // via ITEM_SELECTOR = '.home-widget, .home-greeting, [data-canvas-item]'
-        // — the first two are the shell home canvas's own classes, so
-        // `[data-canvas-item]` is the opt-in for every other consumer. Without
-        // it `itemEl` is always null here, which means (a) every mousedown on a
-        // cell falls through to beginPan + preventDefault, so pressing a cell
-        // pans the board instead of pressing the cell, and (b) in edit mode
-        // beginDrag never fires and the click clears the selection instead —
-        // i.e. cells can't be rearranged at all.
-        data-canvas-item=""
-        tabIndex={state.isSelected ? 0 : -1}
+        data-state={nodeState}
+        data-track={track}
+        data-rung={item.rung}
+        data-up-next={upNext ? 'true' : undefined}
+        tabIndex={item.uid === keyboardEntryUid ? 0 : -1}
         onMouseEnter={() => setHoverBeat(item.uid)}
         onMouseLeave={() => setHoverBeat(null)}
         onClick={() => setCellUid(item.uid)}
@@ -665,26 +887,33 @@ export function CanvasView() {
           }
         }}
         className={[
-          'cell-card group relative flex flex-col overflow-y-auto rounded-md text-left transition-shadow',
-          'border border-[var(--border)] bg-surface hover:shadow-lg',
-          state.isSelected
+          'cell-card group relative flex flex-col rounded-md border bg-surface text-left transition-shadow hover:shadow-lg',
+          isLoupe ? 'w-full' : 'w-[198px] shrink-0',
+          CARD_ACCENT[nodeState],
+          isSelected
             ? 'outline-2 outline outline-offset-2 outline-[var(--achievement)]'
             : scrubActive
               ? 'outline-2 outline outline-offset-2 outline-[var(--info)]'
               : '',
-          state.isEditMode
-            ? 'ring-1 ring-dashed ring-[color-mix(in_oklab,var(--achievement)_50%,transparent)]'
-            : '',
           hoverLinked ? ' is-hover-link' : '',
         ].join(' ')}
-        style={{ height: HIFI_CELL_H, borderTop: `2px solid var(${isTrackA ? '--agent' : '--fg-faint'})` }}
+        style={{
+          borderTopWidth: 2,
+          // Neutral for a local shot — the stripe must not claim a track.
+          borderTopColor: `var(${track === 'a' ? '--agent' : track === 'b' ? '--info' : '--fg-faint'})`,
+        }}
       >
+        {upNext && (
+          <span className="absolute -top-2 right-2 z-10 rounded-sm bg-[var(--achievement)] px-1.5 py-px font-mono text-[8px] font-semibold uppercase tracking-wider text-[var(--bg-base)]">
+            Up next
+          </span>
+        )}
+
         {/* delete (hover / focus revealed) — real storyboard.delete_cell */}
         <button
           type="button"
           aria-label={`Delete cell ${item.beat}`}
           title="Delete cell"
-          onMouseDown={(e) => e.stopPropagation()}
           onClick={(e) => {
             e.stopPropagation();
             cellMutation.clearError();
@@ -695,310 +924,450 @@ export function CanvasView() {
           <span aria-hidden>✕</span>
         </button>
 
-        {/* header — index / uid / shot type */}
-        <div className="flex items-center justify-between gap-1 border-b border-soft px-2 py-1">
-          <span className="font-mono text-[9px] text-fg-faint">{String(raw.index + 1).padStart(2, '0')}</span>
-          <span className="truncate font-mono text-[9.5px] text-fg-muted">{item.uid}</span>
-          <span className="rounded border border-soft bg-raised px-1 font-mono text-[9px] uppercase text-fg-muted">
-            {raw.shot_type}
-          </span>
-        </div>
-
-        {/* status thumb — done cells overlay a real poster frame (bytes-over-bridge). */}
-        <div className="relative flex h-12 items-center justify-center border-b border-soft bg-sunken">
-          {tstate === 'rendered' && record?.id ? (
-            <CellPoster
-              recordId={record.id}
-              alt={item.beat}
-              className="absolute inset-0 h-full w-full object-cover"
-            />
-          ) : null}
-          <span
-            className="relative z-[1] flex items-center gap-1 font-mono text-[9px]"
-            style={{ color: `var(${sMeta.varName})` }}
-          >
-            {tstate === 'rendered' ? (
-              <span aria-hidden>✓</span>
-            ) : (
-              <span
-                className={'h-1.5 w-1.5 rounded-full' + (tstate === 'rendering' ? ' animate-pulse' : '')}
-                style={{ background: `var(${sMeta.varName})` }}
-              />
+        {/* tag — rail position / shot id / shot type / track */}
+        <div
+          className={[
+            'flex items-center justify-between gap-1.5 px-2.5',
+            isLoupe ? 'border-b border-soft py-2' : 'pb-1 pt-2',
+          ].join(' ')}
+        >
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="font-mono text-[9px] tabular-nums text-fg-faint">
+              {String(s.n).padStart(2, '0')}
+            </span>
+            <span
+              className={[
+                'truncate font-mono uppercase tracking-wider text-fg-muted',
+                isLoupe ? 'text-[11px]' : 'text-[9.5px]',
+              ].join(' ')}
+              title={item.uid}
+            >
+              {shotId}
+            </span>
+            {raw?.shot_type && raw.shot_type !== 'unset' && (
+              <span className="shrink-0 font-mono text-[9px] uppercase tracking-wider text-fg-faint">
+                {raw.shot_type}
+              </span>
             )}
-            {sMeta.label}
+            {RUNG_CHIP[item.rung] && (
+              <span className="shrink-0 rounded-sm border border-soft bg-raised px-1 py-px font-mono text-[8.5px] uppercase tracking-wider text-fg-muted">
+                {RUNG_CHIP[item.rung]}
+              </span>
+            )}
           </span>
-          {dur != null && <span className="ml-1 font-mono text-[8px] text-fg-faint">{fmtDuration(dur)}</span>}
+          <span
+            aria-label={track === 'a' ? 'Track A' : track === 'b' ? 'Track B' : 'Local render'}
+            className="h-1.5 w-1.5 shrink-0 rounded-full"
+            style={{ background: `var(${track === 'a' ? '--agent' : track === 'b' ? '--info' : '--fg-faint'})` }}
+          />
         </div>
 
-        {/* beat + approved + prompt preview */}
-        <div className="px-2 pt-1">
+        {/* poster — done cells overlay a real frame (bytes-over-bridge); the rest
+            keep the beat tint + an honest status glyph. */}
+        <div
+          className={[
+            'relative mx-2.5 flex items-center justify-center overflow-hidden rounded-sm border border-soft bg-sunken',
+            isLoupe ? 'aspect-[16/9]' : 'h-[98px]',
+          ].join(' ')}
+        >
+          <div
+            className={['relative flex items-center justify-center overflow-hidden', tint].join(' ')}
+            style={aspectFrameStyle(aspect)}
+          >
+            {tstate === 'rendered' && record?.id ? (
+              <CellPoster
+                recordId={record.id}
+                alt={item.beat}
+                className="absolute inset-0 h-full w-full object-cover"
+              />
+            ) : null}
+            {/* forge glow — the ember cast a poster-less card still deserves */}
+            <div
+              className="pointer-events-none absolute inset-0"
+              style={{
+                background:
+                  'radial-gradient(circle at 30% 115%, color-mix(in oklab, var(--achievement) 22%, transparent), transparent 60%)',
+                opacity: tstate === 'none' ? 0.4 : 1,
+              }}
+            />
+            <span
+              className="relative z-[1] flex items-center gap-1 font-mono text-[9px]"
+              style={{ color: `var(${sMeta.varName})` }}
+            >
+              {tstate === 'rendered' ? (
+                <span aria-hidden>✓</span>
+              ) : tstate === 'failed' ? (
+                <span aria-hidden>✕</span>
+              ) : (
+                <span
+                  className={'h-1.5 w-1.5 rounded-full' + (tstate === 'rendering' ? ' animate-pulse' : '')}
+                  style={{ background: `var(${sMeta.varName})` }}
+                />
+              )}
+              {sMeta.label}
+            </span>
+            {isPortrait && <SafeZoneBands />}
+            {mockProgress != null && (
+              <div className="absolute inset-x-0 bottom-0 h-0.5 bg-[var(--bg-sunken)]">
+                <div className="h-full bg-[var(--info)]" style={{ width: `${mockProgress * 100}%` }} />
+              </div>
+            )}
+          </div>
+          {dur != null && (
+            <span className="absolute right-1.5 top-1.5 z-[1] font-mono text-[8.5px] tabular-nums text-fg-faint">
+              {fmtDuration(dur)}
+            </span>
+          )}
+          {mockProgress != null && (
+            <div className="absolute left-1.5 top-1.5 flex items-center gap-1 font-mono text-[9px] text-[var(--info)]">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--info)]" />
+              {Math.round(mockProgress * 100)}%
+            </div>
+          )}
+          {isPortrait && (
+            <span className="absolute bottom-1 left-1 rounded border border-[var(--beat-accent-sky-border)] bg-[var(--beat-accent-sky-soft)] px-1 py-px font-mono text-[7px] uppercase tracking-wider text-[var(--info)]">
+              9:16
+            </span>
+          )}
+        </div>
+
+        <div className="flex flex-1 flex-col gap-2 px-2.5 pb-2.5 pt-2">
+          {/* beat + approved badge */}
           <div className="flex items-center justify-between gap-1">
-            <span className="truncate text-[11px] font-medium text-fg">{item.beat}</span>
-            {raw.approved && (
+            <span
+              className={['truncate font-medium text-fg', isLoupe ? 'text-[12.5px]' : 'text-[11px]'].join(' ')}
+            >
+              {item.beat}
+            </span>
+            {item.approved && (
               <span aria-label="approved" className="font-mono text-[10px] text-[var(--live)]">
                 ✓
               </span>
             )}
           </div>
-          {raw.prompt && (
-            <p className="mt-0.5 truncate text-[10px] text-fg-muted" title={raw.prompt}>
+
+          {raw?.prompt && (
+            <p
+              className={[
+                'text-fg-muted',
+                isLoupe ? 'text-[12px] leading-relaxed' : 'truncate text-[10px]',
+              ].join(' ')}
+              title={raw.prompt}
+            >
               {raw.prompt}
             </p>
           )}
-        </div>
 
-        {/* anchor-ref chips */}
-        {raw.anchors.length > 0 && (
-          <div className="flex flex-wrap gap-1 px-2 pt-1">
-            {raw.anchors.map((aid) => {
-              const a = anchorById[aid];
-              const dotVar =
-                a?.kind === 'character' ? '--agent' : a?.kind === 'location' ? '--info' : '--fg-faint';
-              return (
-                <span
-                  key={aid}
-                  className="flex items-center gap-1 rounded-full border border-soft bg-raised px-1.5 py-px font-mono text-[9px] text-fg-muted"
-                  title={aid}
-                >
-                  <span className="h-1 w-1 rounded-full" style={{ background: `var(${dotVar})` }} />
-                  {a?.name ?? aid}
-                </span>
-              );
-            })}
-          </div>
-        )}
-
-        {/* engine picker — Track A (fal, direct render) vs Track B (handoff, no API) */}
-        <div className="mt-1 flex items-center gap-1 px-2">
-          <select
-            value={choice.mode}
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-            onChange={(e) => patchChoice(item.uid, { mode: e.target.value as GenChoice['mode'] })}
-            className="rounded border border-soft bg-raised px-1 py-0.5 font-mono text-[9.5px] text-fg"
-            aria-label="Generation path"
-          >
-            <option value="fal">fal</option>
-            <option value="handoff">handoff</option>
-          </select>
-          {isTrackA ? (
-            <select
-              value={choice.model}
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => e.stopPropagation()}
-              onChange={(e) => patchChoice(item.uid, { model: e.target.value })}
-              className="min-w-0 flex-1 rounded border border-soft bg-raised px-1 py-0.5 font-mono text-[9.5px] text-fg"
-              aria-label="fal model"
-              title={
-                choice.model
-                  ? `Pinned to ${choice.model} — overrides this cell's own model setting, and an attached anchor will not switch it to image-to-video.`
-                  : "Auto — uses this cell's own model setting if it has one, and otherwise switches to image-to-video when an anchor is attached."
-              }
-            >
-              <option value={FAL_MODEL_AUTO}>auto · i2v if anchored</option>
-              {FAL_MODELS.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-            </select>
-          ) : (
-            <select
-              value={choice.platform}
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => e.stopPropagation()}
-              onChange={(e) => patchChoice(item.uid, { platform: e.target.value as PromptPlatform })}
-              className="min-w-0 flex-1 rounded border border-soft bg-raised px-1 py-0.5 font-mono text-[9.5px] text-fg"
-              aria-label="Handoff platform"
-            >
-              {HANDOFF_PLATFORMS.map((p) => (
-                <option key={p} value={p}>{p}</option>
-              ))}
-            </select>
+          {/* anchor-ref chips */}
+          {raw && raw.anchors.length > 0 && (
+            <div className="flex flex-wrap gap-1">
+              {raw.anchors.map((aid) => {
+                const a = anchorById[aid];
+                const dotVar =
+                  a?.kind === 'character' ? '--agent' : a?.kind === 'location' ? '--info' : '--fg-faint';
+                return (
+                  <span
+                    key={aid}
+                    className={[
+                      'flex items-center gap-1 border border-soft bg-raised font-mono text-fg-muted',
+                      isLoupe ? 'rounded-full px-2 py-0.5 text-[10px]' : 'rounded-sm px-1.5 py-px text-[9px]',
+                    ].join(' ')}
+                    title={aid}
+                  >
+                    <span className="h-1 w-1 rounded-full" style={{ background: `var(${dotVar})` }} />
+                    {a?.name ?? aid}
+                  </span>
+                );
+              })}
+            </div>
           )}
-        </div>
 
-        {/* actions */}
-        <div className="mt-1 flex flex-col gap-1 px-2">
-          {isTrackA ? (
-            tstate === 'rendering' ? (
-              <button
-                type="button"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => { e.stopPropagation(); void cancelShot(item.uid); }}
-                className="rounded border border-soft bg-raised px-2 py-1 text-[10px] text-fg hover:bg-sunken"
-              >
-                Cancel
-              </button>
-            ) : (
-              <button
-                type="button"
-                disabled={busy}
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => { e.stopPropagation(); void generateShot(item.uid); }}
+          {raw && (
+            <>
+              {/* engine picker — Track A (fal, direct render) vs Track B (handoff,
+                  no API). A local shot has nothing to pick: resolveEngine derives
+                  its engine from content_path, and there is no fal model and no
+                  handoff platform. */}
+              {track !== 'local' && (
+              <div
                 className={[
-                  'rounded px-2 py-1 text-[10px] font-medium disabled:opacity-50',
-                  tstate === 'rendered' || tstate === 'failed'
-                    ? 'border border-soft bg-raised text-fg hover:bg-sunken'
-                    : 'bg-[var(--achievement)] text-[var(--bg-base)]',
+                  'flex items-center gap-1 rounded border px-1 py-0.5',
+                  track === 'a'
+                    ? 'border-[color-mix(in_oklab,var(--agent)_40%,var(--border))] bg-[color-mix(in_oklab,var(--agent)_12%,var(--bg-raised))]'
+                    : 'border-dashed border-[color-mix(in_oklab,var(--info)_40%,var(--border))] bg-[color-mix(in_oklab,var(--info)_10%,var(--bg-raised))]',
                 ].join(' ')}
               >
-                {busy
-                  ? 'Queuing…'
-                  : tstate === 'rendered'
-                    ? 'Regenerate'
-                    : tstate === 'failed'
-                      ? 'Retry'
-                      : 'Generate'}
-              </button>
-            )
-          ) : (
-            <>
-              <button
-                type="button"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => { e.stopPropagation(); void copyPromptPackage(item.uid, choice.platform); }}
-                className="rounded border border-soft bg-raised px-2 py-1 text-[10px] text-fg hover:bg-sunken"
-              >
-                {copiedUid === item.uid ? 'Copied ✓' : 'Copy prompt package'}
-              </button>
-              <div className="flex gap-1">
-                <input
-                  type="text"
-                  value={dropPath[item.uid] ?? ''}
-                  onMouseDown={(e) => e.stopPropagation()}
+                <select
+                  value={choice.mode}
                   onClick={(e) => e.stopPropagation()}
-                  onChange={(e) => setDropPath((prev) => ({ ...prev, [item.uid]: e.target.value }))}
-                  placeholder="returned clip path…"
-                  className="min-w-0 flex-1 rounded border border-soft bg-sunken px-1.5 py-1 font-mono text-[9.5px] text-fg outline-none focus:border-[var(--info)]"
-                />
+                  onChange={(e) => patchChoice(item.uid, { mode: e.target.value as GenChoice['mode'] })}
+                  className={[
+                    'rounded border-none bg-transparent py-0.5 font-mono text-fg outline-none',
+                    isLoupe ? 'text-[11px]' : 'text-[9.5px]',
+                  ].join(' ')}
+                  aria-label="Generation path"
+                >
+                  <option value="fal">fal</option>
+                  <option value="handoff">handoff</option>
+                </select>
+                <span className="text-fg-faint" aria-hidden>▸</span>
+                {track === 'a' ? (
+                  <select
+                    value={choice.model}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => patchChoice(item.uid, { model: e.target.value })}
+                    className={[
+                      'min-w-0 flex-1 rounded border-none bg-transparent py-0.5 font-mono text-fg outline-none',
+                      isLoupe ? 'text-[11px]' : 'text-[9.5px]',
+                    ].join(' ')}
+                    aria-label="fal model"
+                    title={
+                      choice.model
+                        ? `Pinned to ${choice.model} — overrides this cell's own model setting, and an attached anchor will not switch it to image-to-video.`
+                        : "Auto — uses this cell's own model setting if it has one, and otherwise switches to image-to-video when an anchor is attached."
+                    }
+                  >
+                    <option value={FAL_MODEL_AUTO}>auto · i2v if anchored</option>
+                    {FAL_MODELS.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <select
+                    value={choice.platform}
+                    onClick={(e) => e.stopPropagation()}
+                    onChange={(e) => patchChoice(item.uid, { platform: e.target.value as PromptPlatform })}
+                    className={[
+                      'min-w-0 flex-1 rounded border-none bg-transparent py-0.5 font-mono text-fg outline-none',
+                      isLoupe ? 'text-[11px]' : 'text-[9.5px]',
+                    ].join(' ')}
+                    aria-label="Handoff platform"
+                  >
+                    {HANDOFF_PLATFORMS.map((p) => (
+                      <option key={p} value={p}>{p}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+              )}
+
+              {/* status row — the specific reason + seed. No cost: fal reports
+                  none for these models, so there is no honest figure to show. */}
+              <div
+                className={[
+                  'flex items-center justify-between gap-2 font-mono',
+                  isLoupe ? 'text-[10.5px]' : 'text-[9.5px]',
+                ].join(' ')}
+              >
+                <span
+                  className={[
+                    'flex min-w-0 items-center gap-1.5 uppercase tracking-wider',
+                    isLoupe ? 'rounded-full border border-soft bg-raised px-2 py-0.5' : '',
+                  ].join(' ')}
+                  style={{ color: `var(${statusVar})` }}
+                  title={statusLabel}
+                >
+                  <span
+                    className={
+                      'h-1.5 w-1.5 shrink-0 rounded-full' +
+                      (tstate === 'rendering' ? ' animate-pulse' : '')
+                    }
+                    style={{ background: `var(${statusVar})` }}
+                  />
+                  <span className="truncate">{statusLabel}</span>
+                </span>
+                {track === 'a' && raw.seed != null && (
+                  <span className="shrink-0 tabular-nums text-fg-faint">seed {raw.seed}</span>
+                )}
+              </div>
+
+              {/* actions — a local shot renders off its own content_path, so it
+                  gets neither a fal Generate it cannot honour nor a drop zone for
+                  a clip nobody is returning. */}
+              {track !== 'local' && (
+              <div className="flex flex-col gap-1">
+                {track === 'a' ? (
+                  tstate === 'rendering' ? (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); void cancelShot(item.uid); }}
+                      className="rounded border border-[color-mix(in_oklab,var(--danger)_45%,var(--border))] bg-raised px-2 py-1 text-[10px] text-[var(--danger)] hover:bg-sunken"
+                    >
+                      Cancel
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={(e) => { e.stopPropagation(); void generateShot(item.uid); }}
+                      className={[
+                        'rounded px-2 py-1 text-[10px] font-medium disabled:opacity-50',
+                        tstate === 'rendered' || tstate === 'failed'
+                          ? 'border border-soft bg-raised text-fg hover:bg-sunken'
+                          : 'bg-[var(--achievement)] text-[var(--bg-base)]',
+                      ].join(' ')}
+                    >
+                      {busy
+                        ? 'Queuing…'
+                        : tstate === 'rendered'
+                          ? 'Regenerate'
+                          : tstate === 'failed'
+                            ? 'Retry'
+                            : 'Generate'}
+                    </button>
+                  )
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); void copyPromptPackage(item.uid, choice.platform); }}
+                      className="rounded border border-[color-mix(in_oklab,var(--info)_45%,var(--border))] bg-[color-mix(in_oklab,var(--info)_12%,var(--bg-raised))] px-2 py-1 text-[10px] text-[var(--info)] hover:bg-sunken"
+                    >
+                      {copiedUid === item.uid ? 'Copied ✓' : 'Copy prompt package'}
+                    </button>
+                    {/* Track B has no API to poll — the clip comes back by hand. */}
+                    <div className="rounded-sm border border-dashed border-[var(--border)] p-1.5">
+                      <p className="text-center font-mono text-[8.5px] uppercase tracking-wider text-fg-faint">
+                        Drop returned .mp4 here
+                      </p>
+                      <div className="mt-1 flex gap-1">
+                        <input
+                          type="text"
+                          value={dropPath[item.uid] ?? ''}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => setDropPath((prev) => ({ ...prev, [item.uid]: e.target.value }))}
+                          placeholder="returned clip path…"
+                          className="min-w-0 flex-1 rounded border border-soft bg-sunken px-1.5 py-1 font-mono text-[9.5px] text-fg outline-none focus:border-[var(--info)]"
+                        />
+                        <button
+                          type="button"
+                          disabled={busy || !(dropPath[item.uid] ?? '').trim()}
+                          onClick={(e) => { e.stopPropagation(); void dropClip(item.uid, choice.platform); }}
+                          className="shrink-0 rounded border border-soft bg-raised px-2 py-1 text-[10px] text-fg hover:bg-sunken disabled:opacity-50"
+                        >
+                          Attach
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+              </div>
+              )}
+
+              {/* approve / reject */}
+              <div className="flex gap-1">
                 <button
                   type="button"
-                  disabled={busy || !(dropPath[item.uid] ?? '').trim()}
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={(e) => { e.stopPropagation(); void dropClip(item.uid, choice.platform); }}
-                  className="shrink-0 rounded border border-soft bg-raised px-2 py-1 text-[10px] text-fg hover:bg-sunken disabled:opacity-50"
+                  onClick={(e) => { e.stopPropagation(); void setApproval(item.uid, true); }}
+                  className={[
+                    'flex-1 rounded border px-2 py-0.5 text-[10px]',
+                    raw.approved
+                      ? 'border-[var(--live)] bg-[color-mix(in_oklab,var(--live)_16%,var(--bg-raised))] text-[var(--live)]'
+                      : 'border-soft bg-raised text-fg-muted hover:text-fg',
+                  ].join(' ')}
                 >
-                  Attach
+                  Approve
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); void setApproval(item.uid, false); }}
+                  className="flex-1 rounded border border-soft bg-raised px-2 py-0.5 text-[10px] text-fg-muted hover:text-[var(--danger)]"
+                >
+                  Reject
                 </button>
               </div>
+
+              {/* failed reason + retry / edit prompt */}
+              {failedReason && (
+                <div className="rounded border border-dashed border-[var(--danger)] bg-[color-mix(in_oklab,var(--danger)_10%,var(--bg-sunken))] px-1.5 py-1 text-[10px] text-[var(--danger)]">
+                  <p className="truncate" title={failedReason}>{failedReason}</p>
+                  <div className="mt-1 flex gap-1">
+                    {/* Retry goes through generateShot → fal. For a local shot a
+                        failure means its excalidraw render failed, and retrying
+                        would re-route the drawing to the network engine. */}
+                    {track !== 'local' && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); void generateShot(item.uid); }}
+                        className="rounded border border-[var(--danger)] px-1.5 py-0.5 text-[9.5px] text-[var(--danger)] hover:bg-[color-mix(in_oklab,var(--danger)_18%,transparent)]"
+                      >
+                        Retry
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); openInCellView(); }}
+                      className="rounded border border-soft px-1.5 py-0.5 text-[9.5px] text-fg-muted hover:text-fg"
+                    >
+                      Edit prompt
+                    </button>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
-
-        {/* approve / reject */}
-        <div className="mt-1 flex gap-1 px-2">
-          <button
-            type="button"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); void setApproval(item.uid, true); }}
-            className={[
-              'flex-1 rounded border px-2 py-0.5 text-[10px]',
-              raw.approved
-                ? 'border-[var(--live)] bg-[color-mix(in_oklab,var(--live)_16%,var(--bg-raised))] text-[var(--live)]'
-                : 'border-soft bg-raised text-fg-muted hover:text-fg',
-            ].join(' ')}
-          >
-            Approve
-          </button>
-          <button
-            type="button"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => { e.stopPropagation(); void setApproval(item.uid, false); }}
-            className="flex-1 rounded border border-soft bg-raised px-2 py-0.5 text-[10px] text-fg-muted hover:text-[var(--danger)]"
-          >
-            Reject
-          </button>
-        </div>
-
-        {/* status row — dot/label + cost */}
-        <div className="mt-1 flex items-center justify-between px-2 pb-1 font-mono text-[9.5px] text-fg-muted">
-          <span style={{ color: `var(${sMeta.varName})` }}>{sMeta.label}</span>
-          <span>{cost}</span>
-        </div>
-
-        {/* seed-lock footer note */}
-        {raw.seed != null && (
-          <div className="px-2 pb-1 font-mono text-[9px] text-fg-faint">seed locked · {raw.seed}</div>
-        )}
-
-        {/* failed reason + retry / edit prompt */}
-        {failedReason && (
-          <div className="mx-2 mb-1.5 rounded border border-dashed border-[var(--danger)] bg-[color-mix(in_oklab,var(--danger)_10%,var(--bg-sunken))] px-1.5 py-1 text-[10px] text-[var(--danger)]">
-            <p className="truncate" title={failedReason}>{failedReason}</p>
-            <div className="mt-1 flex gap-1">
-              <button
-                type="button"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => { e.stopPropagation(); void generateShot(item.uid); }}
-                className="rounded border border-[var(--danger)] px-1.5 py-0.5 text-[9.5px] text-[var(--danger)] hover:bg-[color-mix(in_oklab,var(--danger)_18%,transparent)]"
-              >
-                Retry
-              </button>
-              <button
-                type="button"
-                onMouseDown={(e) => e.stopPropagation()}
-                onClick={(e) => { e.stopPropagation(); openInCellView(); }}
-                className="rounded border border-soft px-1.5 py-0.5 text-[9.5px] text-fg-muted hover:text-fg"
-              >
-                Edit prompt
-              </button>
-            </div>
-          </div>
-        )}
-      </div>
+      </article>
     );
   }
 
   return (
-    <div className="relative flex h-full flex-col bg-base text-fg">
-      {/* Top chrome — folder path + archetype chip + viewport/add actions. */}
-      <div className="ikenga-canvas-bar flex items-center justify-between gap-2 border-b border-soft bg-sunken px-3 py-1.5 text-[11px]">
-        <div className="flex items-center gap-2 text-fg-muted">
-          <span className="font-mono">{project?.name ? `~/${project.name}/` : '~/Projects/'}</span>
+    <section
+      className="relative flex h-full flex-col bg-base text-fg"
+      data-canvas-density={density}
+    >
+      {/* Head — project crumb + aspect chip / density / anchors + forge-all. */}
+      <header className="flex items-center justify-between gap-3 border-b border-soft bg-surface px-3 py-1.5 text-[11px]">
+        <div className="flex min-w-0 items-center gap-2 text-fg-muted">
+          <span className="truncate font-mono">{project?.name ? `~/${project.name}/` : '~/Projects/'}</span>
           <span className="rounded px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-[var(--achievement)] ring-1 ring-inset ring-[color-mix(in_oklab,var(--achievement)_40%,transparent)]">
             studio
           </span>
           <span className="text-fg-faint">·</span>
           <span className="text-fg-faint">archetype</span>
           <span className="font-mono text-fg">{project?.archetype_id ?? '—'}</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <span className="mr-1 font-mono text-[10px] text-fg-muted">
-            spend <span className="text-[var(--achievement)]">{fmtCost(totalSpend)}</span>
-          </span>
-          <span className="mx-0.5 h-4 w-px bg-[var(--border-soft)]" aria-hidden />
-          <button
-            type="button"
-            onClick={() => nudgeZoom('out')}
-            aria-label="Zoom out"
-            title="Zoom out (−)"
-            className="rounded px-1.5 py-1 font-mono text-fg-muted hover:bg-raised hover:text-fg"
-          >
-            −
-          </button>
           <span
-            className="min-w-[3.5ch] text-center font-mono text-[10px] tabular-nums text-fg-muted"
-            title="Zoom level"
+            className="ml-1 rounded-sm border border-soft px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-fg-muted"
+            title="Output framing · boarded duration · shot count"
           >
-            {Math.round(viewport.scale * 100)}%
+            {aspect}
+            {boardDurationMs > 0 && ` · ~${fmtDuration(boardDurationMs)}`}
+            {` · ${railShots.length} shot${railShots.length === 1 ? '' : 's'}`}
           </span>
+        </div>
+
+        <div className="flex shrink-0 items-center gap-1.5">
+          {/* Density — the shell's grid/loupe idiom, per project. */}
+          <div
+            role="tablist"
+            aria-label="Card density"
+            className="flex gap-0.5 rounded-md border border-soft bg-sunken p-0.5"
+          >
+            {(['strip', 'loupe'] as const).map((d) => (
+              <button
+                key={d}
+                type="button"
+                role="tab"
+                aria-selected={density === d}
+                onClick={() => setDensity(d)}
+                className={
+                  'rounded px-2 py-0.5 text-[11px] capitalize ' +
+                  (density === d
+                    ? 'bg-raised text-fg ring-1 ring-inset ring-[var(--border-soft)]'
+                    : 'text-fg-muted hover:text-fg')
+                }
+              >
+                {d}
+              </button>
+            ))}
+          </div>
           <button
             type="button"
-            onClick={() => nudgeZoom('in')}
-            aria-label="Zoom in"
-            title="Zoom in (+)"
-            className="rounded px-1.5 py-1 font-mono text-fg-muted hover:bg-raised hover:text-fg"
+            onClick={() => void refreshAnchors()}
+            className="rounded border border-[var(--border)] px-2 py-1 text-fg-muted hover:border-[var(--fg-faint)] hover:text-fg"
           >
-            +
+            Refresh anchors
           </button>
-          <button
-            type="button"
-            onClick={fitView}
-            title="Fit all cells (0)"
-            className="rounded px-2 py-1 text-fg-muted hover:bg-raised hover:text-fg"
-          >
-            Fit
-          </button>
-          <span className="mx-0.5 h-4 w-px bg-[var(--border-soft)]" aria-hidden />
           <button
             type="button"
             onClick={() => { cellMutation.clearError(); setAddOpen(true); }}
@@ -1008,18 +1377,15 @@ export function CanvasView() {
           </button>
           <button
             type="button"
-            onClick={() => setEditMode((m) => !m)}
-            className={
-              'rounded px-2 py-1 ' +
-              (editMode
-                ? 'bg-[color-mix(in_oklab,var(--achievement)_20%,transparent)] text-[var(--achievement)] ring-1 ring-inset ring-[color-mix(in_oklab,var(--achievement)_40%,transparent)]'
-                : 'text-fg-muted hover:bg-raised hover:text-fg')
-            }
+            disabled={remainingTrackA.length === 0}
+            onClick={() => void forgeAllRemaining()}
+            title="Enqueue every Track-A shot that isn't already forged or running"
+            className="rounded border border-[color-mix(in_oklab,var(--achievement)_60%,transparent)] bg-[color-mix(in_oklab,var(--achievement)_18%,transparent)] px-3 py-1 text-[12px] font-medium text-[var(--achievement)] shadow-[0_0_0_1px_color-mix(in_oklab,var(--achievement)_18%,transparent)] hover:bg-[color-mix(in_oklab,var(--achievement)_26%,transparent)] disabled:opacity-40"
           >
-            {editMode ? 'Editing layout' : 'Edit layout'}
+            Forge all remaining · {remainingTrackA.length} shot{remainingTrackA.length === 1 ? '' : 's'}
           </button>
         </div>
-      </div>
+      </header>
 
       {/* Error banner — real MCP create/delete failures surface here. */}
       {error && (
@@ -1038,195 +1404,108 @@ export function CanvasView() {
         </div>
       )}
 
-      {/* Canvas stage */}
-      <div ref={stageWrapRef} className="relative min-h-0 flex-1">
-        <Canvas<Item>
-          ref={canvasRef}
-          items={items}
-          itemId={(item) => asItemId(isCell(item) ? item.uid : item.id)}
-          itemKind={(item) => (isCell(item) ? 'cell' : 'rung-label')}
-          layout={layout}
-          viewport={viewport}
-          editMode={editMode}
-          selectedId={selectedId}
-          gridSnap={24}
-          autoFitOnResize={false}
-          onViewportChange={setViewport}
-          onLayoutChange={setLayout}
-          onEditModeChange={setEditMode}
-          onSelectionChange={(id) => {
-            if (id === null) {
-              setCellUid(null);
-              return;
-            }
-            const item = items.find((it) => (isCell(it) ? it.uid : it.id) === id);
-            if (!item || !isCell(item)) return;
-            setCellUid(item.uid);
-          }}
-          renderItem={(item, state) => {
-            if (!isCell(item)) {
-              return (
-                <div className="pointer-events-none font-mono text-[10px] uppercase tracking-wider text-fg-faint">
-                  {item.text}
-                </div>
-              );
-            }
-            const tint = THUMB_TINT[item.color];
-            // Real render status (adaptive poll) drives the tile; mock mode
-            // keeps the fixture's numeric progress bar.
-            const tstate: TileState = hasRealCells
-              ? tileStateFor(renderStatusMap[item.uid])
-              : item.progress != null && item.progress < 1
-                ? 'rendering'
-                : 'none';
-            const sMeta = TILE_STATUS[tstate];
-            const mockProgress =
-              !hasRealCells && item.progress != null && item.progress < 1 ? item.progress : null;
-            const dur = durationByUid[item.uid];
-
-            // Real hi-fi cells get the per-shot generation card (engine picker,
-            // Generate/Regenerate/Cancel, approve/reject, anchor chips, spend).
-            // Lofi/beat-sheet cells and mock-fixture rows (no `raw`) keep the
-            // plain tile below — there's no authored prompt/anchors/seed to back
-            // a generation surface for those.
-            if (item.rung === '2_hifi' && item.raw) {
-              return renderShotCard(item, item.raw, state, tstate, sMeta, dur);
-            }
-
-            const hoverLinked = hoverBeat === item.uid;
-            const scrubActive = !state.isSelected && activeAtPlayheadUid === item.uid;
-            return (
-              <div
-                role="button"
-                // Same canvas-item opt-in as the shot card above — see the note
-                // there. Lofi/beat-sheet tiles are items too, so they need it to
-                // be draggable in edit mode and to not swallow presses as pans.
-                data-canvas-item=""
-                tabIndex={state.isSelected ? 0 : -1}
-                onMouseEnter={() => setHoverBeat(item.uid)}
-                onMouseLeave={() => setHoverBeat(null)}
-                onClick={() => setCellUid(item.uid)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    setCellUid(item.uid);
-                  }
-                }}
-                className={[
-                  'cell-card group relative rounded-md text-left transition-shadow',
-                  'border border-[var(--border)] bg-surface hover:shadow-lg',
-                  state.isSelected
-                    ? 'outline-2 outline outline-offset-2 outline-[var(--achievement)]'
-                    : scrubActive
-                      ? 'outline-2 outline outline-offset-2 outline-[var(--info)]'
-                      : '',
-                  state.isEditMode
-                    ? 'ring-1 ring-dashed ring-[color-mix(in_oklab,var(--achievement)_50%,transparent)]'
-                    : '',
-                  hoverLinked ? ' is-hover-link' : '',
-                ].join(' ')}
-                style={{ height: CELL_H }}
-              >
-                {/* delete (hover / focus revealed) — real storyboard.delete_cell */}
+      {/* The Rail — project-wide forge progress. One node per boarded shot, in
+          board order; a projection of `railShots`, never a second source. */}
+      <div className="shrink-0 border-b border-soft bg-surface px-6 py-3">
+        <div className="mb-2 flex items-baseline justify-between gap-2">
+          <span className="font-mono text-[10.5px] uppercase tracking-wider text-fg-faint">
+            The Rail — forge progress
+          </span>
+          <span className="font-mono text-[11px] tabular-nums text-fg-muted">
+            <b className="font-medium text-[var(--achievement)]">{railStat.done}</b> / {railStat.total} forged
+            {' · '}
+            <b className="font-medium text-fg">{railStat.running}</b> running
+            {' · '}
+            <b className="font-medium text-fg">{railStat.next}</b> up next
+            {' · '}
+            <b className="font-medium text-fg">{railStat.failed}</b> failed
+          </span>
+        </div>
+        <div className="relative h-2.5 rounded-full border border-soft bg-sunken">
+          <div
+            className="absolute inset-y-0 left-0 rounded-l-full"
+            style={{
+              width: `${railStat.total > 0 ? (railStat.done / railStat.total) * 100 : 0}%`,
+              background:
+                'linear-gradient(90deg, color-mix(in oklab, var(--achievement) 40%, var(--bg-sunken)), var(--achievement))',
+              boxShadow: '0 0 12px 0 color-mix(in oklab, var(--achievement) 50%, transparent)',
+            }}
+          />
+          <div className="absolute inset-0 flex">
+            {railShots.map((s) => (
+              <div key={s.item.uid} className="relative flex-1">
                 <button
                   type="button"
-                  aria-label={`Delete cell ${item.beat}`}
-                  title="Delete cell"
-                  onMouseDown={(e) => e.stopPropagation()}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    cellMutation.clearError();
-                    setConfirmDelete({ uid: item.uid, beat: item.beat });
-                  }}
-                  className="absolute right-1 top-1 z-10 hidden h-5 w-5 items-center justify-center rounded border border-[var(--border)] bg-surface text-[11px] leading-none text-fg-faint hover:border-[var(--danger)] hover:text-[var(--danger)] group-hover:flex focus-visible:flex focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color-mix(in_oklab,var(--danger)_45%,transparent)]"
+                  aria-label={`Shot ${s.n} — ${s.item.beat} — ${s.nodeState}`}
+                  onClick={() => setCellUid(s.item.uid)}
+                  onMouseEnter={() => setHoverBeat(s.item.uid)}
+                  onMouseLeave={() => setHoverBeat(null)}
+                  className={
+                    'absolute left-0 top-1/2 z-[2] flex h-4 w-4 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 font-mono text-[8.5px] tabular-nums' +
+                    (s.nodeState === 'running' ? ' animate-pulse' : '')
+                  }
+                  style={RAIL_NODE_STYLE[s.nodeState]}
                 >
-                  <span aria-hidden>✕</span>
+                  {s.n}
                 </button>
-
-                <div className="relative flex h-24 items-center justify-center overflow-hidden rounded-t-md border-b border-[var(--border)] bg-sunken">
-                  {/* aspect-framed honest card — rung + render status + duration.
-                      Done cells overlay a real poster frame (bytes-over-bridge);
-                      non-done cells show the status text below. */}
-                  <div
-                    className={[
-                      'relative flex items-center justify-center overflow-hidden',
-                      isPortrait ? 'rounded-sm' : '',
-                      tint,
-                    ].join(' ')}
-                    style={aspectFrameStyle(aspect)}
-                  >
-                    {tstate === 'rendered' && (() => {
-                      const rid = recordByUid[item.uid]?.id;
-                      return rid ? (
-                        <CellPoster
-                          recordId={rid}
-                          alt={item.beat}
-                          className="absolute inset-0 h-full w-full object-cover"
-                        />
-                      ) : null;
-                    })()}
-                    <div className="relative z-[1] flex flex-col items-center justify-center gap-1 px-1 text-center">
-                      <span className="font-mono text-[9px] uppercase tracking-wider text-fg-muted">
-                        {rungLabel(item.rung)}
-                      </span>
-                      <span
-                        className="flex items-center gap-1 font-mono text-[9px]"
-                        style={{ color: `var(${sMeta.varName})` }}
-                      >
-                        {tstate === 'rendered' ? (
-                          <span aria-hidden>✓</span>
-                        ) : (
-                          <span
-                            className={
-                              'h-1.5 w-1.5 rounded-full' + (tstate === 'rendering' ? ' animate-pulse' : '')
-                            }
-                            style={{ background: `var(${sMeta.varName})` }}
-                          />
-                        )}
-                        {sMeta.label}
-                      </span>
-                      {dur != null && (
-                        <span className="font-mono text-[8px] text-fg-faint">{fmtDuration(dur)}</span>
-                      )}
-                    </div>
-                    {isPortrait && <SafeZoneBands />}
-                    {mockProgress != null && (
-                      <div className="absolute inset-x-0 bottom-0 h-0.5 bg-[var(--bg-sunken)]">
-                        <div
-                          className="h-full bg-[var(--info)]"
-                          style={{ width: `${mockProgress * 100}%` }}
-                        />
-                      </div>
-                    )}
-                  </div>
-                  {mockProgress != null && (
-                    <div className="absolute right-1.5 top-1.5 flex items-center gap-1 font-mono text-[9px] text-[var(--info)]">
-                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--info)]" />
-                      {Math.round(mockProgress * 100)}%
-                    </div>
-                  )}
-                  {isPortrait && (
-                    <span className="absolute left-1 top-1 rounded border border-[var(--beat-accent-sky-border)] bg-[var(--beat-accent-sky-soft)] px-1 py-px font-mono text-[7px] uppercase tracking-wider text-[var(--info)]">
-                      9:16
-                    </span>
-                  )}
-                </div>
-                <div className="px-2 py-1.5">
-                  <div className="flex items-center justify-between gap-1">
-                    <span className="truncate text-[11px] font-medium text-fg">{item.beat}</span>
-                    {item.approved && (
-                      <span aria-label="approved" className="font-mono text-[10px] text-[var(--live)]">
-                        ✓
-                      </span>
-                    )}
-                  </div>
-                  <div className="mt-0.5 font-mono text-[10px] text-fg-faint">{item.uid}</div>
-                </div>
               </div>
-            );
-          }}
-        />
+            ))}
+          </div>
+        </div>
       </div>
+
+      {/* Stage — document flow. No pan, no zoom, no free placement. Clicking the
+          bare stage clears the shared selection (the old canvas primitive did
+          this via onSelectionChange(null)). */}
+      <main
+        className="min-h-0 flex-1 overflow-y-auto px-6 py-5"
+        onClick={(e) => { if (e.target === e.currentTarget) setCellUid(null); }}
+      >
+        {scenes.map((scene) => (
+          <section key={scene.key || '__flat'} className="mb-6 last:mb-0">
+            <header className="mb-3 flex items-baseline gap-2 border-b border-soft pb-1.5">
+              <h2 className="font-display text-[16px] font-medium text-fg" title={scene.key || undefined}>
+                {scene.title}
+              </h2>
+              <span className="font-mono text-[11px] text-fg-muted">
+                {scene.shots.length} cell{scene.shots.length === 1 ? '' : 's'}
+              </span>
+            </header>
+            <div
+              className={
+                isLoupe
+                  ? 'grid grid-cols-1 gap-3.5 xl:grid-cols-2'
+                  : 'flex flex-wrap items-start gap-3.5'
+              }
+            >
+              {scene.shots.map((s) => renderShotCard(s))}
+            </div>
+          </section>
+        ))}
+      </main>
+
+      {/* Ledger strip — track split + the seed-lock disclosure. No spend: fal
+          reports no cost for these models, and the Ledger view owns that column
+          if it ever does. */}
+      <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-soft bg-surface px-6 py-2 font-mono text-[10.5px] text-fg-muted">
+        <div className="flex items-center gap-4">
+          <span className="flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-[var(--agent)]" />
+            Track A · fal generation <b className="font-medium tabular-nums text-fg">{trackACount} shot{trackACount === 1 ? '' : 's'}</b>
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-[var(--info)]" />
+            Track B · handoff <b className="font-medium tabular-nums text-fg">{trackBCount} shot{trackBCount === 1 ? '' : 's'}</b>
+          </span>
+          {localCount > 0 && (
+            <span className="flex items-center gap-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--fg-faint)]" />
+              Local · drawn <b className="font-medium tabular-nums text-fg">{localCount} shot{localCount === 1 ? '' : 's'}</b>
+            </span>
+          )}
+        </div>
+        {seedLock && <div className="truncate text-fg-faint">{seedLock}</div>}
+      </footer>
 
       {/* New cell dialog */}
       {addOpen && (
@@ -1305,6 +1584,6 @@ export function CanvasView() {
           </div>
         </Modal>
       )}
-    </div>
+    </section>
   );
 }
