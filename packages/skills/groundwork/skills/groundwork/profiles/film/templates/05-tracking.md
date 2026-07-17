@@ -3,7 +3,7 @@
 
 {{vocab.work_unit}}s and their shots, dependencies, critical path. Production status mirror (survives sessions).
 
-> **This is a status mirror of the Studio project, not the shot board.** `com.ikenga.studio` owns the authoritative render/approve state of every shot. This file rolls that up for production management — what's in the pipeline, what it cost, what's approved. When this file and Studio disagree, **Studio wins**; re-sync from `mcp__studio__storyboard_list_cells` / `render_status`.
+> **This is a status mirror of the shot board, not the shot board itself.** Your shot board owns the authoritative render/approve state of every shot. This file rolls that up for production management — what's in the pipeline, what it cost, what's approved. When this file and the board disagree, **the board wins**; re-sync from it. In an Ikenga workspace the board is `com.ikenga.studio` and you re-sync via `mcp__studio__storyboard_list_cells` / `render_status`.
 >
 > Only the coordinator (producer) writes the status entries below. Sequence owners report Definition-of-Done back; the coordinator records the result.
 

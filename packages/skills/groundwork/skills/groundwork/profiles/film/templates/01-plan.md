@@ -81,9 +81,9 @@ _The concrete outputs this production ships — masters, cutdowns, key art, capt
 | _e.g._ Master | 16:9 · 90s · ProRes | Festival | export bed A | |
 | _e.g._ Social cutdown | 9:16 · 30s · H.264 | Instagram | export bed B | |
 
-## Handoff to com.ikenga.studio
+## Handoff to the shot board
 
-_**Boundary — read this before duplicating anything.** This plan owns creative development and production management **around** Studio: logline, treatment, cast/character bible, locations, look/lookbook, shotlist, schedule, budget, deliverables. It does **not** own the shot board. At execution time, **`com.ikenga.studio` IS the shot board / shot tracker** — cells, storyboard beats, render engine, per-shot approval, and export beds all live in a Studio project, driven by the workflow in [`plans/studio/16-ai-filmmaker-workflow.md`](../studio/16-ai-filmmaker-workflow.md) (the execution engine)._
+_**Boundary — read this before duplicating anything.** This plan owns creative development and production management **around** execution: logline, treatment, cast/character bible, locations, look/lookbook, shotlist, schedule, budget, deliverables. It does **not** own the shot board. At execution time your **shot board** — cells, storyboard beats, render engine, per-shot approval, export beds — is the authoritative tracker, and this plan defers to it. In an Ikenga workspace that board is `com.ikenga.studio`, and the tool references throughout this template (`mcp__studio__*`) name its verbs; swap them for whatever board you actually run. Record which board backs this film below._
 
 The handoff contract:
 
