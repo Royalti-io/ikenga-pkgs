@@ -435,17 +435,19 @@ importers:
   packages/skills/studio-archetypes:
     dependencies:
       '@ikenga/studio-schema':
-        specifier: ^0.1.0
+        specifier: ^0.1.0 || ^0.2.0
         version: 0.1.0
 
   packages/skills/studio-beat-detect: {}
+
+  packages/skills/studio-breakdown: {}
 
   packages/skills/studio-doctor: {}
 
   packages/skills/studio-toolchain:
     dependencies:
       '@ikenga/studio-schema':
-        specifier: ^0.1.0
+        specifier: ^0.1.0 || ^0.2.0
         version: 0.1.0
 
   packages/skills/tasks: {}
