@@ -10,8 +10,12 @@ description: |
   ikenga-artifact-builder, huashu-design, frontend-design, ikenga-pkg-builder
   when present; degrades gracefully when not. Profile-driven: `software`
   (rich default, code work), `general` (lean, non-code — campaigns, org
-  changes), `content` (editorial/marketing with key art), and `design-system`
-  (component/token systems — adds parts + quality-gate docs to the spine).
+  changes), `content` (editorial/marketing with key art), `design-system`
+  (component/token systems — adds parts + quality-gate docs to the spine),
+  and `film` (filmmaking pre-production — logline, treatment, character /
+  location bible, lookbook, shot ledger + render budget; hands off to Studio
+  for execution). Pick `film` over `content` for anything shot-based — a
+  short film, music video, trailer, or any AI-generated film work.
 
   TRIGGER when the user asks to start a real plan for non-trivial work
   ("plan a feature," "scaffold a plan folder," "set up groundwork for…"),
@@ -103,8 +107,13 @@ A profile swaps **vocabulary** and **optional blocks**, not the spine. Templates
 | `general` | Non-code work — campaigns, org changes, research | "workstream" / "deliverable" | `false` | stakeholders, deliverables, success metrics |
 | `content` | Editorial/marketing — content series, campaigns with key art | "piece" / "asset" | `true` | editorial standards, distribution plan |
 | `design-system` | Component/token systems — design-language work | "part" | `true` | mode, taxonomy, tokens, fixtures, gallery, quality_gate |
+| `film` | Filmmaking pre-production — short films, music videos, trailers, AI-generated film | "sequence" | `true` | treatment, lookbook, shotlist, shot_tracker, budget, schedule |
+
+**Choosing between `content` and `film`**: both are creative and both produce designs, so the split is *shot-based vs not*. If the work has shots — a short film, music video, trailer, any AI-generated film — use `film`; its vocabulary (sequence / scene + reel / picture lock) and its shot ledger + render budget are what that work actually needs. Use `content` for editorial: articles, campaigns, key art. "It's creative, not code" is **not** a reason to reach for `content` — that reasoning lands film work in the wrong profile.
 
 **Maintenance model**: a single `profiles/_shared/` base + thin per-profile overlays. `profile.json` declares `extends: "_shared"`; only diffs need to live in the overlay. Format spec in `01-plan.md` §"Domain profiles." `design-system` additionally declares its own `spine` (adding `parts-template.md` + `quality-gate.md` to the standard six docs).
+
+**`film` hands off, it does not execute**: the profile owns creative development and production management (logline → treatment → bible → lookbook → schedule → budget). It does **not** own the shot board — `com.ikenga.studio` holds the authoritative per-shot render/approval state, and `05-tracking.md` is only a status mirror of it. When the two disagree, Studio wins.
 
 `status` runs a profile-conformance check to catch drift in user-dropped profiles.
 
@@ -238,10 +247,13 @@ groundwork/
     │   ├── profile.json
     │   ├── templates/
     │   └── explorer/index.html               ← media-first explorer overlay
-    └── design-system/                        ← `extends: _shared`, +parts-template + quality-gate docs
+    ├── design-system/                        ← `extends: _shared`, +parts-template + quality-gate docs
+    │   ├── profile.json
+    │   ├── templates/
+    │   └── explorer/index.html               ← gallery-first explorer overlay
+    └── film/                                 ← `extends: _shared`, produces_designs: true (lookbook / key frames)
         ├── profile.json
-        ├── templates/
-        └── explorer/index.html               ← gallery-first explorer overlay
+        └── templates/                        ← 01-plan (pre-production bible) + 05-tracking (shot ledger, Studio mirror)
 ```
 
 The reference instance — the canonical worked example of every artifact in this spine — is `plans/studio/` in this workspace. Re-derive the spine from it on major `spine_version` bumps.

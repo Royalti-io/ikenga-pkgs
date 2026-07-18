@@ -41,11 +41,20 @@ Use `AskUserQuestion`. Skip any question already answered.
 |---|---|---|---|
 | 1 | Where should this plan live? | Target folder | (free-text, default `plans/<today>-<derived-from-goal>/` — date-prefixed `YYYY-MM-DD-slug`, see step 1) |
 | 2 | What's the one-sentence goal? | Goal | (free-text) |
-| 3 | Which profile? | Profile | `software` (Recommended) — code/feature work, produces designs · `general` — non-code, lean, no designs · `content` — editorial/marketing work, produces designs (key art) · `design-system` — component/token systems, produces designs (adds parts + quality-gate docs) · _or a custom profile name dropped under `.claude/skills/groundwork/profiles/<name>/` — the conformance gate in `../lib/state.md` §"Profile contract" validates it before scaffolding_ |
+| 3 | Which profile? | Profile | `software` (Recommended) — code/feature work, produces designs · `general` — non-code, lean, no designs · `content` — editorial/marketing work, produces designs (key art) · `design-system` — component/token systems, produces designs (adds parts + quality-gate docs) · `film` — filmmaking pre-production (short film, music video, trailer, AI-generated film): logline, treatment, character/location bible, lookbook, shot ledger + render budget · _or a custom profile name dropped under `.claude/skills/groundwork/profiles/<name>/` — the conformance gate in `../lib/state.md` §"Profile contract" validates it before scaffolding_ |
 | 4 | Will this produce visual / UX surfaces? | Visual? | Yes (Recommended for `software` if UI is involved) · No (skips the `design` action) |
 | 5 | Drop a starter sub-plan stub now (`NN-*.md`)? | Sub-plans | Yes — give me a name · No (Recommended for first-pass) |
 
-Q4 only fires when the chosen profile's `produces_designs` is ambiguous — `general` defaults to `false` without asking; `software` defaults to `true` but the user can override (e.g. pure-backend work); `content` defaults to `true` (key art is in scope) and doesn't ask.
+Q4 only fires when the chosen profile's `produces_designs` is ambiguous — `general` defaults to `false` without asking; `software` defaults to `true` but the user can override (e.g. pure-backend work); `content` defaults to `true` (key art is in scope) and doesn't ask; `film` defaults to `true` (the lookbook + reference frames are the designs) and doesn't ask.
+
+**Picking the profile when the user doesn't name one** (Q3 skipped, or a fast-path caller inferring): match on the *shape of the work*, not on "is it code or not."
+
+- Has **shots** — a short film, music video, trailer, spot, any AI-generated film → **`film`**. Wants a treatment, a look locked before generation, or per-shot/render-cost tracking? That's `film`.
+- **Editorial** — articles, a content series, a campaign, key art → `content`.
+- **Components/tokens** — a design language, a component library → `design-system`.
+- **Code/features** → `software`. **Everything else non-code** (org changes, ops, research) → `general`.
+
+Do not reason "it's creative rather than code, so `content`" — that misroutes film work into a profile with no shot ledger, no picture-lock gate, and no Studio handoff.
 
 If invoked with the fast path (`groundwork init <dir> --profile <p> --goal "…"`), skip the interview entirely and use the args.
 
@@ -141,7 +150,7 @@ The canonical strings the FE emits (palette / Kickoff card / argument-picker per
 ```
 Scaffold a new groundwork plan folder at `{target_folder}`.
 
-Profile: {profile} (one of: software, general, content, design-system). Goal: {goal}.
+Profile: {profile} (one of: software, general, content, design-system, film). Goal: {goal}.
 
 If the groundwork skill is loaded in this session, follow its `init` action — read `.claude/skills/groundwork/actions/init.md`, run the discovery interview (skipping questions already answered above), and scaffold the spine. If the skill is not loaded, treat this as a plain instruction: create the folder, write the standard 6-doc spine (00-README through 05-tracking), the living-spec artifact (`artifact/index.html` + `artifact/manifest.json`), and an empty `.groundwork.json` anchored at `spine_version: "1"` with the profile and goal, and report back the file list.
 

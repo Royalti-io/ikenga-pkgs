@@ -168,7 +168,7 @@ The transform table format is deliberately out of scope for v1 — the gate alon
 
 A **profile** governs the vocabulary and spine a plan resolves against. It is the second identity input (after `.groundwork.json`) — `init` writes the profile name into the anchor, and every action reads `profiles/<name>/profile.json` from the skill source to look up labels, spine list, and overrides.
 
-The four built-ins (`software`, `general`, `content`, `design-system`) are the canonical worked examples. **Users may drop their own profile under `.claude/skills/groundwork/profiles/<name>/`** and `init --profile <name>` will resolve it like a built-in, provided it satisfies the contract below. `status`'s profile-conformance check (`actions/status.md` §"Profile conformance check") is the gate that validates this on every read.
+The five built-ins (`software`, `general`, `content`, `design-system`, `film`) are the canonical worked examples. **Users may drop their own profile under `.claude/skills/groundwork/profiles/<name>/`** and `init --profile <name>` will resolve it like a built-in, provided it satisfies the contract below. `status`'s profile-conformance check (`actions/status.md` §"Profile conformance check") is the gate that validates this on every read.
 
 ### File layout
 
@@ -260,7 +260,7 @@ with `profile.json`:
 }
 ```
 
-`groundwork init plans/incident-2026-05-22/ --profile ops --goal "Stand up the GCS-failover runbook"` resolves the profile, materializes 01–05 (only 05 from the ops overlay; the other four from `_shared`), and writes a `.groundwork.json` with `profile: "ops"`. The next `groundwork status` reports `ops` alongside the four built-ins as ✓ conformant.
+`groundwork init plans/incident-2026-05-22/ --profile ops --goal "Stand up the GCS-failover runbook"` resolves the profile, materializes 01–05 (only 05 from the ops overlay; the other four from `_shared`), and writes a `.groundwork.json` with `profile: "ops"`. The next `groundwork status` reports `ops` alongside the five built-ins as ✓ conformant.
 
 If the user typos `extneds: "_shared"`, rule 4 fires: `profile "ops": extends must be "_shared" (got undefined)` and `init` refuses.
 

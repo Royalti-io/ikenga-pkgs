@@ -48,6 +48,33 @@
         "Still writes the prose 09-orchestration.md (the executable script is an additive twin, not a replacement)",
         "Offers to run the workflow rather than auto-running it (opt-in, explicit confirm)"
       ]
+    },
+    {
+      "id": 4,
+      "name": "film-profile-selection",
+      "prompt": "I'm making a short film — an AI-generated one, about 8 minutes, a woodcutter who loses his shadow. I need to work out the logline and treatment, build a character and location bible, lock a visual look before anything gets generated, and track the shots and what they cost me to render. Set me up a proper plan folder for it under ./plans/. Don't ask me which profile to use — pick the right one yourself and tell me why.",
+      "expected_output": "Recognizes this as filmmaking pre-production and selects the `film` profile (NOT content/general/software). Scaffolds the standard spine under ./plans/ with a valid .groundwork.json declaring profile=film and spine_version=1. Film vocabulary is substituted throughout: work_unit=\"sequence\", isolation_axis=\"scene + reel\", freeze_gate_noun=\"picture lock\". 05-tracking.md carries the shot-status table and the Studio-project section. Explains the choice by reference to the film profile's vocabulary/blocks rather than inventing a rationale.",
+      "assertions": [
+        "Selects the `film` profile — .groundwork.json declares profile=film (not content, general, or software)",
+        "Produces the canonical groundwork spine with a valid .groundwork.json at spine_version=1",
+        "Film vocab is substituted: 'sequence' as the work unit and 'picture lock' as the freeze gate appear in 05-tracking.md",
+        "No unrendered {{...}} placeholders remain in scaffolded files",
+        "05-tracking.md retains the shot-status table and the Studio project section (status mirror, not a reinvented shot board)",
+        "Justifies the profile choice from the film profile's actual vocabulary/optional blocks"
+      ]
+    },
+    {
+      "id": 5,
+      "name": "film-studio-boundary",
+      "prompt": "Scaffold a groundwork plan at ./plans/eval-forge/ with profile film and goal \"The Forge — a 6-minute AI-generated short\" (fast path, no interview). Then populate 05-tracking.md with two sequences: WP-01 (the cold open, locks the lookbook and owns the picture-lock gate) and WP-02 (the forge interior, depends on WP-01). Now tell me: where does the authoritative per-shot render and approval state live — this plan folder, or somewhere else?",
+      "expected_output": "Scaffolds with profile=film, adds the two sequence sections to 05-tracking.md registered as WP-01/WP-02 with the dependency recorded. Critically, correctly reports that `com.ikenga.studio` owns the authoritative shot state — cells, render engine, per-shot approval — and that 05-tracking.md is only a production-management status MIRROR of the Studio board. States the reconciliation rule: when the two disagree, Studio wins. Does NOT claim the plan folder is the shot board.",
+      "assertions": [
+        "Scaffolds with profile=film and adds WP-01/WP-02 sequence sections to 05-tracking.md",
+        "Records the WP-02 → WP-01 dependency and the picture-lock freeze gate",
+        "Correctly identifies com.ikenga.studio as the owner of authoritative per-shot render/approval state",
+        "Describes 05-tracking.md as a status mirror, not the shot board itself",
+        "States the reconciliation rule that Studio wins when the mirror and the board disagree"
+      ]
     }
   ]
 }

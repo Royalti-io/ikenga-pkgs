@@ -36,7 +36,7 @@ try:
     r = run("validate-profile", "--profiles-root", PROFILES, "--all")
     res = json.loads(r.stdout)
     names = {p["name"]: p["status"] for p in res["profiles"]}
-    for n in ("_shared","software","general","content"):
+    for n in ("_shared","software","general","content","design-system","film"):
         check(f"{n} conformant", names.get(n) == "conformant", names.get(n))
 
     # drop a malformed profile (extends typo) → rule 4
