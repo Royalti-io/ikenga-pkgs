@@ -1,6 +1,6 @@
 {
   "name": "@ikenga/studio-archetypes",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Studio archetype suite — the 7 video archetypes (ai-short, explainer, montage, music-video, narrative, product, tutorial) + the shared core block catalog + animation patterns. One publish unit: archetype block-ID resolution stays intra-package.",
   "keywords": [
     "claude",
