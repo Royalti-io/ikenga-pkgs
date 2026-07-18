@@ -172,7 +172,8 @@
         "key": "fal_api_key",
         "type": "secret",
         "label": "fal API key",
-        "description": "fal.ai — the shipping AI-generation engine (Track A). Read by the adapter as vault key `studio.fal`; FAL_KEY env is the headless fallback."
+        "env": "FAL_KEY",
+        "description": "fal.ai — the shipping AI-generation engine (Track A). In-shell the supervisor resolves this from Stronghold (key `FAL_KEY`, studio pkg scope) and injects it into the render sidecar's env as FAL_KEY; the adapter's vault shim reads it back for `studio.fal`. A launch-env FAL_KEY remains the headless fallback."
       },
       {
         "key": "veo_api_key",

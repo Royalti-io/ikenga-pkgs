@@ -517,9 +517,13 @@ export class RenderRunner {
       rendersDir,
       aspectRatio: aspect,
       resolution,
-      // Minimal env-based vault outside the shell: network adapters (fal) read
-      // their key here. For 'studio.fal' return FAL_KEY from the env; else nothing.
-      // (In-shell the real Stronghold vault surface replaces this.)
+      // Env-based vault shim: network adapters (fal) resolve their key here.
+      // For 'studio.fal' return process.env.FAL_KEY; else nothing. In-shell the
+      // key is NOT read from launch env — the pkg supervisor resolves the
+      // manifest secret (`fal_api_key`, env:"FAL_KEY") from Stronghold and
+      // injects FAL_KEY into this process's env at spawn (F-9). Standalone/
+      // headless, a launch-env FAL_KEY is the fallback. Either way this shim
+      // just reads process.env.FAL_KEY.
       vault: { get: async (key: string) => (key === 'studio.fal' ? process.env.FAL_KEY : undefined) },
       emit: (event) => {
         // Forward the adapter's render.progress events onto the pkg event bus.
