@@ -102,18 +102,36 @@ function shortName(npmName) {
   return npmName.replace(/^@ikenga\//, '').replace(/^pkg-/, '');
 }
 
-/** Find local package.json directory for a given npm name. */
+/**
+ * Find local package.json directory for a given npm name.
+ *
+ * Walks `packages/` recursively rather than a fixed two levels: nested
+ * workspace members like `@ikenga/studio-schema` live at
+ * `packages/apps/studio/shared` (a sub-package of the studio app), which the
+ * old `packages/<type>/<folder>` walk never reached — so any batch that
+ * published such a member crashed here before the catalog was committed. These
+ * nested members are usually libraries (no `manifest.json`) and get skipped by
+ * the caller; the point of finding them is to NOT throw. node_modules/dist are
+ * pruned so we never match a hoisted dependency's package.json.
+ */
 function findPackageDir(npmName) {
-  const packagesRoot = join(REPO_ROOT, 'packages');
-  for (const type of readdirSync(packagesRoot)) {
-    const typeDir = join(packagesRoot, type);
-    if (!statSync(typeDir).isDirectory()) continue;
-    for (const folder of readdirSync(typeDir)) {
-      const pkgDir = join(typeDir, folder);
-      const pkgJsonPath = join(pkgDir, 'package.json');
-      if (!existsSync(pkgJsonPath)) continue;
-      const pj = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
-      if (pj.name === npmName) return pkgDir;
+  const SKIP = new Set(['node_modules', 'dist', '.git', '.vite']);
+  const stack = [join(REPO_ROOT, 'packages')];
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    const pkgJsonPath = join(dir, 'package.json');
+    if (existsSync(pkgJsonPath)) {
+      try {
+        const pj = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
+        if (pj.name === npmName) return dir;
+      } catch {
+        // unparseable package.json — ignore and keep walking
+      }
+    }
+    for (const entry of readdirSync(dir)) {
+      if (SKIP.has(entry)) continue;
+      const child = join(dir, entry);
+      if (statSync(child).isDirectory()) stack.push(child);
     }
   }
   throw new Error(`Could not locate local package dir for ${npmName}`);
