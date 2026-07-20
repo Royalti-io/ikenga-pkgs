@@ -197,6 +197,7 @@ import { parseFountain, type FountainBlock, type FountainDoc, type FountainScene
 import type { Anchor, Cell, EngineCapability, RenderRecord } from '../mcp-types';
 import { EmptyState } from '../components/EmptyState';
 import { recordByUid, engineLabel } from './composition/format';
+import { CellPoster, prefetchPosters } from './composition/CellPoster';
 
 // ─── local "The Forge" demo fixture (standalone/mock only) ───────────────
 
@@ -709,6 +710,15 @@ export function BreakdownView() {
         return cellToShot(c, trackForCell(c, engines), done);
       });
   }, [hasRealCells, hydratedCells, engines, recByUid]);
+
+  // Batch-prefetch the done-render posters so the board thumbs show the real
+  // frame (same seam Canvas uses — render.list_posters, one round trip) rather
+  // than a bare ember placeholder. `shot.record` is done-only, so this only
+  // ever asks for frames that genuinely finished.
+  useEffect(() => {
+    const ids = shots.map((s) => s.record?.id).filter((id): id is string => !!id);
+    if (ids.length > 0) prefetchPosters(ids);
+  }, [shots]);
 
   // Line↔shot linking — TAG-ONLY; unmatched paragraphs/shots unlinked (D-1a).
   const linking = useMemo(() => computeLinking(actionBlocks, shots), [actionBlocks, shots]);
@@ -1436,15 +1446,25 @@ export function BreakdownView() {
                   onMouseEnter={() => linkId && setActiveId(linkId)}
                   onMouseLeave={() => setActiveId((cur) => (cur === linkId ? null : cur))}
                 >
-                  {/* Ember glow (concept .shot-thumb) — warm key rising from the
-                      lower-left over bg-sunken, not a flat well. */}
+                  {/* Thumb — the real rendered frame when this shot has a done
+                      render (same poster seam as Canvas), else the ember glow
+                      (concept .shot-thumb): warm key rising from the lower-left
+                      over bg-sunken, not a flat well. The shot-type label always
+                      sits on top. */}
                   <div
-                    className="flex h-14 items-end justify-start rounded-sm border border-soft p-1"
+                    className="relative flex h-14 items-end justify-start overflow-hidden rounded-sm border border-soft p-1"
                     style={{
                       background: 'radial-gradient(120% 140% at 18% 100%, hsl(20,55%,20%) 0%, transparent 60%), var(--bg-sunken)',
                     }}
                   >
-                    <span className="font-mono text-[9px] tracking-wider text-fg-faint">{shot.shotType.toUpperCase()}</span>
+                    {shot.record?.id && (
+                      <CellPoster
+                        recordId={shot.record.id}
+                        alt={shot.shotId}
+                        className="absolute inset-0 h-full w-full object-cover"
+                      />
+                    )}
+                    <span className="relative font-mono text-[9px] tracking-wider text-fg-faint">{shot.shotType.toUpperCase()}</span>
                   </div>
                   <div className="flex min-w-0 flex-col gap-1">
                     <div className="flex flex-wrap items-center gap-2 font-mono text-[10.5px] text-fg-muted">
