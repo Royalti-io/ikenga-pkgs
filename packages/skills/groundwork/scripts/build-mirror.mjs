@@ -18,8 +18,30 @@
  *
  * Run `sync:from-dev` first so ./skills/groundwork/ is current.
  *
+ * --- Version-parity guard ---------------------------------------------
+ * This package's version is only trustworthy for the mirror once the
+ * Changesets release job has actually bumped it on ikenga-pkgs main. A
+ * human building the mirror from a checkout taken between "content PR
+ * merged" and "chore: version packages landed" will silently emit a
+ * mirror labelled with the PRE-bump version (see 2026-07-17: PR #41 merged
+ * with new content while package.json still read 0.4.0; mirror PR #3 was
+ * built + pushed 32s later from that same pre-bump tree; the version-bump
+ * commit landed 31s after THAT — the mirror shipped "0.4.0" carrying
+ * 0.5.0-worthy content). Two checks guard against repeating this:
+ *
+ *   1. (hermetic) Any pending .changeset/*.md entry that still targets
+ *      this package means main has unreleased content for it — the local
+ *      version is pre-bump by definition. Hard-fail.
+ *   2. (best-effort, network) Compare local version against the published
+ *      npm version. If npm's version is newer, the local checkout is
+ *      stale — hard-fail. If the registry is unreachable, warn and
+ *      continue (don't make a hermetic script hard-depend on the network).
+ *
+ * Pass --allow-version-drift to bypass both and build anyway.
+ *
  * Usage:
- *   node ./scripts/build-mirror.mjs [--out <dir>]   (default: ./dist-mirror)
+ *   node ./scripts/build-mirror.mjs [--out <dir>] [--allow-version-drift]
+ *   (--out default: ./dist-mirror)
  */
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, rmSync, existsSync, cpSync } from 'node:fs';
@@ -28,19 +50,28 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
+const REPO_ROOT = resolve(PKG_ROOT, '../../..');
 const SKILL_NAME = 'groundwork';
 const MIRROR_REPO = 'royalti-io/groundwork';
 
 const outIdx = process.argv.indexOf('--out');
 const OUT = outIdx !== -1 ? resolve(process.argv[outIdx + 1]) : join(PKG_ROOT, 'dist-mirror');
+const ALLOW_DRIFT = process.argv.includes('--allow-version-drift');
 
 const SYNCED = join(PKG_ROOT, 'skills', SKILL_NAME);
 
-function main() {
+async function main() {
   if (!existsSync(join(SYNCED, 'SKILL.md'))) {
     console.error(`[mirror] synced skill tree not found at ${SYNCED}`);
     console.error(`[mirror] run \`pnpm sync:from-dev\` first.`);
     process.exit(1);
+  }
+
+  const src = JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf8'));
+  if (!ALLOW_DRIFT) {
+    await checkVersionParity(src);
+  } else {
+    console.warn('[mirror] --allow-version-drift passed — skipping version-parity guard.');
   }
 
   // Clean rebuild of the output dir.
@@ -54,7 +85,6 @@ function main() {
   cpSync(join(PKG_ROOT, 'LICENSE'), join(OUT, 'LICENSE'));
 
   // 3. package.json — slimmed mirror (standalone repo, not a workspace member).
-  const src = JSON.parse(readFileSync(join(PKG_ROOT, 'package.json'), 'utf8'));
   const mirrorPkg = {
     name: src.name,
     version: src.version,
@@ -82,6 +112,77 @@ function main() {
   const fileCount = listFiles(OUT).length;
   console.log(`[mirror] emitted ${fileCount} files → ${OUT}`);
   console.log(`[mirror] next: review, then push to ${MIRROR_REPO} (gated on user approval).`);
+}
+
+// Guards against the publish-order race: building the mirror from a
+// checkout taken before the Changesets release commit bumped this
+// package's version. See the header comment for the incident this
+// reproduces.
+async function checkVersionParity(src) {
+  // 1. Hermetic check: any pending changeset still targeting this package
+  //    means the version bump for current content hasn't happened yet.
+  const changesetDir = join(REPO_ROOT, '.changeset');
+  if (existsSync(changesetDir)) {
+    const pending = readdirSync(changesetDir).filter(
+      (f) => f.endsWith('.md') && f.toLowerCase() !== 'readme.md'
+    );
+    const targeting = pending.filter((f) => {
+      const body = readFileSync(join(changesetDir, f), 'utf8');
+      return body.includes(`"${src.name}"`);
+    });
+    if (targeting.length > 0) {
+      console.error(
+        `[mirror] refusing to build: ${targeting.length} pending changeset(s) still target ${src.name}:`
+      );
+      for (const f of targeting) console.error(`[mirror]   - .changeset/${f}`);
+      console.error(
+        `[mirror] this means main has unreleased content for this package — package.json (${src.version}) is pre-bump.`
+      );
+      console.error(
+        '[mirror] wait for the Changesets release job ("chore: version packages") to land, `git pull`, then retry.'
+      );
+      console.error('[mirror] or pass --allow-version-drift to build anyway.');
+      process.exit(1);
+    }
+  }
+
+  // 2. Best-effort network check: local version vs. published npm version.
+  //    Warn (don't block) if the registry is unreachable — this script is
+  //    otherwise hermetic and shouldn't hard-depend on network access.
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    const res = await fetch(`https://registry.npmjs.org/${encodeURIComponent(src.name)}/latest`, {
+      signal: controller.signal,
+    });
+    clearTimeout(timeout);
+    if (!res.ok) {
+      console.warn(`[mirror] npm registry lookup for ${src.name} returned ${res.status} — skipping this check.`);
+      return;
+    }
+    const { version: published } = await res.json();
+    if (published && published !== src.version && isNewer(published, src.version)) {
+      console.error(
+        `[mirror] refusing to build: local version ${src.version} is behind the published npm version ${published}.`
+      );
+      console.error('[mirror] this checkout is stale — `git pull` on ikenga-pkgs main and retry.');
+      console.error('[mirror] or pass --allow-version-drift to build anyway.');
+      process.exit(1);
+    }
+  } catch (err) {
+    console.warn(`[mirror] could not reach npm registry to verify version parity (${err.message}) — continuing.`);
+  }
+}
+
+function isNewer(a, b) {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const da = pa[i] || 0;
+    const db = pb[i] || 0;
+    if (da !== db) return da > db;
+  }
+  return false;
 }
 
 function listFiles(dir, base = dir) {
@@ -241,4 +342,7 @@ example paths (\`plans/studio\` / \`plans/groundwork\`). They are illustrative; 
 [Apache-2.0](LICENSE). Copyright © 2026 Royalti.io.
 `;
 
-main();
+main().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
