@@ -1,5 +1,18 @@
 # @ikenga/pkg-studio
 
+## 0.5.0
+
+### Minor Changes
+
+- [#47](https://github.com/Royalti-io/ikenga-pkgs/pull/47) [`2fc3443`](https://github.com/Royalti-io/ikenga-pkgs/commit/2fc3443cb41a93669ca6669d2d920ebefe90798c) Thanks [@nedjamez](https://github.com/nedjamez)! - Breakdown board thumbs now show the real rendered frame for any shot with a
+  finished render, instead of the ember-glow placeholder.
+
+  Reuses the poster seam Canvas already uses — `CellPoster` for the image and
+  `prefetchPosters` for a single batched `render.list_posters` round trip on the
+  done-render ids. Because the prefetch is driven off `shot.record`, which is
+  done-only, it never asks for frames that have not finished. The shot-type label
+  is layered above the frame so it stays legible against real imagery.
+
 ## 0.4.0
 
 ### Minor Changes
