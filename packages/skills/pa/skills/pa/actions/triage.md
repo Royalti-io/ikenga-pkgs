@@ -21,13 +21,21 @@ inputs_schema:
 run:
   kind: chat_prompt
   prompt: |
-    # PA Triage — {{mode}}
+    # PA Triage
 
-    TODO (WP-12): Read untriaged `email_messages` (triage_category IS NULL or empty)
-    and/or unassigned `tasks` (status = 'pending', assigned_to IS NULL) via
-    host.dbQuery. Produce a structured triage plan (bucket assignments, delegate
-    targets, archive rationale) and pause for operator approval before any downstream
-    action. Do NOT write anything — triage decisions surface for approval only.
+    Read `ikenga.db` via host.dbQuery:
+    - `email_messages` where `triage_category` IS NULL or blank — untriaged inbox
+    - `tasks` where `status = 'pending'` and `assigned_to` IS NULL — unrouted queue
+    - `delegations` where `status = 'assigned'` — outstanding, may need a nudge
+    - `agent_handoffs` where `status = 'pending'` — cross-domain handoffs awaiting resolution
+
+    Default scope is all four sources above. If the operator narrowed this to a
+    specific queue (inbox only, or task queue only) before starting this session,
+    cover only that queue instead.
+
+    Produce a structured triage plan (bucket assignments, delegate targets, archive
+    rationale) and pause for operator approval before any downstream action. Do NOT
+    write anything — triage decisions surface for approval only.
 triggers:
   - kind: manual
   - kind: schedule
@@ -42,8 +50,18 @@ requires_capabilities:
 
 # action: triage
 
-> **WP-12 stub.** The YAML frontmatter above is the action declaration
-> (validates against `ActionFrontmatter`). The prose body lands in WP-12.
+> **2026-07-24 fix:** the `run.prompt` above previously shipped with a literal
+> `{{mode}}` mustache placeholder in its header. `dispatchAction()`
+> (`shell/src/components/pkg/actions/action-runner.ts`) seeds `promptTemplate`
+> verbatim into the session with no substitution engine on any dispatch path —
+> manual (`confirm`/`approve`) or `schedule`-triggered — so the raw
+> `{{mode}}` string leaked into 5 consecutive headless triage runs between
+> 2026-07-17 and 2026-07-24 (see mempalace memory
+> `project_pa_triage_mode_template_bug`). Fixed by dropping the unresolved
+> placeholder from the template rather than building a templating engine —
+> the prompt now reads as a self-contained instruction that defaults to
+> covering all four sources and narrows only if an operator edits it by hand
+> in the New-Session dialog before starting.
 
 ## What this action does (intent)
 
