@@ -452,14 +452,11 @@ export async function fetchProposalClusters() {
  * back from `email_index` (migration 0058), which resolves all 200 rows of the
  * largest cluster.
  *
- * THE `CASE` IS NOT INCIDENTAL. The two tables identify accounts differently:
- * `email_actions.account` stores the login (`chinedum@royalti.io`, written by
- * imap-triage/imap-propose from IMAP_*_USER) while `email_index.account` stores
- * the short account key (`royalti`, from the ACCOUNTS map in imap-ingest.ts).
- * Joining on account alone silently produces zero matches; joining on uid+folder
- * WITHOUT the account would cross-match mailboxes, since every INBOX has
- * overlapping UID ranges. Normalising this to one identifier is logged as a
- * follow-up — until then the mapping has to be explicit here.
+ * Joining on uid+folder WITHOUT the account would cross-match mailboxes, since
+ * every INBOX has overlapping UID ranges — the account term is load-bearing.
+ * Both tables store the short account key ('royalti', 'dixtrit', …) since the
+ * 2026-07-29 normalisation; email_actions rows used to carry the IMAP login and
+ * needed a CASE here to bridge.
  *
  * Kept as a separate query so the cluster list stays cheap; runs only on expand.
  */
@@ -477,13 +474,7 @@ export async function fetchProposalMessages(runId, cluster, limit = 200) {
     LEFT JOIN email_index ei
       ON ei.uid     = a.uid
      AND ei.folder  = a.src_folder
-     AND ei.account = CASE a.account
-           WHEN 'chinedum@royalti.io'    THEN 'royalti'
-           WHEN 'chinedum@dixtrit.media' THEN 'dixtrit'
-           WHEN 'hello@royalti.io'       THEN 'hello_royalti'
-           WHEN 'hello@dixtrit.media'    THEN 'hello_dixtrit'
-           WHEN 'ruby@royalti.io'        THEN 'ruby'
-         END
+     AND ei.account = a.account
     WHERE a.status = 'proposed' AND a.run_id = ? AND a.cluster = ?
     ORDER BY a.uid
     LIMIT ?
