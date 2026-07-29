@@ -466,3 +466,166 @@
 /* Mail tag colours are owned by the app-kit (.tag-deal/.tag-warn/.tag-system/
  * .tag-primary all reference @ikenga/tokens). No mail-local override needed —
  * the previous overrides used a non-token `--amber` and silently fell back. */
+
+/* ─── Tier-B proposals ──────────────────────────────────────────────────────
+   Approval surface for email_actions rows at status='proposed'. Built on the
+   existing token set only (no new custom properties) so the planned mail-app
+   revamp can restyle it without unpicking a private palette. */
+
+.proposal-wrap {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+
+/* Header is fixed furniture — never let it absorb the shrink. */
+.proposal-wrap > .mail-list-head { flex-shrink: 0; }
+
+/* Owns the scroll axis. `flex: 1` is load-bearing: without it this box is
+   flex: 0 1 auto inside .proposal-wrap, so it never claims the free space and
+   instead SHRINKS — squashing the cards rather than scrolling them. */
+.proposal-scroll {
+  overflow-y: auto;
+  padding: var(--space-3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+  min-height: 0;
+}
+
+/* `flex-shrink: 0` is the fix for clipped rows. As a flex item in a column
+   container, a card defaults to flex-shrink:1 — when the pane is shorter than
+   the list, every card gets compressed below its content height and the text
+   clips, instead of the container scrolling. Shrinking must be off for the
+   overflow on .proposal-scroll to engage at all. */
+.proposal-card {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.proposal-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3);
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+
+.proposal-head:hover { background: var(--bg-sunken); }
+.proposal-head:focus-visible { outline: 2px solid var(--color-ring-primary); outline-offset: -2px; }
+
+/* Tabular numerals keep the count column aligned down a long list. */
+.proposal-n {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  min-width: 3.5ch;
+  text-align: right;
+}
+
+.proposal-cluster { font-weight: 600; flex: 1; min-width: 12rem; }
+.proposal-arrow { color: var(--fg-muted); font-size: 0.8125rem; }
+
+.proposal-body {
+  padding: 0 var(--space-3) var(--space-3);
+  border-top: 1px solid var(--border-soft);
+}
+
+.proposal-ev {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  margin: var(--space-3) 0;
+  font-size: 0.8125rem;
+}
+.proposal-ev div { color: var(--fg-muted); }
+.proposal-ev b {
+  color: var(--fg);
+  font-family: var(--font-mono);
+}
+
+/* Held-back notice. Deliberately high-contrast: it is the one piece of context
+   that changes what approving actually does. */
+.proposal-hold {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--color-background-warning));
+  color: var(--color-text-warning);
+  font-size: 0.8125rem;
+  margin-bottom: var(--space-2);
+}
+
+.proposal-samples {
+  margin: var(--space-2) 0 0;
+  padding-left: 1.125rem;
+  color: var(--fg-muted);
+  font-size: 0.8125rem;
+}
+
+.proposal-details { margin-top: var(--space-3); font-size: 0.8125rem; }
+.proposal-details summary { cursor: pointer; color: var(--fg-muted); }
+
+.proposal-msg-scroll {
+  max-height: 16rem;
+  overflow-y: auto;
+  margin-top: var(--space-2);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+}
+
+.proposal-msg {
+  display: flex;
+  gap: var(--space-3);
+  align-items: baseline;
+  padding: 5px var(--space-2);
+  border-bottom: 1px solid var(--border-soft);
+}
+.proposal-msg:last-child { border-bottom: 0; }
+
+.proposal-msg-uid {
+  font-family: var(--font-mono);
+  color: var(--fg-muted);
+  white-space: nowrap;
+}
+.proposal-msg-subject {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.proposal-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+  flex-wrap: wrap;
+}
+.proposal-actions-note {
+  color: var(--fg-muted);
+  font-size: 0.75rem;
+  flex: 1;
+  min-width: 14rem;
+}
+
+.proposal-queued {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunken);
+  color: var(--fg-muted);
+  font-size: 0.8125rem;
+}
+
+.proposal-decided { padding: 0 var(--space-1); }

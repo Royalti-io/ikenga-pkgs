@@ -35,6 +35,12 @@ import {
   markUnread,
   snoozeThread,
   setThreadTags,
+  fetchProposalClusters,
+  fetchProposalMessages,
+  fetchProposalCount,
+  fetchDecidedClusters,
+  approveCluster,
+  rejectCluster,
 } from '../../lib/queries.js';
 import { applyFacet, RESET_FACET } from '../../lib/facet-filter.js';
 
@@ -45,6 +51,10 @@ const VIEW_ITEMS = [
   { id: 'v:triage', label: 'Triage',  icon: 'filter' },
   { id: 'v:all',    label: 'All',     icon: 'mail'   },
   { id: 'v:drafts', label: 'Drafts',  icon: 'file-text' },
+  // Tier-B mailbox proposals awaiting approval. Not a mail view — it reads
+  // email_actions, not email_messages — but it belongs in Mail because it is
+  // mailbox triage, and the shell menu is the only nav surface this pkg has.
+  { id: 'v:proposals', label: 'Proposals', icon: 'inbox' },
 ];
 
 // "Threads" group: two grouping modes (By person / By tag re-section the list)
@@ -94,12 +104,13 @@ const FACET_PREDICATES = {
  * @param {number} draftCount
  * @param {Record<string, number>} facetCounts  live counts per facet id
  */
-function buildMailMenu(view, groupMode, activeFacet, unreadCount, triageCount, snoozedCount, draftCount, facetCounts = {}) {
+function buildMailMenu(view, groupMode, activeFacet, unreadCount, triageCount, snoozedCount, draftCount, facetCounts = {}, proposalCount = 0) {
   const viewRows = VIEW_ITEMS.map((it) => {
     let badge;
     if (it.id === 'v:inbox' && unreadCount > 0) badge = unreadCount;
     if (it.id === 'v:triage' && triageCount > 0) badge = triageCount;
     if (it.id === 'v:drafts' && draftCount > 0) badge = draftCount;
+    if (it.id === 'v:proposals' && proposalCount > 0) badge = proposalCount;
     return {
       ...it,
       section: 'View',
@@ -692,6 +703,240 @@ function ReaderPane({ className,  messageId, queryClient, onBack, onPrev, onNext
 
 const VIEW_STORAGE_KEY = 'ikenga-mail-view';
 
+
+// ─── Tier-B proposals ────────────────────────────────────────────────────────
+//
+// Approval surface for `email_actions` rows sitting at status='proposed'. These
+// are mailbox moves that imap-propose.ts scored but deliberately refused to
+// execute: deletes, unsubscribes, human threads, unfamiliar high-volume senders.
+//
+// Approving flips a status. It does NOT move mail — `imap-propose.ts
+// --execute-approved` does that on cron. That split is intentional: executing
+// from here would need `shell.execute` on a UI pkg, a far larger trust ask than
+// a status update on a local table.
+//
+// NOTE (2026-07-26): the mail pkg is slated for a redesign. This component is
+// deliberately self-contained and leans on existing app-kit primitives so the
+// revamp can restyle or relocate it without re-deriving the SQL or the guards.
+
+/** Cluster evidence as a compact stat strip. */
+function ProposalEvidence({ evidence }) {
+  if (!evidence) return null;
+  const stats = [
+    ['total', evidence.total],
+    ['replied-to', evidence.threaded],
+    ['no-reply', evidence.noreply],
+    ['list-unsub', evidence.listUnsub],
+    ['thread ratio', evidence.threadRatio],
+  ].filter(([, v]) => v != null);
+  if (!stats.length) return null;
+  return html`
+    <div class="proposal-ev">
+      ${stats.map(([label, value]) => html`
+        <div key=${label}><span>${label}</span> <b>${value}</b></div>
+      `)}
+    </div>
+  `;
+}
+
+/**
+ * One sender cluster awaiting a decision.
+ *
+ * The held-back count is surfaced prominently rather than buried: imap-propose.ts
+ * keeps action-required messages (failed payments, security alerts, "action
+ * required") in INBOX even when their cluster files. A card that showed only the
+ * movable count would read as "this is the whole cluster" when it is not.
+ */
+function ProposalCard({ row, isOpen, onToggle, onApprove, onReject, busy }) {
+  const { run_id, cluster, dest_folder, n, evidence, held, rule } = row;
+
+  const { data: messages = [], isLoading: msgsLoading } = useQuery({
+    queryKey: ['mail', 'proposal-messages', run_id, cluster],
+    queryFn: () => fetchProposalMessages(run_id, cluster),
+    enabled: isOpen,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+
+  const isUnsub = rule === 'propose:unsubscribe';
+
+  return html`
+    <div class=${cn('proposal-card', { 'is-open': isOpen })}>
+      <div
+        class="proposal-head"
+        role="button"
+        tabIndex=${0}
+        aria-expanded=${isOpen}
+        onClick=${onToggle}
+        onKeyDown=${(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(); } }}
+      >
+        <span class="proposal-n">${n}</span>
+        <span class="proposal-cluster">${cluster}</span>
+        <span class="proposal-arrow">
+          ${isUnsub ? 'unsubscribe' : html`→ ${dest_folder ?? '—'}`}
+        </span>
+        <span class="tag">proposed</span>
+      </div>
+
+      ${isOpen ? html`
+        <div class="proposal-body">
+          <${ProposalEvidence} evidence=${evidence} />
+
+          ${held > 0 ? html`
+            <div class="proposal-hold">
+              <${Icon} name="alert-triangle" size=${14} />
+              <span>
+                ${held} message${held === 1 ? '' : 's'} held back in INBOX
+                (action-required subjects — failed payments, security alerts).
+                Only ${n} would move.
+              </span>
+            </div>
+          ` : null}
+
+          ${evidence?.sample?.length ? html`
+            <ul class="proposal-samples">
+              ${evidence.sample.map((s, i) => html`<li key=${i}>${s}</li>`)}
+            </ul>
+          ` : null}
+
+          ${isOpen && msgsLoading ? html`<${FeedbackState} state="loading" message="Loading messages…" />` : null}
+          ${isOpen && !msgsLoading && messages.length > 0 ? html`
+            <details class="proposal-details">
+              <summary>Inspect ${messages.length} subject${messages.length === 1 ? '' : 's'}</summary>
+              <div class="proposal-msg-scroll">
+                ${messages.map((m) => html`
+                  <div class="proposal-msg" key=${m.id}>
+                    <span class="proposal-msg-uid">uid ${m.uid ?? '—'}</span>
+                    <span class="proposal-msg-subject">${m.subject ?? '(no subject recorded)'}</span>
+                  </div>
+                `)}
+              </div>
+            </details>
+          ` : null}
+
+          <div class="proposal-actions">
+            <button
+              class="btn btn-sm btn-primary"
+              disabled=${busy}
+              onClick=${(e) => { e.stopPropagation(); onApprove(); }}
+            >
+              <${Icon} name="check" size=${14} /> Approve
+            </button>
+            <button
+              class="btn btn-sm"
+              disabled=${busy}
+              onClick=${(e) => { e.stopPropagation(); onReject(); }}
+            >
+              <${Icon} name="x" size=${14} /> Reject
+            </button>
+            <span class="proposal-actions-note">
+              ${'Approving queues the move; '}<code>imap-propose.ts --execute-approved</code>${' runs it on the next cron pass.'}
+            </span>
+          </div>
+        </div>
+      ` : null}
+    </div>
+  `;
+}
+
+/** The Proposals view — cluster list + decided queue. */
+function ProposalsView({ queryClient }) {
+  const [openKey, setOpenKey] = useState(null);
+
+  const { data: clusters = [], isLoading, error } = useQuery({
+    queryKey: ['mail', 'proposal-clusters'],
+    queryFn: fetchProposalClusters,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+
+  const { data: decided = [] } = useQuery({
+    queryKey: ['mail', 'proposal-decided'],
+    queryFn: fetchDecidedClusters,
+    staleTime: 30_000,
+    refetchOnWindowFocus: false,
+  });
+
+  // One mutation for both verbs. On settle, refresh the pending list, the
+  // decided list and the nav badge together — a decision changes all three, and
+  // leaving any stale would show a cluster the user just actioned.
+  const decide = useMutation({
+    mutationFn: ({ runId, cluster, verb }) =>
+      verb === 'approve' ? approveCluster(runId, cluster) : rejectCluster(runId, cluster),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mail', 'proposal-clusters'] });
+      queryClient.invalidateQueries({ queryKey: ['mail', 'proposal-decided'] });
+      queryClient.invalidateQueries({ queryKey: ['mail', 'counts'] });
+    },
+  });
+
+  const pendingMessages = clusters.reduce((a, c) => a + (c.n ?? 0), 0);
+  const approvedPending = decided
+    .filter((d) => d.status === 'approved')
+    .reduce((a, d) => a + (d.n ?? 0), 0);
+
+  return html`
+    <div class="proposal-wrap">
+      <div class="mail-list-head">
+        <div class="mail-list-head-title">Mailbox proposals</div>
+        <div class="mail-list-head-meta">
+          ${`${pendingMessages} message${pendingMessages === 1 ? '' : 's'} across ` +
+            `${clusters.length} cluster${clusters.length === 1 ? '' : 's'}`}
+        </div>
+      </div>
+
+      <div class="proposal-scroll">
+        ${isLoading ? html`<${FeedbackState} state="loading" message="Loading proposals…" />` : null}
+        ${error ? html`<${FeedbackState} state="error" message=${error.message} />` : null}
+        ${decide.isError ? html`<${FeedbackState} state="error" message=${decide.error?.message ?? 'Failed to record the decision.'} />` : null}
+        ${!isLoading && !error && clusters.length === 0
+          ? html`<${FeedbackState} state="empty" message="No proposals awaiting review." />`
+          : null}
+
+        ${clusters.map((row) => {
+          const key = `${row.run_id}:${row.cluster}`;
+          return html`
+            <${ProposalCard}
+              key=${key}
+              row=${row}
+              isOpen=${openKey === key}
+              busy=${decide.isPending}
+              onToggle=${() => setOpenKey(openKey === key ? null : key)}
+              onApprove=${() => decide.mutate({ runId: row.run_id, cluster: row.cluster, verb: 'approve' })}
+              onReject=${() => decide.mutate({ runId: row.run_id, cluster: row.cluster, verb: 'reject' })}
+            />
+          `;
+        })}
+
+        ${approvedPending > 0 ? html`
+          <div class="proposal-queued">
+            <${Icon} name="clock" size=${14} />
+            <span>
+              ${approvedPending} message${approvedPending === 1 ? '' : 's'} approved and queued —
+              they move on the next <code>mail:execute-approved</code> run.
+            </span>
+          </div>
+        ` : null}
+
+        ${decided.length > 0 ? html`
+          <details class="proposal-details proposal-decided">
+            <summary>Decided (${decided.length} cluster${decided.length === 1 ? '' : 's'})</summary>
+            <div class="proposal-msg-scroll">
+              ${decided.map((d) => html`
+                <div class="proposal-msg" key=${`${d.run_id}:${d.cluster}:${d.status}`}>
+                  <span class="tag">${d.status}</span>
+                  <span class="proposal-msg-subject">${d.cluster}</span>
+                  <span class="proposal-msg-uid">${d.n}</span>
+                </div>
+              `)}
+            </div>
+          </details>
+        ` : null}
+      </div>
+    </div>
+  `;
+}
+
 export function MailView({ activeFeature }) {
   const queryClient = useQueryClient();
 
@@ -770,13 +1015,14 @@ export function MailView({ activeFeature }) {
   });
 
   // Badge counts
-  const { data: counts = { unread: 0, triage: 0, snoozed: 0, drafts: 0 } } = useQuery({
+  const { data: counts = { unread: 0, triage: 0, snoozed: 0, drafts: 0, proposals: 0 } } = useQuery({
     queryKey: ['mail', 'counts'],
     queryFn: async () => ({
       unread: await fetchUnreadCount(),
       triage: await fetchTriageCount(),
       snoozed: await fetchSnoozedCount(),
       drafts: await fetchDraftCount(),
+      proposals: await fetchProposalCount(),
     }),
     staleTime: 15_000,
     refetchOnWindowFocus: false,
@@ -802,9 +1048,9 @@ export function MailView({ activeFeature }) {
   // Publish side-menu
   useEffect(() => {
     if (isStandalone()) return;
-    setMenu(buildMailMenu(view, groupMode, activeFacet, counts.unread, counts.triage, counts.snoozed, counts.drafts, facetCounts))
+    setMenu(buildMailMenu(view, groupMode, activeFacet, counts.unread, counts.triage, counts.snoozed, counts.drafts, facetCounts, counts.proposals))
       .catch(() => {});
-  }, [view, groupMode, activeFacet, counts.unread, counts.triage, counts.snoozed, counts.drafts, facetCounts]);
+  }, [view, groupMode, activeFacet, counts.unread, counts.triage, counts.snoozed, counts.drafts, facetCounts, counts.proposals]);
 
   // Publish iyke state for external observers
   useEffect(() => {
@@ -876,6 +1122,30 @@ export function MailView({ activeFeature }) {
         drafts: `${counts.drafts} drafts`,
         snoozed: `${counts.snoozed} snoozed`,
       }[view] ?? `${threads.length} threads`);
+
+  // Proposals is a different domain (email_actions, not email_messages) with no
+  // thread list and no reader, so it returns its own frame rather than threading
+  // conditionals through the mail markup. Compose and the unread badge are
+  // deliberately absent — neither applies to approving mailbox moves.
+  if (view === 'proposals') {
+    return html`
+      <div class="frame" data-workspace="mail">
+        <div class="frame-head">
+          <div class="frame-title-wrap">
+            <span class="frame-title-mark" aria-hidden="true">
+              <${Icon} name="inbox" size=${16} />
+            </span>
+            <h1 class="frame-title">
+              Proposals${counts.proposals > 0 ? html` · <span class="badge">${counts.proposals} pending</span>` : null}
+            </h1>
+          </div>
+        </div>
+        <div class="frame-body-flush">
+          <${ProposalsView} queryClient=${queryClient} />
+        </div>
+      </div>
+    `;
+  }
 
   return html`
     <div class="frame" data-workspace="mail">

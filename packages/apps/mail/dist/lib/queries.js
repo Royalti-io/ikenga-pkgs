@@ -385,3 +385,159 @@ function htmlToText(htmlStr) {
     .replace(/^[ \t]+|[ \t]+$/gm, '')
     .trim();
 }
+
+// ─── Tier-B mailbox proposals ────────────────────────────────────────────────
+//
+// `email_actions` (migration 0056) is the audit + undo log for server-side IMAP
+// triage. Tier-A rows land as 'applied'; Tier-B rows land as 'proposed' and only
+// execute once a human approves them. This section is the approval surface.
+//
+// WHY THIS LIVES IN THE PKG AND NOT THE ARTIFACT
+// `dashboards/email-proposals/index.html` renders the same data but is an Ikenga
+// *artifact*, and the artifact bridge (shell/src/lib/artifact/bridge.ts) is
+// read-only by construction — `sql`/`supabase` sources resolve to mock and there
+// is no host RPC. `host.dbExec` is a pkg-iframe verb, so approving has to happen
+// here. The artifact stays as a standalone read-only overview.
+//
+// EXECUTION IS DELIBERATELY NOT HERE. Approving only flips a status; the moves
+// are performed by `imap-propose.ts --execute-approved` on cron. Giving a UI pkg
+// `shell.execute` to fire IMAP mutations is a far larger trust ask than a status
+// update on a local table.
+
+/**
+ * Pending Tier-B proposals, grouped the way they were generated: per sender
+ * cluster, not per message, so hundreds of messages approve in one action.
+ *
+ * `evidence` is JSON written by imap-propose.ts (counts + subject samples that
+ * justified the proposal). It is parsed here so the view never re-derives it.
+ */
+export async function fetchProposalClusters() {
+  const sql = `
+    SELECT
+      run_id,
+      account,
+      cluster,
+      rule,
+      action,
+      dest_folder,
+      status,
+      COUNT(*)        AS n,
+      MIN(applied_at) AS proposed_at,
+      MAX(evidence)   AS evidence
+    FROM email_actions
+    WHERE status = 'proposed'
+    GROUP BY run_id, account, cluster, rule, action, dest_folder, status
+    ORDER BY n DESC
+  `;
+  const rows = await hostDbQuery(sql, []);
+  return rows.map((r) => {
+    let evidence = null;
+    try { evidence = r.evidence ? JSON.parse(r.evidence) : null; } catch { evidence = null; }
+    // `held` = messages in the cluster that imap-propose.ts deliberately kept in
+    // INBOX (action-required subjects: failed payments, security alerts). A UI
+    // that hides this reads as "this is the whole cluster" when it is not.
+    const total = evidence?.total ?? null;
+    const held = total != null ? Math.max(0, total - r.n) : 0;
+    return { ...r, evidence, held };
+  });
+}
+
+/**
+ * The individual messages behind one cluster, so a reviewer can spot-check
+ * before approving hundreds of moves.
+ *
+ * Proposal rows carry NULL subject/from — imap-propose.ts proposes per cluster,
+ * not per message — so on their own they render as a list of bare UIDs, which is
+ * a rubber-stamp affordance rather than a review one. The subjects are joined
+ * back from `email_index` (migration 0058), which resolves all 200 rows of the
+ * largest cluster.
+ *
+ * THE `CASE` IS NOT INCIDENTAL. The two tables identify accounts differently:
+ * `email_actions.account` stores the login (`chinedum@royalti.io`, written by
+ * imap-triage/imap-propose from IMAP_*_USER) while `email_index.account` stores
+ * the short account key (`royalti`, from the ACCOUNTS map in imap-ingest.ts).
+ * Joining on account alone silently produces zero matches; joining on uid+folder
+ * WITHOUT the account would cross-match mailboxes, since every INBOX has
+ * overlapping UID ranges. Normalising this to one identifier is logged as a
+ * follow-up — until then the mapping has to be explicit here.
+ *
+ * Kept as a separate query so the cluster list stays cheap; runs only on expand.
+ */
+export async function fetchProposalMessages(runId, cluster, limit = 200) {
+  const sql = `
+    SELECT
+      a.id,
+      a.uid,
+      a.src_folder,
+      a.dest_folder,
+      COALESCE(a.subject, ei.subject)           AS subject,
+      COALESCE(a.from_address, ei.from_address)  AS from_address,
+      ei.date_sent
+    FROM email_actions a
+    LEFT JOIN email_index ei
+      ON ei.uid     = a.uid
+     AND ei.folder  = a.src_folder
+     AND ei.account = CASE a.account
+           WHEN 'chinedum@royalti.io'    THEN 'royalti'
+           WHEN 'chinedum@dixtrit.media' THEN 'dixtrit'
+           WHEN 'hello@royalti.io'       THEN 'hello_royalti'
+           WHEN 'hello@dixtrit.media'    THEN 'hello_dixtrit'
+           WHEN 'ruby@royalti.io'        THEN 'ruby'
+         END
+    WHERE a.status = 'proposed' AND a.run_id = ? AND a.cluster = ?
+    ORDER BY a.uid
+    LIMIT ?
+  `;
+  return hostDbQuery(sql, [runId, cluster, limit]);
+}
+
+/**
+ * Approve or reject a whole cluster.
+ *
+ * The `status = 'proposed'` guard is load-bearing, not defensive noise: it makes
+ * a double-click or a stale view a no-op instead of resurrecting rows that were
+ * already executed ('applied') or previously decided. Without it, re-approving
+ * an executed cluster would queue its moves a second time.
+ */
+async function setClusterStatus(runId, cluster, status) {
+  if (status !== 'approved' && status !== 'rejected') {
+    throw new Error(`refusing to set unknown proposal status: ${status}`);
+  }
+  await hostDbExec(
+    `UPDATE email_actions SET status = ?
+      WHERE run_id = ? AND cluster = ? AND status = 'proposed'`,
+    [status, runId, cluster],
+  );
+}
+
+export function approveCluster(runId, cluster) {
+  return setClusterStatus(runId, cluster, 'approved');
+}
+
+export function rejectCluster(runId, cluster) {
+  return setClusterStatus(runId, cluster, 'rejected');
+}
+
+/** Count of clusters/messages still awaiting a decision — drives the nav badge. */
+export async function fetchProposalCount() {
+  const rows = await hostDbQuery(
+    `SELECT COUNT(*) AS n FROM email_actions WHERE status = 'proposed'`, [],
+  );
+  return rows[0]?.n ?? 0;
+}
+
+/**
+ * Clusters already decided but not yet executed by the cron job, so the view can
+ * show that an approval landed and is queued rather than silently vanishing.
+ */
+export async function fetchDecidedClusters() {
+  const sql = `
+    SELECT run_id, account, cluster, status, dest_folder, COUNT(*) AS n
+    FROM email_actions
+    WHERE status IN ('approved', 'rejected')
+    GROUP BY run_id, account, cluster, status, dest_folder
+    ORDER BY status, n DESC
+    LIMIT 50
+  `;
+  return hostDbQuery(sql, []);
+}
