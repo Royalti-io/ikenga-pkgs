@@ -3,7 +3,7 @@
 
 Brief template the `research` action passes to a spawned `general-purpose` agent.
 
-The action does the substitution (`{goal}`, `{profile}`, `{scope}`, `{target_file}`) and passes the populated brief as the agent prompt.
+The action does the substitution (`{goal}`, `{profile}`, `{scope}`, `{target_file}`, `{plan_folder}`, `{journal_path}`, `{stamp}`) and passes the populated brief as the agent prompt. `{stamp}` is today's date — the action reads the clock and substitutes it, because a spawned agent can't reliably know the date.
 
 ---
 
@@ -18,6 +18,21 @@ SCOPE:     {scope}              # "external" | "internal" | "both"
 TARGET:    {target_file}        # e.g. "02-research-external.md"
 
 WHAT TO DO
+
+0. FIRST, before any searching, create your journal file at {journal_path} with this skeleton:
+
+   # research journal · {scope} · {stamp}
+   goal: {goal}
+
+   ## findings
+   ## sources
+
+   Then append to it after EVERY search — not at the end. One append per search:
+   the finding under `## findings`, the URL or path:line under `## sources`.
+   Every third search, append a `### checkpoint N` line summarising what you have
+   so far. This file is your crash insurance: if this session is truncated, the
+   journal is the only thing that survives, and the whole pass is re-done from
+   nothing without it. A journal that is only written at the end is worthless.
 
 1. Read 01-plan.md in the plan folder (path: {plan_folder}/01-plan.md). Understand what's being planned.
 2. If {scope} includes "external", do an external research pass:
@@ -49,7 +64,7 @@ WHAT TO DO
 
 WHAT NOT TO DO
 
-- Do NOT edit any file in the plan folder. Return content to the caller; the action writes it.
+- Do NOT edit any file in the plan folder EXCEPT your own journal at {journal_path}. The journal is scratch, not a plan doc — it sits outside every `groundwork:auto` fence and the action never hashes it. Everything else: return content to the caller; the action writes it.
 - Do NOT speculate without a citation. If you couldn't find a source, omit the claim.
 - Do NOT recommend implementation — you're researching, not designing.
 - Do NOT exceed scope. If {scope} is "external", you don't read the project tree.
