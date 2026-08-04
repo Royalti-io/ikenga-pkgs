@@ -16,7 +16,8 @@
 1. **Verify**: `.groundwork.json` exists. If not, refuse and tell the user to run `init`.
 2. **Read state**: load `.groundwork.json`. Pull goal + profile + current ids.
 3. **Scope the pass**: ask the user (`AskUserQuestion`) whether to run external-only, internal-only, or both. Default: both, if both files exist and have empty findings; otherwise whichever is empty/stale.
-4. **Spawn the researcher** — use `Agent` with `subagent_type: "general-purpose"` (or `Explore` if read-only). Pass the brief in `agents/researcher.md` populated with `{goal, profile, scope, target_file}`.
+3b. **Check for a stranded journal** — see §"Crash durability" below. If `.research-journal-<scope>.md` exists in the plan folder, a previous pass died before folding. Show the user what it holds and ask whether to fold it as-is, resume from it, or discard and start clean. Do not silently overwrite it.
+4. **Spawn the researcher** — use `Agent` with `subagent_type: "general-purpose"` (or `Explore` if read-only). Pass the brief in `agents/researcher.md` populated with `{goal, profile, scope, target_file, journal_path, stamp}`. Substitute `{stamp}` with today's date yourself — the agent can't read the clock.
 5. **Fold the result via the script** — the agent returns structured findings + sources. Write each into its fence with `write-region` (one call per region); the script hash-diffs and reports `WRITTEN` / `UNCHANGED` / `SKIPPED_DIRTY` — never hand-edit the file or its hashes:
 
    ```bash
@@ -29,6 +30,34 @@
    On `SKIPPED_DIRTY`, surface the hint to the user (they hand-edited inside the fence) and pass `--force` only with their say-so.
 6. **Stamp** via the script (don't hand-edit the anchor): `python3 <skill>/scripts/groundwork_state.py stamp-research --plan <plan> --file 02-research-external.md` (and `03-…` if internal ran).
 7. **Report**: print each fence's `write-region` result (which were `WRITTEN` vs `UNCHANGED`).
+8. **Clear the journal** — only after step 6 stamps successfully, delete `.research-journal-<scope>.md`. While it exists, it means "a pass ran and was never folded."
+
+---
+
+## Crash durability
+
+The fold in step 5 happens **once, at the end**. That is correct for the fence
+hash contract — but on its own it means a session truncated mid-pass loses every
+search the agent already did, and the next run starts from nothing. Web research
+is the most expensive thing groundwork does and the easiest to lose.
+
+So the researcher keeps a **journal** and writes to it as it goes:
+
+- **Path**: `<plan_folder>/.research-journal-<scope>.md` (dotfile, plan-local).
+  Under `--sweep`, one per angle: `.research-journal-<angle>.md`, so concurrent
+  finders never clobber each other.
+- **Written before the first search**, appended after *every* search, with a
+  checkpoint summary every third. Not batched at the end — batching it defeats
+  the entire point.
+- **Outside every `groundwork:auto` fence.** It is scratch, never hashed, never
+  stamped, and doesn't touch the "the agent never edits plan docs" rule, which
+  is about the fenced spine files.
+- **Existence is the signal.** A journal present at action start (step 3b) means
+  the last pass died before folding. Offer to fold it as-is, resume from it, or
+  discard. Deleted in step 8 once the fold has stamped.
+
+Add `.research-journal-*.md` to the workspace ignore rules if plan folders are
+tracked — the journal is transient by design and shouldn't land in a commit.
 
 ---
 
