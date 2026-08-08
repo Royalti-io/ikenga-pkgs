@@ -15,6 +15,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { devinStatus } from './devin.js';
+import { delegateTask, getTask, cancelTask, listTasks } from './ledger.js';
 
 const PKG_ID = 'com.ikenga.mcp-devin';
 
@@ -155,7 +156,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
 }));
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name } = request.params;
+  const { name, arguments: args } = request.params;
+  const a = (args ?? {}) as Record<string, unknown>;
+
   switch (name) {
     case 'devin_status': {
       const status = await devinStatus();
@@ -165,17 +168,109 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         _meta: { version: 'version' in status ? status.version : undefined },
       };
     }
-    case 'devin_run':
-    case 'devin_list_sessions':
-    case 'devin_resume':
-    case 'devin_delegate':
-    case 'devin_delegate_status':
-    case 'devin_delegate_cancel': {
+
+    case 'devin_run': {
+      // One-shot: delegate and wait. Exposed separately so callers can fire a
+      // quick synchronous run without polling. Backed by the same ledger.
+      const result = await delegateTask({
+        brief: String(a.prompt ?? a.brief ?? ''),
+        cwd: a.cwd ? String(a.cwd) : undefined,
+        mode: a.mode ? String(a.mode) : undefined,
+        model: a.model ? String(a.model) : undefined,
+        session_id: a.session_id ? String(a.session_id) : undefined,
+        timeout_seconds: typeof a.timeout_seconds === 'number' ? a.timeout_seconds : undefined,
+      });
       return {
-        content: [{ type: 'text', text: `not_implemented: ${name} not yet wired` }],
-        isError: true,
+        content: [{ type: 'text', text: JSON.stringify(result) }],
+        isError: result.status === 'failed',
       };
     }
+
+    case 'devin_list_sessions': {
+      const records = listTasks().map((r) => ({
+        task_id: r.task_id,
+        status: r.status,
+        brief: r.brief.slice(0, 120),
+        started_at: r.started_at,
+        ended_at: r.ended_at,
+        chi_run_id: r.chi_run_id,
+      }));
+      return {
+        content: [{ type: 'text', text: JSON.stringify(records) }],
+      };
+    }
+
+    case 'devin_resume': {
+      // Resume means delegating again with a session_id that points to an
+      // existing Devin session.
+      const session_id = a.session_id ? String(a.session_id) : undefined;
+      if (!session_id) {
+        return { content: [{ type: 'text', text: 'session_id required for devin_resume' }], isError: true };
+      }
+      const result = await delegateTask({
+        brief: String(a.prompt ?? a.brief ?? ''),
+        cwd: a.cwd ? String(a.cwd) : undefined,
+        session_id,
+        mode: a.mode ? String(a.mode) : undefined,
+        model: a.model ? String(a.model) : undefined,
+        timeout_seconds: typeof a.timeout_seconds === 'number' ? a.timeout_seconds : undefined,
+      });
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result) }],
+        isError: result.status === 'failed',
+      };
+    }
+
+    case 'devin_delegate': {
+      const result = await delegateTask({
+        brief: String(a.brief ?? ''),
+        cwd: a.cwd ? String(a.cwd) : undefined,
+        mode: a.mode ? String(a.mode) : undefined,
+        model: a.model ? String(a.model) : undefined,
+        session_id: a.session_id ? String(a.session_id) : undefined,
+        attach_files: Array.isArray(a.attach_files)
+          ? (a.attach_files as string[]).filter((f) => typeof f === 'string')
+          : undefined,
+        timeout_seconds: typeof a.timeout_seconds === 'number' ? a.timeout_seconds : undefined,
+      });
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ task_id: result.task_id, status: result.status }) }],
+        isError: result.status === 'failed',
+      };
+    }
+
+    case 'devin_delegate_status': {
+      const task_id = String(a.task_id ?? '');
+      const record = getTask(task_id);
+      if (!record) {
+        return { content: [{ type: 'text', text: 'task_not_found' }], isError: true };
+      }
+      return {
+        content: [{
+          type: 'text',
+          text: JSON.stringify({
+            task_id: record.task_id,
+            chi_run_id: record.chi_run_id,
+            status: record.status,
+            output: record.output.slice(-8_000), // tail for context window budget
+            error: record.error,
+            started_at: record.started_at,
+            ended_at: record.ended_at,
+          }),
+        }],
+        isError: record.status === 'failed' || record.status === 'timed_out',
+      };
+    }
+
+    case 'devin_delegate_cancel': {
+      const task_id = String(a.task_id ?? '');
+      const result = cancelTask(task_id);
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result) }],
+        isError: !result.ok,
+      };
+    }
+
     default:
       throw new McpError(
         ErrorCode.MethodNotFound,
@@ -183,6 +278,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       );
   }
 });
+
 
 async function main(): Promise<void> {
   const transport = new StdioServerTransport();
