@@ -1,12 +1,12 @@
 {
-  "name": "@ikenga/pkg-engine-gemini",
+  "name": "@ikenga/pkg-engine-antigravity",
   "version": "0.2.1",
-  "description": "Gemini CLI engine adapter for Ikenga.",
+  "description": "Antigravity CLI engine adapter for Ikenga.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
-    "directory": "packages/engine/gemini"
+    "directory": "packages/engine/antigravity"
   },
   "publishConfig": {
     "access": "public"

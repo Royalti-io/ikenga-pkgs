@@ -1,6 +1,6 @@
 {
-  "id": "com.ikenga.engine-gemini",
-  "name": "Gemini CLI Engine",
+  "id": "com.ikenga.engine-antigravity",
+  "name": "Antigravity CLI Engine",
   "version": "0.2.1",
   "ikenga_api": "1",
   "kind": "engine",
@@ -13,7 +13,7 @@
   "ui": {},
 
   "permissions": {
-    "shell.execute": ["gemini"],
+    "shell.execute": ["agy"],
     "fs.read": ["$pkg_data/sessions/**"],
     "fs.write": ["$pkg_data/sessions/**"]
   },
@@ -21,33 +21,33 @@
   "settings": {
     "schema": [
       {
-        "key": "gemini_binary",
+        "key": "antigravity_binary",
         "type": "string",
-        "label": "Path to `gemini` CLI",
-        "default": "gemini",
+        "label": "Path to `agy` CLI",
+        "default": "agy",
         "description": "Resolved against $PATH if not absolute."
       },
       {
         "key": "model",
         "type": "string",
         "label": "Default model",
-        "default": "gemini-2.0-flash"
+        "default": "gemini-3.5-flash-medium"
       }
     ]
   },
 
   "engine": {
-    "agentId": "gemini",
-    "display": "Gemini CLI",
+    "agentId": "antigravity-cli",
+    "display": "Antigravity CLI",
     "capabilities": {
-      "streaming": true,
+      "streaming": false,
       "toolUse": true,
       "thinking": true,
       "artifacts": true,
       "fileAttachments": true,
-      "imageInput": true,
+      "imageInput": false,
       "slashCommands": true,
-      "modelSwitching": true,
+      "modelSwitching": false,
       "promptCaching": true,
       "agenticTools": true,
       "mcp": true,
@@ -56,8 +56,8 @@
     "onboarding": {
       "requiredVaultKeys": ["GEMINI_API_KEY"],
       "requiredEnvVars": [],
-      "authCommand": "gemini auth",
-      "docsUrl": "https://geminicli.com/docs/"
+      "authCommand": "agy models",
+      "docsUrl": "https://antigravity.google/"
     }
   }
 }

@@ -1,10 +1,5 @@
 /**
- * Tests for `GeminiEngineAdapter` (ADR-012 Phase 6, Track G).
- *
- * Same scratch-HOME pattern as the Claude Code adapter tests — every test
- * runs in an `os.tmpdir()` scratch directory used as HOME so the real
- * `~/.gemini/` is never touched. The HOME override is restored after each
- * test via the per-test `cleanup()` returned by `makeScratch()`.
+ * Tests for `AntigravityEngineAdapter`.
  */
 
 import { test } from 'node:test';
@@ -22,7 +17,7 @@ import { tmpdir } from 'node:os';
 import * as path from 'node:path';
 
 import type { McpServer } from '@ikenga/contract/manifest';
-import { GeminiEngineAdapter } from './portability.js';
+import { AntigravityEngineAdapter } from './portability.js';
 
 function mcpSpec(partial: Partial<McpServer> & { name: string; command: string }): McpServer {
 	return {
@@ -43,7 +38,7 @@ interface Scratch {
 }
 
 async function makeScratch(): Promise<Scratch> {
-	const home = await mkdtemp(path.join(tmpdir(), 'gemini-adapter-'));
+	const home = await mkdtemp(path.join(tmpdir(), 'antigravity-adapter-'));
 	const pkgRoot = path.join(home, 'pkg');
 	const skillsFolder = path.join(pkgRoot, 'skills');
 	const commandsFolder = path.join(pkgRoot, 'commands');
@@ -69,13 +64,13 @@ async function makeScratch(): Promise<Scratch> {
 const PKG_ID = 'com.ikenga.test';
 const PKG_SLUG = 'com-ikenga-test';
 
-test('installSkills creates a symlink under ~/.gemini/extensions/<slug>', async () => {
+test('installSkills creates a symlink under ~/.gemini/antigravity-cli/skills/<slug>', async () => {
 	const s = await makeScratch();
 	try {
-		const adapter = new GeminiEngineAdapter();
+		const adapter = new AntigravityEngineAdapter();
 		const report = await adapter.installSkills(s.skillsFolder, PKG_ID, PKG_SLUG);
 
-		const target = path.join(s.home, '.gemini', 'extensions', PKG_SLUG);
+		const target = path.join(s.home, '.gemini', 'antigravity-cli', 'skills', PKG_SLUG);
 		assert.deepEqual(report.wrote, [target]);
 		assert.deepEqual(report.skipped, []);
 		assert.deepEqual(report.warnings, []);
@@ -90,11 +85,11 @@ test('installSkills creates a symlink under ~/.gemini/extensions/<slug>', async 
 test('installSkills is idempotent on repeat with same inputs', async () => {
 	const s = await makeScratch();
 	try {
-		const adapter = new GeminiEngineAdapter();
+		const adapter = new AntigravityEngineAdapter();
 		await adapter.installSkills(s.skillsFolder, PKG_ID, PKG_SLUG);
 		const second = await adapter.installSkills(s.skillsFolder, PKG_ID, PKG_SLUG);
 
-		const target = path.join(s.home, '.gemini', 'extensions', PKG_SLUG);
+		const target = path.join(s.home, '.gemini', 'antigravity-cli', 'skills', PKG_SLUG);
 		assert.deepEqual(second.wrote, []);
 		assert.deepEqual(second.skipped, [target]);
 		assert.deepEqual(second.warnings, []);
@@ -106,11 +101,11 @@ test('installSkills is idempotent on repeat with same inputs', async () => {
 test('installSkills refuses to overwrite a non-symlink at the target', async () => {
 	const s = await makeScratch();
 	try {
-		const target = path.join(s.home, '.gemini', 'extensions', PKG_SLUG);
+		const target = path.join(s.home, '.gemini', 'antigravity-cli', 'skills', PKG_SLUG);
 		await mkdir(target, { recursive: true });
 		await writeFile(path.join(target, 'user.md'), 'hand-crafted\n', 'utf8');
 
-		const adapter = new GeminiEngineAdapter();
+		const adapter = new AntigravityEngineAdapter();
 		await assert.rejects(
 			() => adapter.installSkills(s.skillsFolder, PKG_ID, PKG_SLUG),
 			/exists and is not a symlink — refusing to overwrite/,
@@ -126,7 +121,7 @@ test('installSkills refuses to overwrite a non-symlink at the target', async () 
 test('installCommands walks .md files and emits transcoded .toml files', async () => {
 	const s = await makeScratch();
 	try {
-		const adapter = new GeminiEngineAdapter();
+		const adapter = new AntigravityEngineAdapter();
 
 		// Two command files + one non-md decoy that must be ignored.
 		await writeFile(
@@ -146,7 +141,7 @@ test('installCommands walks .md files and emits transcoded .toml files', async (
 		);
 
 		const report = await adapter.installCommands(s.commandsFolder, PKG_ID, PKG_SLUG);
-		const outDir = path.join(s.home, '.gemini', 'commands', PKG_SLUG);
+		const outDir = path.join(s.home, '.gemini', 'antigravity-cli', 'commands', PKG_SLUG);
 
 		assert.deepEqual(report.wrote, [outDir]);
 		assert.deepEqual(report.skipped, []);
@@ -157,9 +152,6 @@ test('installCommands walks .md files and emits transcoded .toml files', async (
 		assert.deepEqual(written, ['plan.toml', 'review.toml']);
 
 		const planToml = await readFile(path.join(outDir, 'plan.toml'), 'utf8');
-		// TOML body emitted by `mdToGeminiCommandToml`:
-		//  description = "plan a thing"
-		//  prompt = """\n<body>\n"""
 		assert.match(planToml, /description = "plan a thing"/);
 		assert.match(planToml, /prompt = """/);
 		assert.match(planToml, /Do the plan: \{input\}/);
@@ -171,7 +163,7 @@ test('installCommands walks .md files and emits transcoded .toml files', async (
 test('installCommands is idempotent on re-call (byte-equal output → skipped)', async () => {
 	const s = await makeScratch();
 	try {
-		const adapter = new GeminiEngineAdapter();
+		const adapter = new AntigravityEngineAdapter();
 		await writeFile(
 			path.join(s.commandsFolder, 'plan.md'),
 			'---\ndescription: plan\n---\n\nBody.\n',
@@ -179,7 +171,7 @@ test('installCommands is idempotent on re-call (byte-equal output → skipped)',
 		);
 
 		const first = await adapter.installCommands(s.commandsFolder, PKG_ID, PKG_SLUG);
-		const outDir = path.join(s.home, '.gemini', 'commands', PKG_SLUG);
+		const outDir = path.join(s.home, '.gemini', 'antigravity-cli', 'commands', PKG_SLUG);
 		assert.deepEqual(first.wrote, [outDir]);
 
 		const second = await adapter.installCommands(s.commandsFolder, PKG_ID, PKG_SLUG);
@@ -191,10 +183,10 @@ test('installCommands is idempotent on re-call (byte-equal output → skipped)',
 	}
 });
 
-test('registerMcpServer writes ikenga.<slug>.<name> into ~/.gemini/settings.json', async () => {
+test('registerMcpServer writes ikenga.<slug>.<name> into ~/.gemini/config/mcp_config.json', async () => {
 	const s = await makeScratch();
 	try {
-		const adapter = new GeminiEngineAdapter();
+		const adapter = new AntigravityEngineAdapter();
 		const spec = mcpSpec({
 			name: 'royalti-cms',
 			command: 'bun',
@@ -202,7 +194,7 @@ test('registerMcpServer writes ikenga.<slug>.<name> into ~/.gemini/settings.json
 		});
 		const report = await adapter.registerMcpServer(spec, PKG_ID, PKG_SLUG);
 
-		const settingsPath = path.join(s.home, '.gemini', 'settings.json');
+		const settingsPath = path.join(s.home, '.gemini', 'config', 'mcp_config.json');
 		const expectedKey = `ikenga.${PKG_SLUG}.royalti-cms`;
 		assert.deepEqual(report.wrote, [`${settingsPath}#${expectedKey}`]);
 
@@ -226,7 +218,7 @@ test('registerMcpServer writes ikenga.<slug>.<name> into ~/.gemini/settings.json
 test('registerMcpServer refuses plaintext *_API_KEY env values with a warning', async () => {
 	const s = await makeScratch();
 	try {
-		const adapter = new GeminiEngineAdapter();
+		const adapter = new AntigravityEngineAdapter();
 		const spec = mcpSpec({
 			name: 'exa',
 			command: 'bun',
@@ -239,8 +231,7 @@ test('registerMcpServer refuses plaintext *_API_KEY env values with a warning', 
 		assert.equal(report.warnings.length, 1);
 		assert.match(report.warnings[0]!, /EXA_API_KEY/);
 
-		// File was never created.
-		const settingsPath = path.join(s.home, '.gemini', 'settings.json');
+		const settingsPath = path.join(s.home, '.gemini', 'config', 'mcp_config.json');
 		await assert.rejects(
 			() => readFile(settingsPath, 'utf8'),
 			(err: NodeJS.ErrnoException) => err.code === 'ENOENT',
@@ -253,7 +244,7 @@ test('registerMcpServer refuses plaintext *_API_KEY env values with a warning', 
 test('uninstallCommands removes the per-pkg commands dir', async () => {
 	const s = await makeScratch();
 	try {
-		const adapter = new GeminiEngineAdapter();
+		const adapter = new AntigravityEngineAdapter();
 		await writeFile(
 			path.join(s.commandsFolder, 'plan.md'),
 			'---\ndescription: plan\n---\n\nBody.\n',
@@ -261,8 +252,8 @@ test('uninstallCommands removes the per-pkg commands dir', async () => {
 		);
 		await adapter.installCommands(s.commandsFolder, PKG_ID, PKG_SLUG);
 
-		const outDir = path.join(s.home, '.gemini', 'commands', PKG_SLUG);
-		await lstat(outDir); // should exist
+		const outDir = path.join(s.home, '.gemini', 'antigravity-cli', 'commands', PKG_SLUG);
+		await lstat(outDir);
 
 		await adapter.uninstallCommands(PKG_ID, PKG_SLUG);
 
@@ -271,7 +262,6 @@ test('uninstallCommands removes the per-pkg commands dir', async () => {
 			(err: NodeJS.ErrnoException) => err.code === 'ENOENT',
 		);
 
-		// Idempotent: second uninstall is a no-op (missing dir → force: true).
 		await adapter.uninstallCommands(PKG_ID, PKG_SLUG);
 	} finally {
 		await s.cleanup();
@@ -281,10 +271,9 @@ test('uninstallCommands removes the per-pkg commands dir', async () => {
 test('unregisterMcpServer removes only our key and leaves others alone', async () => {
 	const s = await makeScratch();
 	try {
-		const adapter = new GeminiEngineAdapter();
-		const settingsPath = path.join(s.home, '.gemini', 'settings.json');
+		const adapter = new AntigravityEngineAdapter();
+		const settingsPath = path.join(s.home, '.gemini', 'config', 'mcp_config.json');
 
-		// Seed: one user entry + one ikenga entry from a different pkg.
 		await mkdir(path.dirname(settingsPath), { recursive: true });
 		const seed = {
 			mcpServers: {
@@ -311,17 +300,17 @@ test('unregisterMcpServer removes only our key and leaves others alone', async (
 	}
 });
 
-test('installAgents creates a symlink under ~/.gemini/agents/<slug>', async () => {
+test('installAgents creates a symlink under ~/.gemini/antigravity-cli/agents/<slug>', async () => {
 	const s = await makeScratch();
 	try {
 		const agentsFolder = path.join(s.pkgRoot, 'agents');
 		await mkdir(agentsFolder, { recursive: true });
 		await writeFile(path.join(agentsFolder, 'a.md'), '---\nname: a\n---\nbody\n', 'utf8');
 
-		const adapter = new GeminiEngineAdapter();
+		const adapter = new AntigravityEngineAdapter();
 		const report = await adapter.installAgents(agentsFolder, PKG_ID, PKG_SLUG);
 
-		const target = path.join(s.home, '.gemini', 'agents', PKG_SLUG);
+		const target = path.join(s.home, '.gemini', 'antigravity-cli', 'agents', PKG_SLUG);
 		assert.deepEqual(report.wrote, [target]);
 
 		const stat = await lstat(target);

@@ -1,26 +1,7 @@
 /**
- * Portability adapter for Gemini CLI — ADR-012 Phase 6, Track G.
+ * Portability adapter for Antigravity CLI.
  *
- * Mirrors the Claude Code adapter (`engine/claude-code/src/portability.ts`)
- * but fans out into `~/.gemini/` per ADR §1's per-engine layout table:
- *
- *   - Skills:   `~/.gemini/extensions/<pkg-slug>/`     (folder symlink)
- *   - Agents:   `~/.gemini/agents/<pkg-slug>/`         (folder symlink —
- *                Gemini accepts canonical MD+YAML directly per ADR §1)
- *   - Commands: `~/.gemini/commands/<pkg-slug>/<n>.toml`
- *                (per-file transcode from MD via `mdToGeminiCommandToml`)
- *   - MCP:      `~/.gemini/settings.json` `mcpServers` (JSON; same shape
- *                as Claude Code's settings file)
- *
- * Conflict policy, idempotency, secret refusal, and atomic-write strategy
- * are byte-for-byte the same as the Claude Code adapter — the only delta
- * is the output directory and, for commands, the per-file MD→TOML pass.
- * The TS-side helpers are duplicated rather than factored into a shared
- * lib because the pkg system doesn't yet support cross-pkg helpers in
- * v1 (ADR-012 §10 phase 7).
- *
- * No external runtime deps — Node built-ins plus the contract's
- * `mdToGeminiCommandToml`.
+ * Fans out into `~/.gemini/antigravity-cli/` and configures MCP in `~/.gemini/config/mcp_config.json`.
  */
 
 import {
@@ -60,16 +41,20 @@ function geminiHome(): string {
 	return path.join(home, '.gemini');
 }
 
+function antigravityCliHome(): string {
+	return path.join(geminiHome(), 'antigravity-cli');
+}
+
 function settingsPath(): string {
-	return path.join(geminiHome(), 'settings.json');
+	return path.join(geminiHome(), 'config', 'mcp_config.json');
 }
 
 function symlinkTargetFor(kind: SymlinkAssetKind, pkgSlug: string): string {
-	return path.join(geminiHome(), kind, pkgSlug);
+	return path.join(antigravityCliHome(), kind === 'extensions' ? 'skills' : 'agents', pkgSlug);
 }
 
 function commandsDirFor(pkgSlug: string): string {
-	return path.join(geminiHome(), 'commands', pkgSlug);
+	return path.join(antigravityCliHome(), 'commands', pkgSlug);
 }
 
 function mcpKey(pkgSlug: string, serverName: string): string {
@@ -121,8 +106,8 @@ async function classifySymlinkTarget(
 }
 
 /**
- * Install one asset folder as a symlink at `~/.gemini/<kind>/<pkgSlug>`.
- * Used for both skills (`extensions`) and agents.
+ * Install one asset folder as a symlink.
+ * Used for both skills (`skills`) and agents.
  */
 async function installSymlinkFolder(
 	folder: string,
@@ -130,7 +115,7 @@ async function installSymlinkFolder(
 	pkgSlug: string,
 ): Promise<InstallReport> {
 	const source = path.resolve(folder);
-	const parent = path.join(geminiHome(), kind);
+	const parent = path.dirname(symlinkTargetFor(kind, pkgSlug));
 	const target = symlinkTargetFor(kind, pkgSlug);
 
 	const classification = await classifySymlinkTarget(source, target);
@@ -175,7 +160,7 @@ async function uninstallSymlinkFolder(
 	if (!stat.isSymbolicLink()) {
 		// eslint-disable-next-line no-console
 		console.warn(
-			`[engine-gemini] target ${target} is not a symlink — skipping (user-managed?)`,
+			`[engine-antigravity] target ${target} is not a symlink — skipping (user-managed?)`,
 		);
 		return;
 	}
@@ -184,14 +169,7 @@ async function uninstallSymlinkFolder(
 
 /**
  * Walk `.md` files in `folder` and transcode each into a `.toml` file
- * under `~/.gemini/commands/<pkgSlug>/<basename>.toml`. Subdirectories
- * and non-`.md` files are skipped. Atomic write per file (temp + rename).
- *
- * Idempotent: byte-equal output is reported as `skipped`. The returned
- * `wrote` field is intentionally the **directory** path (one entry total)
- * — see the Rust counterpart for why: the kernel's `engine_assets`
- * registry recovers the pkg slug from the last path segment of the
- * `target` field and `rm -rf`'s the directory on uninstall.
+ * under `~/.gemini/antigravity-cli/commands/<pkgSlug>/<basename>.toml`.
  */
 async function installCommandsTranscoded(
 	folder: string,
@@ -269,7 +247,7 @@ interface ParsedSettings {
 	existed: boolean;
 }
 
-/** Load `~/.gemini/settings.json`. Missing/empty → empty `{}`. */
+/** Load `~/.gemini/config/mcp_config.json`. Missing/empty → empty `{}`. */
 async function readSettings(): Promise<ParsedSettings> {
 	let raw: string;
 	try {
@@ -304,7 +282,7 @@ async function writeSettings(root: Record<string, unknown>): Promise<void> {
 	const parent = path.dirname(dest);
 	await mkdir(parent, { recursive: true, mode: 0o755 });
 	const pretty = `${JSON.stringify(root, null, 2)}\n`;
-	const tmp = path.join(parent, `.settings.json.${process.pid}.${Date.now()}.tmp`);
+	const tmp = path.join(parent, `.mcp_config.json.${process.pid}.${Date.now()}.tmp`);
 	await writeFile(tmp, pretty, 'utf8');
 	await rename(tmp, dest);
 }
@@ -360,8 +338,8 @@ function deepEqual(a: unknown, b: unknown): boolean {
 	return false;
 }
 
-export class GeminiEngineAdapter implements EngineAdapter {
-	readonly id = 'gemini';
+export class AntigravityEngineAdapter implements EngineAdapter {
+	readonly id = 'antigravity-cli';
 
 	installSkills(folder: string, _pkgId: string, pkgSlug: string): Promise<InstallReport> {
 		return installSymlinkFolder(folder, 'extensions', pkgSlug);
@@ -576,6 +554,7 @@ export class GeminiEngineAdapter implements EngineAdapter {
 // Re-exported for tests that want to drive a fresh scratch HOME.
 export const __internal = {
 	geminiHome,
+	antigravityCliHome,
 	settingsPath,
 	symlinkTargetFor,
 	commandsDirFor,

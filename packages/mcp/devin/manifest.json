@@ -1,0 +1,29 @@
+{
+  "id": "com.ikenga.mcp-devin",
+  "name": "Devin MCP Bridge",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "skill",
+
+  "author": {
+    "name": "Royalti, Inc.",
+    "key": "royalti"
+  },
+
+  "mcp": [
+    {
+      "name": "devin",
+      "command": "bun",
+      "args": ["run", "src/index.ts"],
+      "lifecycle": "long-lived",
+      "restart_when_changed": ["src/**"],
+      "auto_restart": true
+    }
+  ],
+
+  "permissions": {
+    "shell.execute": ["bun", "devin"],
+    "fs.read": ["$pkg_data/**"],
+    "fs.write": ["$pkg_data/tasks/**"]
+  }
+}

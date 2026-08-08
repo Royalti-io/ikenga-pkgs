@@ -1,20 +1,13 @@
 /**
- * Gemini CLI Engine adapter.
+ * Antigravity CLI Engine adapter.
  *
  * Implements the `Engine` contract from `@ikenga/contract` by wrapping the
- * Gemini CLI in ACP-passthrough mode (see ADR-013):
+ * Antigravity CLI:
  *
- *   gemini --acp
- *
- * The shell's Rust adapter (`shell/src-tauri/src/engines/gemini_acp/`)
- * spawns the CLI and proxies JSON-RPC; from the pkg surface, Gemini and
- * Claude Code are wire-compatible. Process management is delegated to the
- * host shell via the Tauri commands the shell exposes for engine pkgs;
- * this pkg has no `@tauri-apps/*` dep.
+ *   agy
  *
  * Most consumers should target the ACP-shaped surface exported below
- * (`createAcpEngine`). The legacy `createEngine` + `Engine` interface is
- * retained for one release for symmetry with the claude-code pkg.
+ * (`createAcpEngine`).
  */
 
 import type {
@@ -26,10 +19,10 @@ import type {
 	SessionOpts,
 } from '@ikenga/contract/engine';
 
-const ID = 'com.ikenga.engine-gemini';
-const VERSION = '0.2.0';
+const ID = 'com.ikenga.engine-antigravity';
+const VERSION = '0.2.1';
 
-class GeminiSession implements Session {
+class AntigravitySession implements Session {
 	constructor(
 		readonly id: string,
 		private readonly host: HostBridge,
@@ -40,25 +33,23 @@ class GeminiSession implements Session {
 	}
 }
 
-export class GeminiEngine implements Engine {
+export class AntigravityEngine implements Engine {
 	readonly id = ID;
 	readonly version = VERSION;
 
-	// Mirrors manifest.json `engine` block. Static — kept in sync manually
-	// because the legacy `createEngine` factory is slated for removal; not
-	// worth wiring JSON imports just to delete it next release.
+	// Mirrors manifest.json `engine` block. Static — kept in sync manually.
 	readonly metadata = {
-		agentId: 'gemini',
-		display: 'Gemini CLI',
+		agentId: 'antigravity-cli',
+		display: 'Antigravity CLI',
 		capabilities: {
-			streaming: true,
+			streaming: false,
 			toolUse: true,
 			thinking: true,
 			artifacts: true,
 			fileAttachments: true,
-			imageInput: true,
+			imageInput: false,
 			slashCommands: true,
-			modelSwitching: true,
+			modelSwitching: false,
 			promptCaching: true,
 			agenticTools: true,
 			mcp: true,
@@ -67,8 +58,8 @@ export class GeminiEngine implements Engine {
 		onboarding: {
 			requiredVaultKeys: ['GEMINI_API_KEY'],
 			requiredEnvVars: [] as string[],
-			authCommand: 'gemini auth',
-			docsUrl: 'https://geminicli.com/docs/',
+			authCommand: 'agy models',
+			docsUrl: 'https://antigravity.google/',
 		},
 	};
 
@@ -81,7 +72,7 @@ export class GeminiEngine implements Engine {
 			cwd: opts.cwd,
 			systemPrompt: opts.systemPrompt,
 		});
-		return new GeminiSession(sessionId, this.host);
+		return new AntigravitySession(sessionId, this.host);
 	}
 
 	stream(session: Session, input: string): AsyncIterable<EngineEvent> {
@@ -109,10 +100,6 @@ export class GeminiEngine implements Engine {
 	}
 
 	async healthCheck(): Promise<{ ok: boolean; reason?: string }> {
-		// The shell's `gemini` binary resolution + CLI availability check is
-		// the source of truth. The engine kernel is expected to wire
-		// `host.healthCheck` through this — for now, the absence of a probe
-		// is treated as healthy.
 		return { ok: true };
 	}
 }
@@ -122,16 +109,15 @@ export class GeminiEngine implements Engine {
  * The kernel passes a `HostBridge` constructed from its Tauri command set.
  */
 export function createEngine(host: HostBridge): Engine {
-	return new GeminiEngine(host);
+	return new AntigravityEngine(host);
 }
 
 export default createEngine;
 
-// ACP-shaped engine surface. The legacy `createEngine` + `Engine` above is
-// retained for one release; new consumers target `AcpEngine`.
+// ACP-shaped engine surface.
 export { createAcpEngine } from './acp-engine.js';
 export type { AcpHost, AcpUnlisten, HostBridge } from '@ikenga/contract/engine';
 
 // Portability adapter (ADR-012 Track G) — exported alongside the runtime
 // engine. The kernel's `engine_assets` registry resolves both at load time.
-export { GeminiEngineAdapter } from './portability.js';
+export { AntigravityEngineAdapter } from './portability.js';
