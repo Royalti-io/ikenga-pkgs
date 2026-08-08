@@ -461,6 +461,79 @@ const TOOLS = [
       additionalProperties: false,
     },
   },
+  // Phase 6 — chi-first agent runs.
+  {
+    name: 'iyke_chi_run',
+    description:
+      'Start a new chi agent run against an engine. Returns { runId, status, output?, error? }. Use iyke_chi_status to poll for output. engine_id examples: claude-code, gemini, codex. mode controls permissions: plan, default, auto, bypassPermissions.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        engine_id: { type: 'string', description: 'Engine id, e.g. claude-code.' },
+        prompt: { type: 'string', description: 'Initial prompt / task for the agent.' },
+        cwd: { type: 'string', description: 'Working directory. Defaults to the active project root.' },
+        model: { type: 'string', description: 'Optional engine model.' },
+        mode: { type: 'string', enum: ['plan', 'default', 'auto', 'bypassPermissions'], description: 'Permission mode. Defaults to default.' },
+        parent_id: { type: 'string', description: 'Optional parent run id for subagent chains.' },
+        resume_session_id: { type: 'string', description: 'Optional existing engine session id to resume.' },
+        timeout_seconds: { type: 'integer', description: 'Timeout in seconds (currently advisory).' },
+      },
+      required: ['engine_id', 'prompt'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'iyke_chi_resume',
+    description:
+      'Continue an existing chi agent run with a new prompt. Requires run_id from a previous iyke_chi_run or iyke_chi_list.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        run_id: { type: 'string' },
+        prompt: { type: 'string' },
+      },
+      required: ['run_id', 'prompt'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'iyke_chi_status',
+    description:
+      'Get the current status and output of a chi run. Returns { runId, engineId, status, output?, error?, brief? }. Poll periodically after iyke_chi_run.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        run_id: { type: 'string' },
+      },
+      required: ['run_id'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'iyke_chi_list',
+    description:
+      'List chi agent runs. Optionally filter by engine_id. Returns rows newest-first with runId, engineId, status, and brief.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        engine_id: { type: 'string' },
+        limit: { type: 'integer', default: 50 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'iyke_chi_cancel',
+    description: 'Cancel a running chi agent run by run_id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        run_id: { type: 'string' },
+      },
+      required: ['run_id'],
+      additionalProperties: false,
+    },
+  },
   // Phase 5 — MCP supervisor + per-project resolved set.
   {
     name: 'iyke_mcp_list',
@@ -1241,6 +1314,35 @@ async function dispatch(name: ToolName, args: Record<string, unknown>): Promise<
         initial_prompt: args.initial_prompt ?? null,
         cwd: args.cwd ?? null,
       });
+    case 'iyke_chi_run':
+      return client.post(
+        '/iyke/chi/run',
+        {
+          engineId: args.engine_id,
+          prompt: args.prompt,
+          cwd: args.cwd ?? null,
+          model: args.model ?? null,
+          mode: args.mode ?? null,
+          parentId: args.parent_id ?? null,
+          resumeSessionId: args.resume_session_id ?? null,
+          timeoutSeconds: args.timeout_seconds ?? null,
+        },
+        130_000,
+      );
+    case 'iyke_chi_resume':
+      return client.post('/iyke/chi/resume', {
+        runId: args.run_id,
+        prompt: args.prompt,
+      });
+    case 'iyke_chi_status':
+      return client.get('/iyke/chi/status', { runId: args.run_id });
+    case 'iyke_chi_list':
+      return client.get('/iyke/chi/list', {
+        engineId: args.engine_id,
+        limit: args.limit,
+      });
+    case 'iyke_chi_cancel':
+      return client.post('/iyke/chi/cancel', { runId: args.run_id });
     case 'iyke_mcp_list':
       return client.get('/iyke/mcp/list', {
         project_id: args.project_id,
