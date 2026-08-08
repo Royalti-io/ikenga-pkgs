@@ -234,7 +234,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         timeout_seconds: typeof a.timeout_seconds === 'number' ? a.timeout_seconds : undefined,
       });
       return {
-        content: [{ type: 'text', text: JSON.stringify({ task_id: result.task_id, status: result.status }) }],
+        content: [{ type: 'text', text: JSON.stringify({ task_id: result.task_id, status: result.status, error: result.error }) }],
         isError: result.status === 'failed',
       };
     }
@@ -253,6 +253,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             chi_run_id: record.chi_run_id,
             status: record.status,
             output: record.output.slice(-8_000), // tail for context window budget
+            output_truncated: record.output_truncated || record.output.length > 8000,
             error: record.error,
             started_at: record.started_at,
             ended_at: record.ended_at,

@@ -10,7 +10,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, createWriteStream, writeFileSync } from 'node:fs';
+import { mkdirSync, createWriteStream, writeFileSync, renameSync, readdirSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawn, ChildProcess } from 'node:child_process';
 import { homedir } from 'node:os';
@@ -37,7 +37,9 @@ export interface TaskRecord {
   session_id?: string;
   status: TaskStatus;
   output: string;       // tail of stdout+stderr, capped at TAIL_BYTES
+  output_truncated?: boolean;
   output_path: string;  // absolute path on disk
+  pid?: number;         // child process PID
   error?: string;
   started_at: string;
   ended_at?: string;
@@ -68,11 +70,10 @@ function ensureOutputDir(): void {
 function persistRecord(record: TaskRecord): void {
   try {
     ensureOutputDir();
-    writeFileSync(
-      join(OUTPUT_DIR, `${record.task_id}.json`),
-      JSON.stringify(record, null, 2),
-      'utf8'
-    );
+    const tmpPath = join(OUTPUT_DIR, `${record.task_id}.json.tmp`);
+    const finalPath = join(OUTPUT_DIR, `${record.task_id}.json`);
+    writeFileSync(tmpPath, JSON.stringify(record, null, 2), 'utf8');
+    renameSync(tmpPath, finalPath);
   } catch {
     // best-effort; not fatal
   }
@@ -104,6 +105,7 @@ export interface DelegateOpts {
 export interface DelegateResult {
   task_id: string;
   status: TaskStatus;
+  error?: string;
 }
 
 export async function delegateTask(opts: DelegateOpts): Promise<DelegateResult> {
@@ -117,6 +119,32 @@ export async function delegateTask(opts: DelegateOpts): Promise<DelegateResult> 
     MAX_TIMEOUT_S
   );
   const output_path = join(OUTPUT_DIR, `${task_id}.txt`);
+
+  // Enforce concurrency limit (default 3 active tasks max)
+  const activeCount = [...tasks.values()].filter(
+    (t) => t.status === 'running' || t.status === 'awaiting_auth'
+  ).length;
+  if (activeCount >= 3) {
+    const errorMsg = 'Concurrency limit reached: maximum 3 active tasks allowed.';
+    const record: TaskRecord = {
+      task_id,
+      chi_run_id: opts.chi_run_id,
+      brief: opts.brief,
+      cwd,
+      mode,
+      model: opts.model,
+      session_id: opts.session_id,
+      status: 'failed',
+      output: '',
+      output_path,
+      started_at: new Date().toISOString(),
+      ended_at: new Date().toISOString(),
+      error: errorMsg,
+    };
+    tasks.set(task_id, record);
+    persistRecord(record);
+    return { task_id, status: 'failed', error: errorMsg };
+  }
 
   const record: TaskRecord = {
     task_id,
@@ -160,16 +188,27 @@ export async function delegateTask(opts: DelegateOpts): Promise<DelegateResult> 
     record.error = `spawn failed: ${msg}`;
     record.ended_at = new Date().toISOString();
     persistRecord(record);
-    return { task_id, status: 'failed' };
+    return { task_id, status: 'failed', error: record.error };
   }
 
   children.set(task_id, child);
+  record.pid = child.pid;
+  persistRecord(record);
 
   function appendOutput(chunk: string) {
-    record.output = (record.output + chunk).slice(-TAIL_BYTES);
+    const newOutput = record.output + chunk;
+    if (newOutput.length > TAIL_BYTES) {
+      record.output_truncated = true;
+      record.output = newOutput.slice(-TAIL_BYTES);
+    } else {
+      record.output = newOutput;
+    }
     fileStream.write(chunk);
     // Detect awaiting_auth heuristic
-    if (record.status === 'running' && /awaiting.auth|login required|authenticate/i.test(chunk)) {
+    if (
+      (record.status === 'running' || record.status === 'awaiting_auth') &&
+      /awaiting.auth|login required|authenticate/i.test(chunk)
+    ) {
       record.status = 'awaiting_auth';
     }
     persistRecord(record);
@@ -228,10 +267,15 @@ export function cancelTask(taskId: string): { ok: boolean; error?: string } {
   }
 
   const child = children.get(taskId);
-  if (child) {
-    child.kill('SIGTERM');
-    children.delete(taskId);
+  if (!child) {
+    if (record.status === 'running' || record.status === 'awaiting_auth') {
+      return { ok: false, error: 'Task is not owned by this sidecar process (cannot cancel adopted task).' };
+    }
+    return { ok: false, error: 'task_not_running' };
   }
+
+  child.kill('SIGTERM');
+  children.delete(taskId);
   clearTimeout(timers.get(taskId));
   timers.delete(taskId);
 
@@ -241,7 +285,78 @@ export function cancelTask(taskId: string): { ok: boolean; error?: string } {
   return { ok: true };
 }
 
-// Boot: re-hydrate any task JSONs from a previous process (best-effort)
+// ── Boot Reconciliation & Pruning ───────────────────────────────────────────
+
+export function reconcileBoot(): void {
+  try {
+    ensureOutputDir();
+    const files = readdirSync(OUTPUT_DIR);
+    const now = new Date();
+    const maxAgeMs = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+    for (const file of files) {
+      if (!file.endsWith('.json')) continue;
+      const filePath = join(OUTPUT_DIR, file);
+      try {
+        const stats = statSync(filePath);
+        // Age pruning: check if file is older than 7 days
+        if (now.getTime() - stats.mtime.getTime() > maxAgeMs) {
+          try { unlinkSync(filePath); } catch {}
+          const txtPath = join(OUTPUT_DIR, file.replace('.json', '.txt'));
+          try { unlinkSync(txtPath); } catch {}
+          continue;
+        }
+
+        const record = JSON.parse(readFileSync(filePath, 'utf8')) as TaskRecord;
+
+        // Boot reconciliation for running/queued tasks
+        if (record.status === 'running' || record.status === 'queued' || record.status === 'awaiting_auth') {
+          let live = false;
+          if (record.pid) {
+            try {
+              process.kill(record.pid, 0);
+              live = true;
+            } catch {
+              live = false;
+            }
+          }
+          if (live) {
+            // Adopt as unmanaged running task
+            tasks.set(record.task_id, record);
+          } else {
+            record.status = 'failed';
+            record.ended_at = new Date().toISOString();
+            record.error = 'sidecar restarted while task was in flight';
+            tasks.set(record.task_id, record);
+            persistRecord(record);
+          }
+        } else {
+          tasks.set(record.task_id, record);
+        }
+      } catch {
+        // Skip corrupt files
+      }
+    }
+  } catch {
+    // Ignore errors during boot scan
+  }
+}
+
+function setupShutdownHandlers(): void {
+  const cleanup = () => {
+    for (const child of children.values()) {
+      try {
+        child.kill('SIGTERM');
+      } catch {}
+    }
+    process.exit(0);
+  };
+  process.on('SIGTERM', cleanup);
+  process.on('SIGINT', cleanup);
+}
+
+// Perform boot tasks and setup handlers
 try {
-  ensureOutputDir();
+  reconcileBoot();
+  setupShutdownHandlers();
 } catch { /* ignore */ }
