@@ -168,7 +168,7 @@ try:
     check("board-data WP carries tier", wp_bare.get("tier")=="opus")
     check("board-data (bare) omits brief", "brief" not in wp_bare)
     # write a 09 with a WP-01 section; --with-briefs should attach its body
-    open(os.path.join(plan,"09-orchestration.md"),"w").write(
+    open(os.path.join(plan,"09-orchestration.md"),"w",encoding="utf-8",newline="\n").write(
         "# Plan — orchestration\n\n## Work-package matrix\n\n"
         "### WP-01 — Contract freeze\n- **GOAL**: freeze the schema\n- **DEFINITION OF DONE**: types compile\n\n"
         "---\n\n## Tracking protocol\nblah\n")
