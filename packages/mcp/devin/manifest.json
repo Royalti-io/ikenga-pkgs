@@ -1,7 +1,7 @@
 {
   "id": "com.ikenga.mcp-devin",
   "name": "Devin MCP Bridge",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "ikenga_api": "1",
   "kind": "skill",
 

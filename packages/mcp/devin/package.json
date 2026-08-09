@@ -1,8 +1,8 @@
 {
   "name": "@ikenga/mcp-devin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "mcpName": "io.github.Royalti-io/ikenga-pkg-mcp-devin",
-  "description": "Model Context Protocol (MCP) server that exposes the user\u0027s local Devin CLI to any Ikenga engine — single-turn runs, session listing/resume, and background task delegation.",
+  "description": "Model Context Protocol (MCP) server that exposes the user's local Devin CLI to any Ikenga engine — single-turn runs, session listing/resume, and background task delegation.",
   "license": "Apache-2.0",
   "author": "Royalti, Inc.",
   "homepage": "https://github.com/Royalti-io/ikenga-pkgs/tree/main/packages/mcp/devin#readme",
