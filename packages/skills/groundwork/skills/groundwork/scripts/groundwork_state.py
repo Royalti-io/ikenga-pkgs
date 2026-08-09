@@ -88,7 +88,7 @@ def atomic_write(path: str, data: str) -> None:
     d = os.path.dirname(os.path.abspath(path)) or "."
     fd, tmp = tempfile.mkstemp(dir=d, prefix=".gw-tmp-")
     try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as f:
             f.write(data)
         os.replace(tmp, path)
     finally:
