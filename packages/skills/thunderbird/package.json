@@ -1,6 +1,6 @@
 {
   "name": "@ikenga/skill-thunderbird",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Thunderbird mail skill — read/search the local Thunderbird mbox store and save reply drafts to the IMAP server.",
   "keywords": [
     "claude",
