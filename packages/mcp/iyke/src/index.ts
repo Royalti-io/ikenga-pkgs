@@ -21,8 +21,19 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { ACTIVITY_MODES, MINI_APP_NAMES } from '@ikenga/contract/iyke';
 
+import { createRequire } from 'node:module';
+
 import { IykeClient } from './api.js';
 import { load, STALE_THRESHOLD_SECS } from './control.js';
+
+// Read the version from package.json rather than repeating it here. The literal
+// that used to live in the Server() identity below drifted to 0.1.0 while the
+// package shipped 0.2.1, so every MCP client asking who we are got a build from
+// three releases earlier. Resolved from the built file (dist/index.js), so
+// '../package.json' is the package root.
+const { version: PKG_VERSION } = createRequire(import.meta.url)(
+  '../package.json',
+) as { version: string };
 
 const TOOLS = [
   {
@@ -1573,7 +1584,7 @@ async function dispatch(name: ToolName, args: Record<string, unknown>): Promise<
 
 async function main() {
   const server = new Server(
-    { name: 'iyke-mcp', version: '0.1.0' },
+    { name: 'iyke-mcp', version: PKG_VERSION },
     { capabilities: { tools: {} } },
   );
 
