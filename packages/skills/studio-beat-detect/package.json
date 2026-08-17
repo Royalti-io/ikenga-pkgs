@@ -1,6 +1,6 @@
 {
   "name": "@ikenga/studio-beat-detect",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Portable beat-detection skill — self-contained beat_detect.py (stdlib + optional librosa/madmom). Zero Ikenga runtime calls; usable by any agent via npx skills add.",
   "keywords": [
     "claude",
