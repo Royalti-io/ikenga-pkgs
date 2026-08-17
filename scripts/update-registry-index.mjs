@@ -97,6 +97,25 @@ const HIDDEN_PKGS = new Set([
   '@ikenga/pkg-engine-cursor-agent', // scaffold-only; runtime stubbed (ADR-013 Phase 4)
 ]);
 
+/**
+ * Packages published from this monorepo that are deliberately NOT installable
+ * Ikenga pkgs — plain npm libraries, consumed as dependencies, with no
+ * manifest.json and no catalog entry.
+ *
+ * This list exists because "has no manifest.json" used to be treated on its own
+ * as proof of library-hood, and that inference is wrong in the one direction
+ * that matters: a real pkg whose manifest is missing looks identical to a
+ * library. `@ikenga/skill-groundwork@0.6.0` published on 2026-08-04, hit that
+ * branch, and was skipped — while the run still re-signed the index and
+ * committed "- @ikenga/skill-groundwork@0.6.0", so the failure left behind
+ * evidence that it had succeeded. Naming the libraries explicitly means an
+ * unrecognised pkg without a manifest is now an error instead of a shrug.
+ */
+const NON_PKG_LIBRARIES = new Set([
+  '@ikenga/registry-client', // registry resolver client, consumed by the shell
+  '@ikenga/ui-lib', // shared React components, consumed by app pkgs
+]);
+
 /** `@ikenga/pkg-engine-claude-code` → `engine-claude-code` */
 function shortName(npmName) {
   return npmName.replace(/^@ikenga\//, '').replace(/^pkg-/, '');
@@ -194,15 +213,31 @@ const index = JSON.parse(readFileSync(indexPath, 'utf8'));
 
 const nowIso = new Date().toISOString();
 
+/** Successfully written into the catalog this run — drives the commit message. */
+const catalogued = [];
+/** Published, expected to be catalogued, but had no manifest.json. Fails the run. */
+const uncatalogued = [];
+
 for (const { name, version } of published) {
   const short = shortName(name);
   const pkgDir = findPackageDir(name);
-  // Libraries shipped from this monorepo (e.g. @ikenga/registry-client) get
-  // published to npm but aren't installable Ikenga pkgs — they have no
-  // manifest.json. Skip them; the registry only catalogs installable pkgs.
+  // Libraries shipped from this monorepo get published to npm but aren't
+  // installable Ikenga pkgs — they have no manifest.json. They must be named in
+  // NON_PKG_LIBRARIES: a missing manifest on anything else is a packaging bug
+  // (the pkg is on npm but uninstallable through the registry), not a library,
+  // and silently skipping it is what let five pkgs go uncatalogued.
   const manifestPath = join(pkgDir, 'manifest.json');
   if (!existsSync(manifestPath)) {
-    console.log(`Skipping ${name}@${version}: no manifest.json (library publish, not a pkg)`);
+    if (NON_PKG_LIBRARIES.has(name)) {
+      console.log(`Skipping ${name}@${version}: known library publish, not a pkg.`);
+      continue;
+    }
+    console.error(
+      `✗ ${name}@${version}: published to npm but has no manifest.json, so it cannot be catalogued.\n` +
+        `  Add ${join(pkgDir, 'manifest.json')} if it is an installable pkg, or add the name to\n` +
+        `  NON_PKG_LIBRARIES in this script if it is a plain library.`,
+    );
+    uncatalogued.push(`${name}@${version}`);
     continue;
   }
   const pkgJson = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'));
@@ -280,6 +315,16 @@ for (const { name, version } of published) {
     index.pkgs.push(entry);
     index.pkgs.sort((a, b) => a.name.localeCompare(b.name));
   }
+  catalogued.push({ name, version });
+}
+
+// Nothing reached the catalog. Re-stamping `updatedAt` and re-signing anyway is
+// how the 2026-08-04 run produced a commit that named a pkg it had not written:
+// the index moved, the catalog didn't. Bail before touching the registry.
+if (catalogued.length === 0) {
+  console.error('✗ no packages were catalogued — leaving the registry untouched.');
+  for (const p of uncatalogued) console.error(`  uncatalogued: ${p}`);
+  process.exit(1);
 }
 
 // Reconcile catalog visibility across ALL entries (not just the ones published
@@ -304,11 +349,26 @@ wf(keyPath, process.env.REGISTRY_SIGNING_PRIVATE_KEY);
 execSync(`chmod 600 ${keyPath}`);
 execSync(`minisign -Sm ${indexPath} -s ${keyPath} -W`, { stdio: ['ignore', 'inherit', 'inherit'] });
 
-// Commit + push
-const pkgList = published.map((p) => `${p.name}@${p.version}`).join(', ');
+// Commit + push. The message lists what was actually written to the catalog,
+// not what npm published — those differ whenever a library is skipped, and
+// conflating them is what made the earlier miss invisible in the git log.
+const pkgList = catalogued.map((p) => `${p.name}@${p.version}`).join(', ');
 execSync(`git -C ${registryDir} add -A`);
-const commitMsg = `chore: publish ${published.length} pkg version(s)\n\n${published.map((p) => `- ${p.name}@${p.version}`).join('\n')}`;
-execSync(`git -C ${registryDir} commit -m ${JSON.stringify(commitMsg)}`, { stdio: ['ignore', 'inherit', 'inherit'] });
+const commitMsg = `chore: publish ${catalogued.length} pkg version(s)\n\n${catalogued.map((p) => `- ${p.name}@${p.version}`).join('\n')}\n`;
+// -F - rather than -m "...": passing the message through the shell leaves the
+// \n sequences uninterpreted inside double quotes, which is why every registry
+// commit subject up to now carried a literal "\n\n" instead of a blank line.
+execSync(`git -C ${registryDir} commit -F -`, {
+  input: commitMsg,
+  stdio: ['pipe', 'inherit', 'inherit'],
+});
 execSync(`git -C ${registryDir} push origin main`, { stdio: ['ignore', 'inherit', 'inherit'] });
 
 console.log(`✓ registry updated: ${pkgList}`);
+
+// Push the good entries first, then fail the run so the miss is visible.
+if (uncatalogued.length > 0) {
+  console.error(`✗ ${uncatalogued.length} published pkg(s) could not be catalogued:`);
+  for (const p of uncatalogued) console.error(`  - ${p}`);
+  process.exit(1);
+}
