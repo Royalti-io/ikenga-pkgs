@@ -7,7 +7,7 @@
   "author": { "name": "Royalti", "key": "royalti" },
 
   "permissions": {
-    "shell.execute": ["git", "gh", "pnpm", "bun", "npx"],
+    "shell.execute": [],
     "fs.read": [],
     "fs.write": [],
     "net": [],

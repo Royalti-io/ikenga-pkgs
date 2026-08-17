@@ -7,15 +7,11 @@
   "author": { "name": "Royalti", "key": "royalti" },
 
   "permissions": {
-    "shell.execute": ["grep", "stat", "pgrep", "tail", "sed", "node", "npx"],
-    "fs.read": [
-      "$home/.thunderbird/**",
-      "$home/snap/thunderbird/**",
-      "$home/Library/Thunderbird/**",
-      "$home/.icedove/**"
-    ],
-    "fs.write": ["$pkg_data/**"],
+    "shell.execute": [],
+    "fs.read": [],
+    "fs.write": [],
     "net": ["imap://*", "imaps://*"],
+    "sqlite.tables": [],
     "vault.keys": ["*IMAP*"]
   }
 }
