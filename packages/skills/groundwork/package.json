@@ -29,7 +29,9 @@
     "node": ">=18"
   },
   "files": [
-    "skills/"
+    "manifest.json",
+    "skills",
+    "README.md"
   ],
   "scripts": {
     "sync:from-dev": "node ./scripts/sync-from-dev.mjs",

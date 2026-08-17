@@ -1,0 +1,19 @@
+{
+  "id": "com.ikenga.skill-groundwork",
+  "name": "Groundwork",
+  "version": "0.6.0",
+  "ikenga_api": "1",
+  "kind": "skill",
+  "author": {
+    "name": "Royalti",
+    "key": "royalti"
+  },
+  "permissions": {
+    "shell.execute": [],
+    "fs.read": [],
+    "fs.write": [],
+    "net": [],
+    "sqlite.tables": [],
+    "vault.keys": []
+  }
+}
