@@ -1,7 +1,6 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # {{plan_title}} — design-system planning folder
 
-Living design system + UX capture for **{{plan_title}}**. Built with the [groundwork](https://github.com/royalti-io/groundwork) `design-system` profile.
+Living design system + UX capture for **{{plan_title}}**. Built with the [groundwork](https://github.com/ikenga-hq/groundwork) `design-system` profile.
 
 > **Mode:** `brownfield` (has code — inventory + enhance) · `greenfield` (no reference — design from requirements). **Set this at init →** `<brownfield | greenfield>`. Ground truth is the **code** (brownfield) or the **requirements/job-stories** (greenfield).
 

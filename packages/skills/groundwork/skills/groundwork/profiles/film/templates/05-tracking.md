@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # {{goal}} — tracking
 
 {{vocab.work_unit}}s and their shots, dependencies, critical path. Production status mirror (survives sessions).

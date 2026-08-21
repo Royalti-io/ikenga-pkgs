@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # lib: agent return schemas
 
 Canonical structured-output contracts for the agents groundwork spawns. **One definition, two consumers:**

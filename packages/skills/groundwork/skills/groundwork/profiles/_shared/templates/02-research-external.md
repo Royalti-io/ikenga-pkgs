@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # 02 — External research
 
 Outside research backing {{goal}}. Cite every claim with a URL + access date. Hand-authored sections live between fences; the research action only writes inside.

@@ -361,7 +361,7 @@ def cmd_spine_gate(args):
         emit({"result": "warn-readonly", "anchor": a, "expected": e})
         return
     die(f"plan is on spine_version={a}, this skill is on {e}. "
-        f"Upgrade the groundwork skill (`npx skills add royalti-io/groundwork`) before writing.", 3)
+        f"Upgrade the groundwork skill (`npx skills add ikenga-hq/groundwork`) before writing.", 3)
 
 
 # --------------------------------------------------------------------------- #

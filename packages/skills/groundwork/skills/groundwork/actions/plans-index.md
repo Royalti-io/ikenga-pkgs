@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `plans-index` — (re)generate `<plans-dir>/_index.html`
 
 **Loaded when**: the user wants a **cross-plan** overview — one card per groundwork plan under a `plans/` directory, with status rollups and drill-in to each plan's explorer / board. Triggers: "groundwork plans-index", "index all the plans", "plans overview", "show me every plan in this project", "plan dashboard".

@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # {{topic}} — diff plan
 
 {{one_line_goal}}

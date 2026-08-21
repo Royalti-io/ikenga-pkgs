@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `status` — read-only health report
 
 **Loaded when**: the user asks "where are we" / runs `groundwork status`.

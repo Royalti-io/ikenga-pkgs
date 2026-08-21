@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 <!--
   REUSABLE PER-PART TEMPLATE — design-system profile
   Copy to parts/<tier>/<part>.md and fill in. One "part" = one

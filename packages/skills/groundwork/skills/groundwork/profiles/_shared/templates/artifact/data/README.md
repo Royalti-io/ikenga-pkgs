@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # `artifact/data/` — external data sources for the artifact
 
 Optional. Files here are JSON / Markdown / CSV / etc. referenced by the artifact (`artifact/index.html` or `artifact/board.html`) via the Ikenga artifact manifest's `dataSources` field.

@@ -26,30 +26,30 @@ npx skills add royalti-io/groundwork
 `npx skills add` resolves `skills/groundwork/SKILL.md` and symlinks it into
 `~/.claude/skills/groundwork/`.
 
-## Source of truth & sync (forward flow)
+## Source of truth & publish flow
 
-Per the locked 2026-05-21 publish decision (`plans/groundwork/11-publish-skill.md`),
-there are three copies and the sync is **one-way forward**:
+**There is one editable copy.** As of the 2026-08-21 unification, the dev source moved
+into this package — `./skills/groundwork/` **is** the source. Edit it directly.
 
 | Copy | Path | Role |
 |---|---|---|
-| **Dev source** (working copy) | `<ikenga-workspace>/.claude/skills/groundwork/` | What the workspace edits + dogfoods. **Edit here.** |
-| **Canonical release** (this package) | `ikenga-pkgs/packages/skills/groundwork/` | ADR-009 home, Changesets-versioned. Synced FROM dev. |
-| **Published mirror** | [`royalti-io/groundwork`](https://github.com/royalti-io/groundwork) | The `npx skills add` install surface. Built FROM this package. |
+| **Source** (this package) | `ikenga-pkgs/packages/skills/groundwork/skills/groundwork/` | ADR-009 home, Changesets-versioned. **Edit here.** |
+| **Workspace dogfood** | `<ikenga-workspace>/.claude/skills/groundwork/` | A **symlink** into the path above — not a copy. |
+| **Published mirror** | [`ikenga-hq/groundwork`](https://github.com/ikenga-hq/groundwork) | The `npx skills add` install surface. Built FROM this package. |
 
-Every synced file under `./skills/groundwork/` carries a `GENERATED` banner —
-**never hand-edit it**; edit the dev source and re-run the sync.
+Why the change: the previous layout kept the dev source in `ikenga-workspace`, which is
+**private**, and copied it into this **public** package via `sync-from-dev.mjs`. Contributors
+could read the published skill but not the file anyone actually edited, and every change
+needed a sync hop that could silently drift. The script is gone; there is nothing to drift.
 
-- `pnpm sync:from-dev` — copies the dev source `.claude/skills/groundwork/` →
-  `./skills/groundwork/` (re-bannered; generates `PORTABILITY.md`). Use
-  `--src <dir>` to point at a specific dev checkout.
-- `pnpm build:mirror` — emits the standalone `royalti-io/groundwork` mirror
-  tree (package.json + README + install.sh + `skills/groundwork/`) to
-  `./dist-mirror` for review before pushing.
+Files no longer carry a `GENERATED` banner, because they are no longer generated.
+`PORTABILITY.md` was emitted by the old sync script and is now hand-maintained source.
 
-> Restored the forward flow after the `sync-from-canonical` reversal (PR #24)
-> was found to rest on a fabricated source-of-truth sign-off. The dev source is
-> canonical; this package and the mirror are generated from it.
+- `pnpm build:mirror` — emits the standalone `ikenga-hq/groundwork` mirror tree
+  (package.json + README + install.sh + `skills/groundwork/`) to `./dist-mirror` for review
+  before pushing. Note the mirror repo's own `README.md`, `CONTRIBUTING.md`, `.github/` and
+  `assets/` are hand-maintained there and are **not** emitted — a blanket sync would delete
+  them.
 
 ## Portability
 
