@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
- * build-mirror.mjs — emit the standalone `royalti-io/groundwork` mirror tree.
+ * build-mirror.mjs — emit the standalone `ikenga-hq/groundwork` mirror tree.
  *
- * The mirror repo is the `npx skills add royalti-io/groundwork` install
+ * The mirror repo is the `npx skills add ikenga-hq/groundwork` install
  * surface. It mirrors the proven `ikenga-artifact-builder` layout:
  *
  *   <out>/
@@ -14,7 +14,7 @@
  *   └── skills/groundwork/   (copied from this package's synced tree)
  *
  * This script does NOT push anywhere. It only produces the tree locally so a
- * (gated) follow-up can review + push it to royalti-io/groundwork.
+ * (gated) follow-up can review + push it to ikenga-hq/groundwork.
  *
  * Run `sync:from-dev` first so ./skills/groundwork/ is current.
  *
@@ -52,7 +52,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const PKG_ROOT = resolve(__dirname, '..');
 const REPO_ROOT = resolve(PKG_ROOT, '../../..');
 const SKILL_NAME = 'groundwork';
-const MIRROR_REPO = 'royalti-io/groundwork';
+const MIRROR_REPO = 'ikenga-hq/groundwork';
 
 const outIdx = process.argv.indexOf('--out');
 const OUT = outIdx !== -1 ? resolve(process.argv[outIdx + 1]) : join(PKG_ROOT, 'dist-mirror');
@@ -204,12 +204,12 @@ const INSTALL_SH = `#!/usr/bin/env bash
 # \`git -C ~/.cache/ikenga-skills/groundwork pull\`.
 #
 # Usage:
-#   curl -sSL https://raw.githubusercontent.com/royalti-io/groundwork/main/install.sh | bash
+#   curl -sSL https://raw.githubusercontent.com/ikenga-hq/groundwork/main/install.sh | bash
 #
 # Env overrides:
 #   SKILLS_DIR    target skills dir (default: $HOME/.claude/skills)
 #   CACHE_DIR     clone cache dir   (default: $HOME/.cache/ikenga-skills)
-#   REPO_URL      repo to clone     (default: https://github.com/royalti-io/groundwork.git)
+#   REPO_URL      repo to clone     (default: https://github.com/ikenga-hq/groundwork.git)
 #   REF           git ref to check out (default: main)
 
 set -euo pipefail
@@ -217,7 +217,7 @@ set -euo pipefail
 SKILL_NAME="groundwork"
 SKILLS_DIR="\${SKILLS_DIR:-$HOME/.claude/skills}"
 CACHE_DIR="\${CACHE_DIR:-$HOME/.cache/ikenga-skills}"
-REPO_URL="\${REPO_URL:-https://github.com/royalti-io/groundwork.git}"
+REPO_URL="\${REPO_URL:-https://github.com/ikenga-hq/groundwork.git}"
 REF="\${REF:-main}"
 
 CLONE_DIR="$CACHE_DIR/$SKILL_NAME"
@@ -281,7 +281,7 @@ light up live inside the Ikenga shell:
 - **Plans index** (\`<plans-dir>/_index.html\`) — a cross-plan dashboard, one card per plan.
 
 > **This repo is a generated mirror.** The canonical source lives in
-> \`royalti-io/ikenga-pkgs\` at \`packages/skills/groundwork/\` (ADR-009), itself
+> \`ikenga-hq/ikenga-pkgs\` at \`packages/skills/groundwork/\` (ADR-009), itself
 > synced from the workspace dev copy. Do not edit files here — they are
 > overwritten by the mirror build.
 
@@ -294,23 +294,23 @@ OpenCode, and 50+ other agents.
 
 \`\`\`bash
 # Global install (recommended — available across all projects)
-npx skills add royalti-io/groundwork -g
+npx skills add ikenga-hq/groundwork -g
 
 # Project install (committed with your repo, shared with team)
-npx skills add royalti-io/groundwork
+npx skills add ikenga-hq/groundwork
 \`\`\`
 
 ### Git clone
 
 \`\`\`bash
-git clone https://github.com/royalti-io/groundwork.git
+git clone https://github.com/ikenga-hq/groundwork.git
 cp -r groundwork/skills/groundwork ~/.claude/skills/
 \`\`\`
 
 ### Curl one-liner
 
 \`\`\`bash
-curl -sSL https://raw.githubusercontent.com/royalti-io/groundwork/main/install.sh | bash
+curl -sSL https://raw.githubusercontent.com/ikenga-hq/groundwork/main/install.sh | bash
 \`\`\`
 
 The installer drops the skill into \`~/.claude/skills/groundwork/\` via symlink

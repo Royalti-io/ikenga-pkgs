@@ -11,7 +11,7 @@ import {
   resolveInstallPlan,
 } from '../dist/index.js';
 
-const REGISTRY_URL = 'https://royalti-io.github.io/ikenga-registry/index.json';
+const REGISTRY_URL = 'https://registry.ikenga.dev/index.json';
 const REGISTRY_PUBKEY =
   'RWRTqugAYXnZRgZPMyuqRNB3G41wg+AhSU2yT8nmDNNQlWQPeCfRXAvI';
 

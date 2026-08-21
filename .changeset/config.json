@@ -3,7 +3,7 @@
   "changelog": [
     "@changesets/changelog-github",
     {
-      "repo": "Royalti-io/ikenga-pkgs"
+      "repo": "ikenga-hq/ikenga-pkgs"
     }
   ],
   "commit": false,

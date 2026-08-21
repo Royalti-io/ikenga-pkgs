@@ -34,7 +34,7 @@ import { readdirSync, statSync } from 'node:fs';
 import { publisherKeyFromPub } from './sign-manifest.mjs';
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const REGISTRY_REPO = 'Royalti-io/ikenga-registry';
+const REGISTRY_REPO = 'ikenga-hq/ikenga-registry';
 
 const REQUIRED_ENV = ['PUBLISHED', 'REGISTRY_REPO_PAT', 'REGISTRY_SIGNING_PRIVATE_KEY'];
 for (const k of REQUIRED_ENV) {
