@@ -6,7 +6,7 @@ name: Update registry (manual)
 #
 # Usage:
 #   gh workflow run registry-update.yml \
-#     --repo Royalti-io/ikenga-pkgs \
+#     --repo ikenga-hq/ikenga-pkgs \
 #     -f published='[{"name":"@ikenga/pkg-tasks","version":"0.2.0"},{"name":"@ikenga/pkg-suite","version":"0.3.0"},{"name":"@ikenga/pkg-engine-cursor-agent","version":"0.1.0"}]'
 
 on:
