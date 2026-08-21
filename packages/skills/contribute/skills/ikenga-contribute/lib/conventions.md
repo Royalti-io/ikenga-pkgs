@@ -1,7 +1,7 @@
 # Conventions (consumed, not invented)
 
 This is a **cached pointer** to the project's published rules. The authoritative
-sources are the org [`CONTRIBUTING.md`](https://github.com/Royalti-io/.github/blob/main/CONTRIBUTING.md)
+sources are the org [`CONTRIBUTING.md`](https://github.com/ikenga-hq/.github/blob/main/CONTRIBUTING.md)
 and each repo's own files. If anything here looks stale, read the live source and
 trust that. **Never state a rule to a contributor that you can't trace to one of
 these sources.**
@@ -51,5 +51,5 @@ Inbound = outbound: opening a PR licenses the contribution under the project's
 ## Issue / PR templates
 
 Issue templates and the PR template come from the target repo's `.github/` (or the
-org default at `Royalti-io/.github` when the repo has none). Read the actual
+org default at `ikenga-hq/.github` when the repo has none). Read the actual
 template at draft time — don't assume the field-set.

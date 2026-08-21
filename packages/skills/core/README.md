@@ -8,7 +8,7 @@ on nothing.
 ## Install
 
 ```bash
-npx skills add royalti-io/skill-core   # coming in the publish session
+npx skills add ikenga-hq/skill-core   # coming in the publish session
 ```
 
 Or via the Ikenga CLI once the 3-copy publish sync is wired (see
@@ -38,5 +38,5 @@ Apache-2.0 — see [LICENSE](../../LICENSE) (monorepo root).
 
 WP-15 (atelier Phase 4 prerequisite). Shipping this resolves the
 `depends_on: ['skill-core']` edge that `@ikenga/skill-pa` — and every future
-domain skill — already declares. Publish sync (npm + `royalti-io/skill-core`
+domain skill — already declares. Publish sync (npm + `ikenga-hq/skill-core`
 mirror) is the supervised follow-up in [PUBLISHING.md](./PUBLISHING.md).

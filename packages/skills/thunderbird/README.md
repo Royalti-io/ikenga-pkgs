@@ -10,7 +10,7 @@ store at run time. No hardcoded paths or account-specific credential names.
 ## Install
 
 ```bash
-npx skills add royalti-io/skill-thunderbird   # publish deferred (supervised)
+npx skills add ikenga-hq/skill-thunderbird   # publish deferred (supervised)
 ```
 
 Or via the Ikenga CLI once the 3-copy publish sync is wired (WP-14 pattern).

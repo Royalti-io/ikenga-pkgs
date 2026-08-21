@@ -13,7 +13,7 @@ Two invariants: it **consumes the project's published conventions** (never inven
 ## Install
 
 ```bash
-npx skills add royalti-io/ikenga-contribute
+npx skills add ikenga-hq/ikenga-contribute
 ```
 
 In a running Ikenga shell, install it from the Ọba catalog.

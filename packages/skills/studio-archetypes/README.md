@@ -17,7 +17,7 @@ Studio archetype suite — the 7 video archetypes (ai-short, explainer, montage,
 ## Install
 
 ```bash
-npx skills add royalti-io/studio-archetypes   # coming in the publish session
+npx skills add ikenga-hq/studio-archetypes   # coming in the publish session
 ```
 
 ## Peer dependency

@@ -9,7 +9,7 @@ Engine-agnostic 3-pass storyboard workflow. The only Studio-coupled fragment is 
 ## Install
 
 ```bash
-npx skills add royalti-io/storyboard-workflow   # coming in the publish session
+npx skills add ikenga-hq/storyboard-workflow   # coming in the publish session
 ```
 
 ## Provenance

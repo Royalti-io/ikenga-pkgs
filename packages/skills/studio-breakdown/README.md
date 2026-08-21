@@ -7,7 +7,7 @@ Script → storyboard, in one pass. Segments a script into shots (cells) and ext
 ## Install
 
 ```bash
-npx skills add royalti-io/studio-breakdown
+npx skills add ikenga-hq/studio-breakdown
 ```
 
 ## Use

@@ -46,15 +46,15 @@ Copy 1  ikenga/.claude/skills/studio-toolchain/  ← dev source (workspace dogfo
 Copy 2  ikenga-pkgs/packages/skills/studio-toolchain/  ← canonical (this repo; Changesets-versioned)
    ↓    node ./scripts/build-mirror.mjs
 Copy 3  dist-mirror/                                     ← staged mirror tree (local only)
-   ↓    git push royalti-io/studio-toolchain
-Mirror  github.com/royalti-io/studio-toolchain           ← public mirror (install target)
+   ↓    git push ikenga-hq/studio-toolchain
+Mirror  github.com/ikenga-hq/studio-toolchain           ← public mirror (install target)
 ```
 
 For the initial publish, Copy 2 (this directory) is the authoritative source;
 `sync-from-dev` becomes relevant on subsequent edit→publish cycles. Author
 `scripts/sync-from-dev.mjs` + `scripts/build-mirror.mjs` modelled on the
 `skill-pa` / `skill-groundwork` equivalents (change `SKILL_NAME = 'studio-toolchain'`,
-`SKILL_SLUG = 'studio-toolchain'`, `MIRROR_REPO = 'royalti-io/studio-toolchain'`,
+`SKILL_SLUG = 'studio-toolchain'`, `MIRROR_REPO = 'ikenga-hq/studio-toolchain'`,
 and the `--src` path to `ikenga/.claude/skills/studio-toolchain/`).
 
 The package's `files` field controls what ships to npm:
@@ -107,13 +107,13 @@ pnpm --filter @ikenga/studio-toolchain publish --access public
 ```bash
 # From packages/skills/studio-toolchain/
 node ./scripts/build-mirror.mjs
-gh repo create royalti-io/studio-toolchain \
+gh repo create ikenga-hq/studio-toolchain \
   --public \
   --description "studio-toolchain — Ikenga Studio toolchain bundle (init/oneshot/watch/archetype-build/block-author/narration/freeform)" \
   --homepage "https://ikenga.dev"
 cd dist-mirror && git init -b main && git add . \
   && git commit -m "chore: initial mirror from @ikenga/studio-toolchain@0.1.0" \
-  && git remote add origin https://github.com/royalti-io/studio-toolchain.git \
+  && git remote add origin https://github.com/ikenga-hq/studio-toolchain.git \
   && git push -u origin main
 ```
 
@@ -122,7 +122,7 @@ cd dist-mirror && git init -b main && git add . \
 ```bash
 mkdir /tmp/studio-toolchain-test && cd /tmp/studio-toolchain-test
 # Install the bundle — the skills CLI runs --skill '*' for kind:bundle
-npx skills add royalti-io/studio-toolchain
+npx skills add ikenga-hq/studio-toolchain
 ls .claude/skills/      # expect all 7 member skill dirs present
 ```
 
@@ -141,7 +141,7 @@ ls .claude/skills/      # expect all 7 member skill dirs present
 - The `@ikenga/` npm scope is owned by Royalti, Inc. The granular publish token
   is saved in `~/.npmrc`; it expires 2026-08-20. Regenerate via `claude-in-chrome`
   if expired (see memory: `npm_publish_token`).
-- `royalti-io/studio-toolchain` does not exist yet. Creating it is an explicit
+- `ikenga-hq/studio-toolchain` does not exist yet. Creating it is an explicit
   supervised gate (Step 4).
 - Keep `private: true` in the mirror `package.json` — the mirror repo is an
   install surface, not a second npm publish path.

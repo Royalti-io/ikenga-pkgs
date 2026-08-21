@@ -18,8 +18,8 @@ Copy 1  ikenga/.claude/skills/pa/       ← dev source (workspace dogfood)
 Copy 2  ikenga-pkgs/packages/skills/pa/ ← canonical (this repo; Changesets-versioned)
    ↓    node ./scripts/build-mirror.mjs
 Copy 3  dist-mirror/                     ← staged mirror tree (local only)
-   ↓    git push royalti-io/skill-pa
-Mirror  github.com/royalti-io/skill-pa  ← public mirror (npx skills add target)
+   ↓    git push ikenga-hq/skill-pa
+Mirror  github.com/ikenga-hq/skill-pa  ← public mirror (npx skills add target)
 ```
 
 ### Copy 1 — dev source
@@ -60,7 +60,7 @@ Packages" PR is merged.
 Path: `packages/skills/pa/dist-mirror/` (local only, gitignored)
 
 `build-mirror.mjs` (to be written — see §Scripts below) assembles a
-self-contained mirror tree that matches the `royalti-io/groundwork` layout:
+self-contained mirror tree that matches the `ikenga-hq/groundwork` layout:
 
 ```
 dist-mirror/
@@ -73,7 +73,7 @@ dist-mirror/
 ```
 
 The mirror tree is **not committed** to `ikenga-pkgs`. It is a build output
-pushed (by hand, gated) to `github.com/royalti-io/skill-pa`.
+pushed (by hand, gated) to `github.com/ikenga-hq/skill-pa`.
 
 ---
 
@@ -99,7 +99,7 @@ Assembles `dist-mirror/` from the synced `skills/pa/` tree plus generated
 `package.json`, `README.md`, `install.sh`, `LICENSE`, `.gitignore`.
 
 Reference: `packages/skills/groundwork/scripts/build-mirror.mjs` — adapt by
-changing `SKILL_NAME = 'pa'`, `MIRROR_REPO = 'royalti-io/skill-pa'`.
+changing `SKILL_NAME = 'pa'`, `MIRROR_REPO = 'ikenga-hq/skill-pa'`.
 
 ---
 
@@ -177,8 +177,8 @@ node ./scripts/build-mirror.mjs
 ### Step 7 — Create the mirror repo (supervised, one-time)
 
 ```bash
-# Requires gh CLI authenticated as royalti-io org member.
-gh repo create royalti-io/skill-pa \
+# Requires gh CLI authenticated as ikenga-hq org member.
+gh repo create ikenga-hq/skill-pa \
   --public \
   --description "PA dispatch skill for Ikenga — briefing, triage, send-queue" \
   --homepage "https://ikenga.dev"
@@ -188,7 +188,7 @@ cd packages/skills/pa/dist-mirror
 git init -b main
 git add .
 git commit -m "chore: initial mirror from @ikenga/skill-pa@0.1.0"
-git remote add origin https://github.com/royalti-io/skill-pa.git
+git remote add origin https://github.com/ikenga-hq/skill-pa.git
 git push -u origin main
 ```
 
@@ -200,7 +200,7 @@ git push -u origin main
 ```bash
 # In a clean temp dir, confirm the npx skills add surface works:
 mkdir /tmp/skill-pa-test && cd /tmp/skill-pa-test
-npx skills add royalti-io/skill-pa
+npx skills add ikenga-hq/skill-pa
 ls .claude/skills/pa/
 # Expect SKILL.md + actions/ + lib/ + agents/
 ```
@@ -226,7 +226,7 @@ After the initial publish, the edit → publish cycle is:
 2. `pnpm sync:from-dev` (from `packages/skills/pa/`) to propagate to Copy 2.
 3. `pnpm changeset` (from `ikenga-pkgs/`) to record the bump.
 4. PR → merge → Changesets "Version Packages" PR → merge → auto-publish.
-5. `pnpm build:mirror` → review `dist-mirror/` → push to `royalti-io/skill-pa`.
+5. `pnpm build:mirror` → review `dist-mirror/` → push to `ikenga-hq/skill-pa`.
 
 ---
 
@@ -235,7 +235,7 @@ After the initial publish, the edit → publish cycle is:
 - The `@ikenga/` npm scope is owned by Royalti, Inc. The granular publish
   token is saved in `~/.npmrc`; it expires 2026-08-20. Regenerate via
   `claude-in-chrome` if expired (see memory: `npm_publish_token`).
-- `royalti-io/skill-pa` does not exist yet. Creating it is an explicit
+- `ikenga-hq/skill-pa` does not exist yet. Creating it is an explicit
   supervised gate (Step 7 above).
 - The `dist-mirror/` directory should be added to `.gitignore` (ikenga-pkgs
   root or this package's local `.gitignore`) so it is never accidentally

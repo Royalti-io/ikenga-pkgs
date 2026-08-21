@@ -41,7 +41,7 @@ purpose-built `ikenga-pkg-builder` skill — it does **not** reimplement scaffol
    - On merge, the registry + `npx skills add` / Ọba catalog pick it up.
 
    For a standalone skill repo instead, the install path is
-   `npx skills add royalti-io/<repo>`.
+   `npx skills add ikenga-hq/<repo>`.
 
 ## Notes
 

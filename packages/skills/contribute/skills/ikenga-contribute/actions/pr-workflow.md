@@ -8,7 +8,7 @@ each outward step (`push`, `pr create`).
 ## What it does
 
 1. **Locate the work.** Identify the repo (cwd git remote) and confirm it's an
-   Ikenga repo under `Royalti-io`. Read `git status` / `git diff` to see what's
+   Ikenga repo under `ikenga-hq`. Read `git status` / `git diff` to see what's
    changed. If the change is large or spans two unrelated concerns, suggest
    splitting into focused PRs.
 
@@ -39,7 +39,7 @@ each outward step (`push`, `pr create`).
 7. **Preview + confirm, then push + open:**
    ```bash
    git push -u origin <branch>          # after confirm
-   gh pr create -R Royalti-io/<repo> --base main --head <branch> \
+   gh pr create -R ikenga-hq/<repo> --base main --head <branch> \
      --title "<conventional title>" --body-file <filled-template>
    ```
    Show the title + body first; get explicit go for both the push and the PR. Print

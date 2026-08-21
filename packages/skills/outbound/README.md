@@ -9,7 +9,7 @@ the outbound-channel approved-drafts commit, per the **R22 founder decision**).
 ## Install
 
 ```bash
-npx skills add royalti-io/skill-outbound   # publish deferred (supervised)
+npx skills add ikenga-hq/skill-outbound   # publish deferred (supervised)
 ```
 
 Or via the Ikenga CLI once the 3-copy publish sync is wired (WP-14 pattern).

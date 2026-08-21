@@ -11,13 +11,13 @@ the contributor sends.
    owns the problem, use the role column to help them choose.
 
 2. **Pick the type.** Bug report or feature request? (Questions/ideas → route to
-   [GitHub Discussions](https://github.com/orgs/Royalti-io/discussions) instead —
+   [GitHub Discussions](https://github.com/orgs/ikenga-hq/discussions) instead —
    don't open an issue.) Security problem? **Stop** — route to private reporting
    (`SECURITY.md`), never a public issue.
 
 3. **Read the actual template field-set.** Fetch the target repo's template
    (`.github/ISSUE_TEMPLATE/bug_report.md` or `feature_request.md`); fall back to
-   the org default at `Royalti-io/.github` if the repo has none. Parse the fields —
+   the org default at `ikenga-hq/.github` if the repo has none. Parse the fields —
    do **not** assume them (templates drift). Use `gh api` or `WebFetch` on the raw
    file.
 
@@ -39,7 +39,7 @@ the contributor sends.
 
 7. **Submit only on confirmation:**
    ```bash
-   gh issue create -R Royalti-io/<repo> \
+   gh issue create -R ikenga-hq/<repo> \
      --title "<title>" --label "<labels>" --body-file <tmp>
    ```
    (`--body-file`, not `--web` — the `gh` CLI can't render YAML issue forms, so we

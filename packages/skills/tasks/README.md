@@ -7,7 +7,7 @@ tasks domain. **Dispatch-only** (R4): task CRUD belongs to the tasks app pkg
 ## Install
 
 ```bash
-npx skills add royalti-io/skill-tasks   # coming in WP-14
+npx skills add ikenga-hq/skill-tasks   # coming in WP-14
 ```
 
 Or via the Ikenga CLI once the 3-copy publish sync is wired (WP-14).

@@ -18,7 +18,7 @@ allowed-tools: Read, Bash, Glob, Grep, WebFetch, AskUserQuestion, Skill
 # ikenga-contribute
 
 The contributor's copilot for [Ikenga](https://ikenga.dev). Ikenga is a multi-repo,
-Apache-2.0 project under [`github.com/Royalti-io`](https://github.com/Royalti-io).
+Apache-2.0 project under [`github.com/ikenga-hq`](https://github.com/ikenga-hq).
 This skill lowers the friction of three things contributors do, and **defers to the
 project's own published conventions for everything** (see `lib/conventions.md`).
 
@@ -42,7 +42,7 @@ run `issue-draft` first, then `pr-workflow`, carrying the issue number forward.
    format, branch naming, which repos need a changeset, and the issue/PR template
    field-sets all live in the project, not in this skill. `lib/conventions.md` is a
    cached pointer; when in doubt, read the live source it names
-   ([`Royalti-io/.github/CONTRIBUTING.md`](https://github.com/Royalti-io/.github/blob/main/CONTRIBUTING.md)
+   ([`ikenga-hq/.github/CONTRIBUTING.md`](https://github.com/ikenga-hq/.github/blob/main/CONTRIBUTING.md)
    and the target repo's templates). Never tell a contributor a rule this skill
    made up.
 
@@ -62,7 +62,7 @@ alone (it abandons the contributor at a blank form) and never submit unconfirmed
 
 ## Scope
 
-In scope: Ikenga repos under `Royalti-io`. Out of scope: merging/reviewing PRs,
+In scope: Ikenga repos under `ikenga-hq`. Out of scope: merging/reviewing PRs,
 anything outside the org, and CRUD on a running shell's data (that's the domain
 pkgs' job). For deep package-authoring mechanics this skill delegates to the
 `ikenga-pkg-builder` skill rather than reimplementing it.
