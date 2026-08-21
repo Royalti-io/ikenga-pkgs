@@ -1,7 +1,7 @@
 {
   "name": "@ikenga/mcp-browser",
   "version": "0.3.0",
-  "mcpName": "io.github.ikenga-hq/ikenga-pkg-mcp-browser",
+  "mcpName": "dev.ikenga/mcp-browser",
   "description": "Model Context Protocol (MCP) server that lets agents drive native child webviews in the Ikenga desktop app — open a pane on a partner portal (Spotify-for-Artists, Bandcamp, Linkfire, etc.), snapshot it, click, fill, and wait. Bypasses iframe CSP `frame-ancestors` by using the system webview.",
   "license": "Apache-2.0",
   "author": "Royalti, Inc.",
