@@ -1,5 +1,14 @@
 # @ikenga/mcp-browser
 
+## 0.3.1
+
+### Patch Changes
+
+- [#59](https://github.com/ikenga-hq/ikenga-pkgs/pull/59) [`81ff661`](https://github.com/ikenga-hq/ikenga-pkgs/commit/81ff6614f9998ef39c7bd06493aa360cd75de891) Thanks [@nedjamez](https://github.com/nedjamez)! - Move MCP server identities to the `dev.ikenga/*` namespace, authenticated
+  against the `ikenga.dev` domain rather than a GitHub org name. The previous
+  `io.github.Royalti-io/*` identities were invalidated by the move to the
+  `ikenga-hq` org; a domain-based namespace cannot be broken the same way again.
+
 ## 0.3.0
 
 ### Minor Changes
