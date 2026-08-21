@@ -17,10 +17,10 @@ HTML views — a **board** (`artifact/board.html`), a fully-offline file
 
 ```bash
 # Global install (recommended — available across all projects)
-npx skills add royalti-io/groundwork -g
+npx skills add ikenga-hq/groundwork -g
 
 # Project install (committed with your repo)
-npx skills add royalti-io/groundwork
+npx skills add ikenga-hq/groundwork
 ```
 
 `npx skills add` resolves `skills/groundwork/SKILL.md` and symlinks it into

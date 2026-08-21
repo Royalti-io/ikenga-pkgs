@@ -9,7 +9,7 @@ Portable beat-detection skill — self-contained beat_detect.py (stdlib + option
 ## Install
 
 ```bash
-npx skills add royalti-io/studio-beat-detect   # coming in the publish session
+npx skills add ikenga-hq/studio-beat-detect   # coming in the publish session
 ```
 
 ## beat_detect.py

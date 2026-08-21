@@ -9,7 +9,7 @@ Studio toolchain preflight — pure-shell check.sh that verifies the local rende
 ## Install
 
 ```bash
-npx skills add royalti-io/studio-doctor   # coming in the publish session
+npx skills add ikenga-hq/studio-doctor   # coming in the publish session
 ```
 
 ## check.sh

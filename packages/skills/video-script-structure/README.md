@@ -9,7 +9,7 @@ Pure schema/convention doc for video script structure. Engine-agnostic, zero dep
 ## Install
 
 ```bash
-npx skills add royalti-io/video-script-structure   # coming in the publish session
+npx skills add ikenga-hq/video-script-structure   # coming in the publish session
 ```
 
 ## Provenance

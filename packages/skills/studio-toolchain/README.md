@@ -15,7 +15,7 @@ Studio toolchain suite — the interview/instantiate/render/author loop (init, o
 ## Install
 
 ```bash
-npx skills add royalti-io/studio-toolchain   # coming in the publish session
+npx skills add ikenga-hq/studio-toolchain   # coming in the publish session
 ```
 
 ## Peer dependency

@@ -7,7 +7,7 @@ the tasks and mail pkgs.
 ## Install
 
 ```bash
-npx skills add royalti-io/skill-pa   # coming in WP-14
+npx skills add ikenga-hq/skill-pa   # coming in WP-14
 ```
 
 Or via the Ikenga CLI once the 3-copy publish sync is wired (WP-14).

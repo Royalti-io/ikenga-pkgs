@@ -7,7 +7,7 @@ not here.
 ## Install
 
 ```bash
-npx skills add royalti-io/skill-mail   # publish deferred (supervised)
+npx skills add ikenga-hq/skill-mail   # publish deferred (supervised)
 ```
 
 Or via the Ikenga CLI once the 3-copy publish sync is wired (WP-14 pattern).

@@ -45,15 +45,15 @@ Copy 1  ikenga/.claude/skills/studio-archetypes/  ← dev source (workspace dogf
 Copy 2  ikenga-pkgs/packages/skills/studio-archetypes/  ← canonical (this repo; Changesets-versioned)
    ↓    node ./scripts/build-mirror.mjs
 Copy 3  dist-mirror/                                      ← staged mirror tree (local only)
-   ↓    git push royalti-io/studio-archetypes
-Mirror  github.com/royalti-io/studio-archetypes          ← public mirror (install target)
+   ↓    git push ikenga-hq/studio-archetypes
+Mirror  github.com/ikenga-hq/studio-archetypes          ← public mirror (install target)
 ```
 
 For the initial publish, Copy 2 (this directory) is the authoritative source;
 `sync-from-dev` becomes relevant on subsequent edit→publish cycles. Author
 `scripts/sync-from-dev.mjs` + `scripts/build-mirror.mjs` modelled on the
 `skill-pa` / `skill-groundwork` equivalents (change `SKILL_NAME = 'studio-archetypes'`,
-`SKILL_SLUG = 'studio-archetypes'`, `MIRROR_REPO = 'royalti-io/studio-archetypes'`,
+`SKILL_SLUG = 'studio-archetypes'`, `MIRROR_REPO = 'ikenga-hq/studio-archetypes'`,
 and the `--src` path to `ikenga/.claude/skills/studio-archetypes/`).
 
 The package's `files` field controls what ships to npm:
@@ -107,13 +107,13 @@ pnpm --filter @ikenga/studio-archetypes publish --access public
 ```bash
 # From packages/skills/studio-archetypes/
 node ./scripts/build-mirror.mjs
-gh repo create royalti-io/studio-archetypes \
+gh repo create ikenga-hq/studio-archetypes \
   --public \
   --description "studio-archetypes — Ikenga Studio archetype bundle (7 archetypes + core blocks + animation patterns)" \
   --homepage "https://ikenga.dev"
 cd dist-mirror && git init -b main && git add . \
   && git commit -m "chore: initial mirror from @ikenga/studio-archetypes@0.1.0" \
-  && git remote add origin https://github.com/royalti-io/studio-archetypes.git \
+  && git remote add origin https://github.com/ikenga-hq/studio-archetypes.git \
   && git push -u origin main
 ```
 
@@ -122,7 +122,7 @@ cd dist-mirror && git init -b main && git add . \
 ```bash
 mkdir /tmp/studio-archetypes-test && cd /tmp/studio-archetypes-test
 # Install the bundle — the skills CLI runs --skill '*' for kind:bundle
-npx skills add royalti-io/studio-archetypes
+npx skills add ikenga-hq/studio-archetypes
 ls .claude/skills/      # expect all 9 member skill dirs present
 ```
 
@@ -141,7 +141,7 @@ ls .claude/skills/      # expect all 9 member skill dirs present
 - The `@ikenga/` npm scope is owned by Royalti, Inc. The granular publish token
   is saved in `~/.npmrc`; it expires 2026-08-20. Regenerate via `claude-in-chrome`
   if expired (see memory: `npm_publish_token`).
-- `royalti-io/studio-archetypes` does not exist yet. Creating it is an explicit
+- `ikenga-hq/studio-archetypes` does not exist yet. Creating it is an explicit
   supervised gate (Step 4).
 - Keep `private: true` in the mirror `package.json` — the mirror repo is an
   install surface, not a second npm publish path.
