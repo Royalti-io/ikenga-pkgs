@@ -16,7 +16,7 @@
  * This script does NOT push anywhere. It only produces the tree locally so a
  * (gated) follow-up can review + push it to ikenga-hq/groundwork.
  *
- * Run `sync:from-dev` first so ./skills/groundwork/ is current.
+ * ./skills/groundwork/ is the source tree (no sync step since 2026-08-21).
  *
  * --- Version-parity guard ---------------------------------------------
  * This package's version is only trustworthy for the mirror once the
@@ -62,8 +62,8 @@ const SYNCED = join(PKG_ROOT, 'skills', SKILL_NAME);
 
 async function main() {
   if (!existsSync(join(SYNCED, 'SKILL.md'))) {
-    console.error(`[mirror] synced skill tree not found at ${SYNCED}`);
-    console.error(`[mirror] run \`pnpm sync:from-dev\` first.`);
+    console.error(`[mirror] skill source tree not found at ${SYNCED}`);
+    console.error(`[mirror] ./skills/groundwork/ is the source — it should not be missing.`);
     process.exit(1);
   }
 

@@ -1,10 +1,9 @@
-<!-- GENERATED — edit scripts/sync-from-dev.mjs (writePortabilityNote) instead. -->
 # Portability notes
 
 `groundwork` is built to scaffold a plan folder into **any** Claude Code
 project. A few references in this skill's shipped files point at paths that
 only exist in the workspace where the skill was authored
-(`royalti-io/ikenga`). They are **illustrative**, not requirements — a target
+(`ikenga-hq/ikenga`). They are **illustrative**, not requirements — a target
 project will not have them, and nothing breaks if they're absent. Per the
 locked WP-18 decision this is **document-don't-fix**: the references are
 disclosed here rather than rewritten. A future "full-portability" WP can

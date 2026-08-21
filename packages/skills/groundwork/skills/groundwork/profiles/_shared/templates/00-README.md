@@ -1,7 +1,6 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # {{goal}} — planning folder
 
-Living plan + research + interactive artifact for **{{goal}}**. Built with the [groundwork](https://github.com/royalti-io/groundwork) skill (profile: `{{profile}}`).
+Living plan + research + interactive artifact for **{{goal}}**. Built with the [groundwork](https://github.com/ikenga-hq/groundwork) skill (profile: `{{profile}}`).
 
 ## What's here
 

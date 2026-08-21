@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `explorer` — (re)generate `artifact/explorer.html`
 
 **Loaded when**: the user wants to browse the whole plan folder as a file explorer — a left file-tree + a right tabbed, type-dispatched viewer (markdown / iframe / image / pdf / json / code). Triggers: "groundwork explorer", "browse the plan files", "open the plan folder", "make a file explorer for this plan".

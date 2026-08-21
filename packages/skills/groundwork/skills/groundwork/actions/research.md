@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # action: `research` — external + internal research passes
 
 **Loaded when**: the user wants to fill `02-research-external.md` and/or `03-research-internal.md`, or refresh stale research.

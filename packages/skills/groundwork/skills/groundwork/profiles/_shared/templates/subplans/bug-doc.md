@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # {{topic}} — root cause + fix ({{date}})
 
 {{one_line_outcome}}

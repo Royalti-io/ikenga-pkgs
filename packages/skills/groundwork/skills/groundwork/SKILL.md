@@ -30,7 +30,6 @@ description: |
   (dashboard, mockup), route to ikenga-artifact-builder instead.
 allowed-tools: Read, Write, Edit, Bash, Glob, Grep, AskUserQuestion, Agent, Skill, Workflow, TaskCreate, TaskUpdate, TaskList, TaskGet
 ---
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 
 # groundwork — research → plan → orchestrate → act, packaged
 

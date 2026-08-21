@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # {{plan_title}} — master tracking
 
 The **master checklist of every part** (the {{vocab.work_unit}}s), grouped by tier. A part is **`[x]` locked** when its `parts/<tier>/<part>.md` doc is complete, a mockup is locked in `designs/`, and the **quality gate passed**.

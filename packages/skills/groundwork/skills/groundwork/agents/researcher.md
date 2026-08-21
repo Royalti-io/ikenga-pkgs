@@ -1,4 +1,3 @@
-<!-- GENERATED — edit .claude/skills/groundwork/ instead. Synced by sync-from-dev.mjs. -->
 # agent: researcher
 
 Brief template the `research` action passes to a spawned `general-purpose` agent.
