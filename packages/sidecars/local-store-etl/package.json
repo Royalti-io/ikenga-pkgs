@@ -7,7 +7,7 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "url": "git+https://github.com/ikenga-hq/ikenga-pkgs.git",
     "directory": "packages/sidecars/local-store-etl"
   },
   "scripts": {

@@ -17,11 +17,11 @@
   ],
   "homepage": "https://ikenga.dev",
   "bugs": {
-    "url": "https://github.com/Royalti-io/ikenga-pkgs/issues"
+    "url": "https://github.com/ikenga-hq/ikenga-pkgs/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Royalti-io/ikenga-pkgs.git",
+    "url": "git+https://github.com/ikenga-hq/ikenga-pkgs.git",
     "directory": "packages/skills/studio-archetypes"
   },
   "license": "Apache-2.0",
