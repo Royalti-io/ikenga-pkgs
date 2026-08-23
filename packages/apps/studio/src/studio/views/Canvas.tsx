@@ -68,6 +68,7 @@ import { useAsyncAction } from '../lib/use-async-action';
 import { useShotGenerate } from '../lib/use-shot-generate';
 import { SafeZoneBands } from '../media-controls';
 import { CellPoster, prefetchPosters } from './composition/CellPoster';
+import { NodeCanvas } from './NodeCanvas';
 import type {
   Anchor,
   AspectRatio,
@@ -498,6 +499,7 @@ export function CanvasView() {
   const [dropPath, setDropPath] = useState<Record<string, string>>({});
   const [copiedUid, setCopiedUid] = useState<string | null>(null);
   const [collapsedUids, setCollapsedUids] = useState<Set<string>>(() => new Set());
+  const [canvasMode, setCanvasMode] = useState<'rail' | 'graph'>('graph');
 
   const toggleCollapse = (uid: string) => {
     setCollapsedUids((prev) => {
@@ -1417,6 +1419,42 @@ export function CanvasView() {
         </div>
 
         <div className="flex shrink-0 items-center gap-1.5">
+          {/* Surface view switcher: Node Canvas (Graph) vs 1D Rail (G-61) */}
+          <div
+            role="tablist"
+            aria-label="Canvas mode"
+            className="flex gap-0.5 rounded-md border border-soft bg-sunken p-0.5"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={canvasMode === 'graph'}
+              onClick={() => setCanvasMode('graph')}
+              className={
+                'rounded px-2 py-0.5 text-[11px] ' +
+                (canvasMode === 'graph'
+                  ? 'bg-raised text-fg ring-1 ring-inset ring-[var(--border-soft)]'
+                  : 'text-fg-muted hover:text-fg')
+              }
+            >
+              Canvas
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={canvasMode === 'rail'}
+              onClick={() => setCanvasMode('rail')}
+              className={
+                'rounded px-2 py-0.5 text-[11px] ' +
+                (canvasMode === 'rail'
+                  ? 'bg-raised text-fg ring-1 ring-inset ring-[var(--border-soft)]'
+                  : 'text-fg-muted hover:text-fg')
+              }
+            >
+              Rail
+            </button>
+          </div>
+
           {/* Density — the shell's grid/loupe idiom, per project. */}
           <div
             role="tablist"
@@ -1498,6 +1536,12 @@ export function CanvasView() {
         </div>
       )}
 
+      {canvasMode === 'graph' ? (
+        <div className="min-h-0 flex-1">
+          <NodeCanvas />
+        </div>
+      ) : (
+        <>
       {/* The Rail — project-wide forge progress. One node per boarded shot, in
           board order; a projection of `railShots`, never a second source. */}
       <div className="shrink-0 border-b border-soft bg-surface px-6 py-3">
@@ -1600,6 +1644,8 @@ export function CanvasView() {
         </div>
         {seedLock && <div className="truncate text-fg-faint">{seedLock}</div>}
       </footer>
+      </>
+      )}
 
       {/* New cell dialog */}
       {addOpen && (
