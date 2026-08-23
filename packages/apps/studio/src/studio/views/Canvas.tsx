@@ -497,6 +497,16 @@ export function CanvasView() {
   const [genError, setGenErrorMap] = useState<Record<string, string>>({});
   const [dropPath, setDropPath] = useState<Record<string, string>>({});
   const [copiedUid, setCopiedUid] = useState<string | null>(null);
+  const [collapsedUids, setCollapsedUids] = useState<Set<string>>(() => new Set());
+
+  const toggleCollapse = (uid: string) => {
+    setCollapsedUids((prev) => {
+      const next = new Set(prev);
+      if (next.has(uid)) next.delete(uid);
+      else next.add(uid);
+      return next;
+    });
+  };
 
   const choiceFor = (uid: string): GenChoice => genChoice[uid] ?? DEFAULT_GEN_CHOICE;
   const patchChoice = (uid: string, patch: Partial<GenChoice>) =>
@@ -868,6 +878,68 @@ export function CanvasView() {
       setPaneView(focusedPane, 'cell');
     };
 
+    const isCollapsed = collapsedUids.has(item.uid);
+
+    if (isCollapsed) {
+      return (
+        <article
+          key={item.uid}
+          role="button"
+          data-state={nodeState}
+          data-track={track}
+          data-rung={item.rung}
+          tabIndex={item.uid === keyboardEntryUid ? 0 : -1}
+          onClick={() => setCellUid(item.uid)}
+          className={[
+            'cell-card group relative flex items-center justify-between gap-2 rounded border bg-surface px-2.5 py-1.5 text-left transition-shadow hover:shadow',
+            isLoupe ? 'w-full' : 'w-[198px] shrink-0',
+            CARD_ACCENT[nodeState],
+            isSelected ? 'outline-2 outline outline-offset-2 outline-[var(--achievement)]' : '',
+          ].join(' ')}
+          style={{
+            borderTopWidth: 2,
+            borderTopColor: `var(${track === 'a' ? '--agent' : track === 'b' ? '--info' : '--fg-faint'})`,
+          }}
+        >
+          <div className="flex min-w-0 items-center gap-1.5">
+            <button
+              type="button"
+              aria-label="Expand shot card"
+              onClick={(e) => { e.stopPropagation(); toggleCollapse(item.uid); }}
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-[9px] text-fg-faint hover:bg-raised hover:text-fg"
+            >
+              ▸
+            </button>
+            <span className="font-mono text-[9px] tabular-nums text-fg-faint">
+              {String(s.n).padStart(2, '0')}
+            </span>
+            <span className="truncate font-mono text-[9.5px] uppercase tracking-wider text-fg" title={item.uid}>
+              {shotId}
+            </span>
+            {RUNG_CHIP[item.rung] && (
+              <span className="shrink-0 rounded-sm border border-soft bg-raised px-1 py-px font-mono text-[8px] uppercase tracking-wider text-fg-muted">
+                {RUNG_CHIP[item.rung]}
+              </span>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-1.5 font-mono text-[9px]">
+            <span style={{ color: `var(${statusVar})` }}>
+              {tstate === 'rendered' ? '✓' : tstate === 'failed' ? '✕' : <span className="inline-block h-1.5 w-1.5 rounded-full" style={{ background: `var(${statusVar})` }} />}
+            </span>
+            {dur != null && <span className="tabular-nums text-fg-faint">{fmtDuration(dur)}</span>}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); openInCellView(); }}
+              className="hidden rounded border border-soft px-1 py-0.5 text-[8.5px] text-fg-muted hover:text-fg group-hover:block"
+              title="Open in Cell View"
+            >
+              Open
+            </button>
+          </div>
+        </article>
+      );
+    }
+
     return (
       <article
         key={item.uid}
@@ -932,6 +1004,14 @@ export function CanvasView() {
           ].join(' ')}
         >
           <span className="flex min-w-0 items-center gap-1.5">
+            <button
+              type="button"
+              aria-label="Collapse shot card"
+              onClick={(e) => { e.stopPropagation(); toggleCollapse(item.uid); }}
+              className="flex h-4 w-4 shrink-0 items-center justify-center rounded text-[9px] text-fg-faint hover:bg-raised hover:text-fg"
+            >
+              ▾
+            </button>
             <span className="font-mono text-[9px] tabular-nums text-fg-faint">
               {String(s.n).padStart(2, '0')}
             </span>
@@ -1361,6 +1441,20 @@ export function CanvasView() {
               </button>
             ))}
           </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (collapsedUids.size === railShots.length) {
+                setCollapsedUids(new Set());
+              } else {
+                setCollapsedUids(new Set(railShots.map((s) => s.item.uid)));
+              }
+            }}
+            className="rounded border border-[var(--border)] px-2 py-1 font-mono text-[10px] text-fg-muted hover:border-[var(--fg-faint)] hover:text-fg"
+            title={collapsedUids.size === railShots.length ? 'Expand all shot cards' : 'Collapse all shot cards'}
+          >
+            {collapsedUids.size === railShots.length ? '▾ Expand all' : '▸ Collapse all'}
+          </button>
           <button
             type="button"
             onClick={() => void refreshAnchors()}
