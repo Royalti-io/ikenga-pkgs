@@ -1830,7 +1830,14 @@ WHAT TO DO RIGHT NOW
           {wp.status !== 'done' && (
             <div className="detail-actions">
               <button className="btn" onClick={() => onCopy(wp)}><Icon name="copy" size={11} /> Copy brief</button>
-              <button className="btn is-primary" onClick={() => onStart(wp)} title={inShell ? "Send this WP's brief to your Chi" : 'Copy-prompt path'}><Icon name="play" size={10} /> Start</button>
+              {inShell ? (
+                <>
+                  <button className="btn is-primary" onClick={(e) => onStart(wp, e.shiftKey ? 'active-session' : 'new-session')} title="Start in new session dialog (Shift+Click to send to active session)"><Icon name="play" size={10} /> Start</button>
+                  <button className="btn btn-sm" onClick={() => onStart(wp, 'active-session')} title="Send brief directly to active session thread"><Icon name="send" size={10} /> Send to active</button>
+                </>
+              ) : (
+                <button className="btn is-primary" onClick={() => onStart(wp)} title="Outside Ikenga → copy prompt"><Icon name="play" size={10} /> Start</button>
+              )}
             </div>
           )}
         </section>
@@ -1942,7 +1949,14 @@ WHAT TO DO RIGHT NOW
                       {wp.status !== 'done' && (
                         <span className="wp-actions">
                           <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); onCopy(wp); }}><Icon name="copy" size={11} /> Copy</button>
-                          <button className="btn btn-sm is-primary" onClick={(e) => { e.stopPropagation(); onStart(wp); }} title={inShell ? "Send this WP's brief to your Chi" : 'Copy-prompt path'}><Icon name="play" size={10} /> Start</button>
+                          {inShell ? (
+                            <>
+                              <button className="btn btn-sm is-primary" onClick={(e) => { e.stopPropagation(); onStart(wp, e.shiftKey ? 'active-session' : 'new-session'); }} title="Start in new session (Shift+Click to send to active)"><Icon name="play" size={10} /> Start</button>
+                              <button className="btn btn-sm" onClick={(e) => { e.stopPropagation(); onStart(wp, 'active-session'); }} title="Send to active session thread"><Icon name="send" size={10} /> Send</button>
+                            </>
+                          ) : (
+                            <button className="btn btn-sm is-primary" onClick={(e) => { e.stopPropagation(); onStart(wp); }} title="Outside Ikenga → copy prompt"><Icon name="play" size={10} /> Start</button>
+                          )}
                         </span>
                       )}
                     </td>
@@ -2011,7 +2025,14 @@ WHAT TO DO RIGHT NOW
                     {wp.status !== 'done' && (
                       <div className="wp-card-actions">
                         <span className="btn btn-sm" onClick={(e) => { e.stopPropagation(); onCopy(wp); }}><Icon name="copy" size={10} /> Copy brief</span>
-                        <span className="btn btn-sm is-primary" onClick={(e) => { e.stopPropagation(); onStart(wp); }}><Icon name="play" size={9} /> Start</span>
+                        {inShell ? (
+                          <>
+                            <span className="btn btn-sm is-primary" onClick={(e) => { e.stopPropagation(); onStart(wp, e.shiftKey ? 'active-session' : 'new-session'); }} title="Start in new session (Shift+Click to send to active)"><Icon name="play" size={9} /> Start</span>
+                            <span className="btn btn-sm" onClick={(e) => { e.stopPropagation(); onStart(wp, 'active-session'); }} title="Send to active session thread"><Icon name="send" size={9} /> Send</span>
+                          </>
+                        ) : (
+                          <span className="btn btn-sm is-primary" onClick={(e) => { e.stopPropagation(); onStart(wp); }} title="Outside Ikenga → copy prompt"><Icon name="play" size={9} /> Start</span>
+                        )}
                       </div>
                     )}
                   </button>
@@ -2358,14 +2379,13 @@ WHAT TO DO RIGHT NOW
         return false;
       };
 
-      const onStart = async (wp) => {
+      const onStart = async (wp, mode = 'new-session') => {
         const text = briefFor(wp);
         const label = `${wp.id} — ${wp.title}`;
-        // In-shell: round-trip to art.openSessionDialog (WP-27) — the shell's
-        // New-Session dialog opens pre-filled with the brief, user picks
-        // chat/terminal + engine + cwd + clicks Start. Clipboard is the floor
-        // when the verb is absent / dialog cancelled / standalone.
-        if (inShell && art.openSessionDialog) {
+        if (mode === 'active-session' && inShell && art.sendToActiveSession) {
+          const res = await art.sendToActiveSession({ prompt: text, source: 'wp-card' });
+          if (flashResult(wp.id, res)) return;
+        } else if (inShell && art.openSessionDialog) {
           const res = await art.openSessionDialog({ initialPrompt: text, title: label, source: 'wp-card' });
           if (flashResult(wp.id, res)) return;
         }
@@ -2401,22 +2421,23 @@ WHAT TO DO RIGHT NOW
          {placeholder} tokens fill from the form rather than the META fallbacks.
          The standalone slash form is always what hits the clipboard so a user can
          drop it into any chat surface. */
-      const dispatchAction = async (action, extraMeta) => {
+      const dispatchAction = async (action, extraMeta, targetSurface) => {
         const meta = extraMeta ? { ...META, ...extraMeta } : META;
         const seeded = substituteAction(action.seededForm, meta, DATA.plan);
         const standalone = substituteAction(action.standaloneForm, meta, DATA.plan);
         const title = `groundwork · ${action.label}`;
+        const surface = targetSurface || action.surface;
         let result = { ok: false, reason: 'no-verb' };
         try {
-          if (action.surface === 'new-session' && art.openSessionDialog) {
+          if (surface === 'new-session' && art.openSessionDialog) {
             result = await art.openSessionDialog({ initialPrompt: seeded, title, source: 'palette' });
-          } else if (action.surface === 'active-session' && art.sendToActiveSession) {
+          } else if (surface === 'active-session' && art.sendToActiveSession) {
             result = await art.sendToActiveSession({ prompt: seeded, source: 'palette' });
           }
         } catch (e) { result = { ok: false, reason: 'threw' }; }
 
         if (result && result.ok) {
-          flash(action.surface === 'new-session'
+          flash(surface === 'new-session'
             ? (result.kind === 'terminal' ? `Started ${action.label} in terminal` : `Seeded new chat → ${action.label}`)
             : `Sent to active session → ${action.label}`);
           return;
@@ -2439,13 +2460,15 @@ WHAT TO DO RIGHT NOW
              pre-filled (research / design / review / orchestrate).
            · surface: 'active-session'       → dispatchAction → sendToActiveSession
              (clarify / status / refresh-board). */
-      const onPaletteFire = (action) => {
+      const onPaletteFire = (action, event) => {
         if (action.disabled) return;
         setPaletteOpen(false);
+        const isShift = event && (event.shiftKey || event.altKey);
+        const targetSurface = isShift ? (action.surface === 'new-session' ? 'active-session' : 'new-session') : action.surface;
         if (action.needsPicker === 'subplan' || action.needsPicker === 'init') {
-          setPicker({ kind: action.needsPicker, action }); return;
+          setPicker({ kind: action.needsPicker, action, targetSurface }); return;
         }
-        dispatchAction(action);
+        dispatchAction(action, null, targetSurface);
       };
 
       // onPickerSubmit (WP-23) — close the picker, then dispatch with the
@@ -2455,7 +2478,7 @@ WHAT TO DO RIGHT NOW
         const cur = picker;
         setPicker(null);
         if (!cur || !cur.action) return;
-        dispatchAction(cur.action, values);
+        dispatchAction(cur.action, values, cur.targetSurface);
       };
 
       const counts = useMemo(() => DATA.wps.reduce((a, w) => (a[w.status] = (a[w.status]||0)+1, a), {}), []);
