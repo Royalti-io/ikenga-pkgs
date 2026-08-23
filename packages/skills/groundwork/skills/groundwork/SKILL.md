@@ -58,6 +58,7 @@ Surface model:
 | Action: `refresh-living-spec` | Regenerates the `spec-state` fence inside `artifact/index.html` (Phasing/Decisions/Risks tabs) from `.groundwork.json` + `04` + `05` + `01 §Risks` | When the living-spec's auto tabs fall behind |
 | Action: `explorer` | (Re)generates `artifact/explorer.html` — a file-tree + tabbed viewer (with **search**) of the whole plan folder; sibling to the board (opens it as a tab) | Browse the plan's files as one navigable view |
 | Action: `plans-index` | (Re)generates `<plans-dir>/_index.html` — a **cross-plan** dashboard: one card per plan with status rollups + drill-in to each plan's explorer/board | See every plan in a project at once |
+| Action: `issue-sync` | Provisions & syncs native Git forge issues (GitHub/GitLab) for `WP-NN`s | Remote status tracking & PR integration |
 | Action: `status` | Read-only freshness + ID + design-coverage + sub-plan report | Anytime |
 
 `init` is the one entry point that doesn't require an existing `.groundwork.json`. Every other action refuses to run without one (and tells the user to run `init` first).
@@ -81,6 +82,7 @@ Match the user's request against the table; load the matching action file and fo
 | "groundwork explorer", "browse the plan files", "view/open the plan folder", "file explorer for this plan" | [`actions/explorer.md`](actions/explorer.md) | Build the typed file-tree model + write `artifact/explorer.html` (sibling to the board) |
 | "groundwork plans-index", "index all the plans", "plans overview/dashboard", "every plan in this project" | [`actions/plans-index.md`](actions/plans-index.md) | Scan a `plans/` dir + write the cross-plan `<plans-dir>/_index.html` |
 | "refresh the living spec", "update artifact/index.html", "the Phasing/Decisions/Risks tabs are stale" | [`actions/refresh-living-spec.md`](actions/refresh-living-spec.md) | Regenerate only the `spec-state` fence (Phasing/Decisions/Risks); the hand-authored Overview tab is never touched |
+| "groundwork issue-sync", "sync git issues", "export wps to issues", "pull issue status" | [`actions/issues.md`](actions/issues.md) | Detect gh/glab CLI; provision missing issues & perform bi-directional status sync |
 | "groundwork status", "where are we" | [`actions/status.md`](actions/status.md) | Read-only report |
 
 ### Discover vs. fast path
