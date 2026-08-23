@@ -684,12 +684,36 @@ def cmd_register_milestone(args):
     emit({"result": "registered", "phase": args.phase, "milestone": milestones[args.phase]})
 
 
+def _extract_phase_titles(plan_dir: str) -> dict:
+    p1 = os.path.join(plan_dir, "01-plan.md")
+    if not os.path.exists(p1):
+        return {}
+    content = read_file(p1)
+    phases_section = content
+    m_sec = re.search(r"^##\s*Phases\b.*?\n(.*?)(?=\n##\s+[^\s]|\Z)", content, re.DOTALL | re.MULTILINE | re.IGNORECASE)
+    if m_sec:
+        phases_section = m_sec.group(1)
+
+    pat = re.compile(r"^#+\s*Phase\s*(\d+)[\s:·—\-]+([^\n\#]+)", re.MULTILINE | re.IGNORECASE)
+    res = {}
+    for m in pat.finditer(phases_section):
+        p_num = f"P{m.group(1)}"
+        subtitle = m.group(2).strip()
+        if "verification" in subtitle.lower() or "gate" in subtitle.lower():
+            continue
+        subtitle = re.sub(r"\s*\([^)]*\)", "", subtitle).strip().rstrip("·—-: ")
+        if subtitle and p_num not in res:
+            res[p_num] = subtitle
+    return res
+
+
 def cmd_issue_sync_data(args):
     plan = args.plan
     anchor = load_anchor(plan)
     ids = anchor.get("ids", {})
     milestones = anchor.get("milestones", {})
     briefs = _extract_wp_briefs(plan)
+    phase_titles = _extract_phase_titles(plan)
     wps = []
     for k, v in ids.items():
         if k.startswith("WP-"):
@@ -711,6 +735,7 @@ def cmd_issue_sync_data(args):
         "plan_slug": os.path.basename(os.path.normpath(plan)),
         "profile": anchor.get("profile"),
         "milestones": milestones,
+        "phase_titles": phase_titles,
         "wps": wps,
     })
 

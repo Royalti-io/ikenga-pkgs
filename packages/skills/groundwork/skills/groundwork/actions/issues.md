@@ -46,14 +46,15 @@ Run `git remote -v` in the workspace:
 
 Before creating issues, `issue-sync` maps Groundwork Phases (`P1`, `P2`) to forge milestones:
 
-1. Check existing forge milestones: `gh api repos/{owner}/{repo}/milestones` (or `glab api projects/:id/milestones`).
-2. If milestone for `Phase <N>: <Plan Title>` does not exist, create it:
+1. Extract phase titles from `01-plan.md` via `issue-sync-data` (`phase_titles` object). If a phase header has a descriptive subtitle (e.g., `### Phase 1 — Read-only telemetry foundation`), format as `Phase 1: Read-only telemetry foundation`. Fallback: `Phase <N>: <Plan Title>`.
+2. Check existing forge milestones: `gh api repos/{owner}/{repo}/milestones` (or `glab api projects/:id/milestones`).
+3. If milestone does not exist, create it:
    ```bash
-   gh api repos/{owner}/{repo}/milestones -f title="Phase 1: <Plan Title>" -f description="Groundwork Phase 1"
+   gh api repos/{owner}/{repo}/milestones -f title="Phase 1: Read-only telemetry foundation" -f description="Groundwork Phase 1"
    ```
-3. Register milestone in `.groundwork.json`:
+4. Register milestone in `.groundwork.json`:
    ```bash
-   python3 <skill>/scripts/groundwork_state.py register-milestone --plan <plan> --phase P1 --title "Phase 1: <Plan Title>" --id <NUM> --url <URL>
+   python3 <skill>/scripts/groundwork_state.py register-milestone --plan <plan> --phase P1 --title "Phase 1: Read-only telemetry foundation" --id <NUM> --url <URL>
    ```
 
 ---
