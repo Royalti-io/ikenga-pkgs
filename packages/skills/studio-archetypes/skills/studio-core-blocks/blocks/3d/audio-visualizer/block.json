@@ -1,0 +1,37 @@
+{
+  "id": "3d.audio-visualizer",
+  "kind": "shot_template",
+  "name": "3D Audio Visualizer Array",
+  "description": "Procedural 3D waveform and transient-reactive geometry visualizer rendered in Blender.",
+  "default_renderer": "blender",
+  "template_path": "blocks/3d/audio-visualizer/render.py",
+  "parameters": [
+    {
+      "name": "bar_count",
+      "type": "number",
+      "default": 32,
+      "required": false
+    },
+    {
+      "name": "radius",
+      "type": "number",
+      "default": 3.0,
+      "required": false
+    },
+    {
+      "name": "glow_color",
+      "type": "string",
+      "default": "#00F0FF",
+      "required": false
+    }
+  ],
+  "tags": [
+    "3d",
+    "visualizer",
+    "audio",
+    "beat-sync",
+    "blender"
+  ],
+  "metadata": {},
+  "category": "visual"
+}

@@ -1,0 +1,30 @@
+{
+  "id": "3d.anchor-plate",
+  "kind": "anchor_pack",
+  "name": "3D Consistency Anchor Plate",
+  "description": "Multi-angle 3D reference anchor plate generator (Front, 3/4, Profile) rendered in Blender under 3-point studio lighting.",
+  "default_renderer": "blender",
+  "template_path": "blocks/3d/anchor-plate/render.py",
+  "parameters": [
+    {
+      "name": "mesh_path",
+      "type": "string",
+      "required": true
+    },
+    {
+      "name": "angle",
+      "type": "string",
+      "default": "three_quarter_left",
+      "required": false
+    }
+  ],
+  "tags": [
+    "3d",
+    "anchor",
+    "character",
+    "consistency",
+    "blender"
+  ],
+  "metadata": {},
+  "category": "style"
+}

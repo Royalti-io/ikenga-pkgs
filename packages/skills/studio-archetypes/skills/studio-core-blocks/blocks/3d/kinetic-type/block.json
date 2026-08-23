@@ -1,0 +1,48 @@
+{
+  "id": "3d.kinetic-type",
+  "kind": "shot_template",
+  "name": "3D Kinetic Typography",
+  "description": "Procedural extruded 3D typography with dynamic lighting and camera movement in Blender.",
+  "default_renderer": "blender",
+  "template_path": "blocks/3d/kinetic-type/render.py",
+  "parameters": [
+    {
+      "name": "text",
+      "type": "string",
+      "default": "IKENGA STUDIO",
+      "required": true
+    },
+    {
+      "name": "extrude",
+      "type": "number",
+      "default": 0.15,
+      "required": false
+    },
+    {
+      "name": "bevel",
+      "type": "number",
+      "default": 0.02,
+      "required": false
+    },
+    {
+      "name": "color",
+      "type": "string",
+      "default": "#FF6B00",
+      "required": false
+    },
+    {
+      "name": "camera_move",
+      "type": "string",
+      "default": "dolly_zoom",
+      "required": false
+    }
+  ],
+  "tags": [
+    "3d",
+    "motion-graphics",
+    "typography",
+    "blender"
+  ],
+  "metadata": {},
+  "category": "visual"
+}

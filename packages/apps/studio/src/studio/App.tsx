@@ -13,7 +13,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import { isStandalone } from './bridge';
+import { isStandalone, subscribeStudioEvent } from './bridge';
 import { useLayoutStore } from './layout-store';
 import { useProjectStore, selectIsProjectOpen, selectOpenProject } from './project-store';
 import { useStoryboardStore } from './storyboard-store';
@@ -266,12 +266,26 @@ export function App() {
   // storyboard.read) so Canvas/Cell render REAL cells. In mock/standalone mode
   // this loads the mock's storyboard and the views fall back to their fixture.
   const hydrateStoryboard = useStoryboardStore((s) => s.hydrate);
+  const refetchStoryboard = useStoryboardStore((s) => s.refetch);
   const clearStoryboard = useStoryboardStore((s) => s.clear);
   useEffect(() => {
     const projectId = openProjectSummary?.project_id;
     if (projectId) void hydrateStoryboard(projectId);
     else clearStoryboard();
   }, [openProjectSummary?.project_id, hydrateStoryboard, clearStoryboard]);
+
+  // Live FS event subscription (Plan 25 / WP-26): whenever Chi or an external
+  // process writes storyboard.json, the sidecar watcher emits `cells/changed`.
+  // Refetch immediately without waiting for a poll tick or user refresh.
+  useEffect(() => {
+    const projectId = openProjectSummary?.project_id;
+    if (!projectId || standalone) return;
+    return subscribeStudioEvent('cells/changed', (payload) => {
+      if (!payload.project_id || payload.project_id === projectId) {
+        void refetchStoryboard();
+      }
+    });
+  }, [openProjectSummary?.project_id, standalone, refetchStoryboard]);
 
   // Render-status poll (adaptive): fast only while a render is in flight, idle
   // otherwise — kills the old unconditional 2.5s global chatter
