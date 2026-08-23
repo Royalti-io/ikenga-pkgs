@@ -1614,7 +1614,7 @@ WHAT TO DO RIGHT NOW
        top-right cluster alongside the host badge + package count. No separate
        sticky controls bar — the page-head IS the chrome. Theme / mode / density
        are NEVER switchable here; the shell pushes them via host-context. */
-    function PageHead({ data, meta, filter, setFilter, counts, layout, setLayout, inShell, done, onKickoff, onOpenPalette }) {
+    function PageHead({ data, meta, filter, setFilter, counts, layout, setLayout, inShell, done, onKickoff, onOpenPalette, availablePhases, milestoneFilter, setMilestoneFilter }) {
       const planTitle = meta.title || data.plan?.title || 'this plan';
       const kickoffHint = inShell
         ? 'Spawns the orchestrator agent · mirrors WPs to Tasks · drives waves to completion.'
@@ -1672,6 +1672,16 @@ WHAT TO DO RIGHT NOW
                   <Icon name="git-fork" size={12} /> DAG
                 </button>
               </div>
+              {availablePhases && availablePhases.length > 0 && (
+                <div className="seg seg-sm" role="tablist" aria-label="Phase filter">
+                  <button className={milestoneFilter === 'all' ? 'is-on' : ''} onClick={() => setMilestoneFilter('all')} title="Show all phases">All</button>
+                  {availablePhases.map(p => (
+                    <button key={p} className={milestoneFilter === p ? 'is-on' : ''} onClick={() => setMilestoneFilter(p)} title={`Filter by phase ${p}`}>
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="seg seg-sm">
                 <button onClick={() => location.reload()} title="Reload the board from disk (picks up a refresh-board run)" aria-label="Reload board">
                   <Icon name="refresh" size={12} />
@@ -2307,9 +2317,22 @@ WHAT TO DO RIGHT NOW
     function App({ art }) {
       const [layout,   setLayout]   = useState('mission-control');
       const [filter,   setFilter]   = useState('all');
+      const [milestoneFilter, setMilestoneFilter] = useState('all');
       const [selected, setSelected] = useState((DATA.wps[0] || {}).id);
       const [toast,    setToast]    = useState(null);
       const [paletteOpen, setPaletteOpen] = useState(false);
+
+      const availablePhases = useMemo(() => {
+        const phases = new Set();
+        (DATA.wps || []).forEach(w => phases.add(w.phase || `P${(w.wave||0)+1}`));
+        return Array.from(phases).sort();
+      }, []);
+
+      const filteredData = useMemo(() => {
+        if (milestoneFilter === 'all') return DATA;
+        const filteredWps = (DATA.wps || []).filter(w => (w.phase || `P${(w.wave||0)+1}`) === milestoneFilter);
+        return { ...DATA, wps: filteredWps };
+      }, [milestoneFilter]);
       // Picker modal state (WP-23). null when closed; otherwise { kind:
       // 'subplan'|'init', action }. WP-23 pickers collect action arguments;
       // they live alongside paletteOpen so the palette can close + the picker
@@ -2500,16 +2523,19 @@ WHAT TO DO RIGHT NOW
               top of this main element. Round 8 layout pass. */}
           <main className="scroll-area">
             <PageHead
-              data={DATA} meta={META}
+              data={filteredData} meta={META}
               filter={filter} setFilter={setFilter} counts={counts}
               layout={layout} setLayout={setLayout}
               inShell={inShell} done={done}
               onKickoff={onKickoff}
               onOpenPalette={() => setPaletteOpen(true)}
+              availablePhases={availablePhases}
+              milestoneFilter={milestoneFilter}
+              setMilestoneFilter={setMilestoneFilter}
             />
-            {layout === 'mission-control' ? <MissionControl   data={DATA} selected={selected} setSelected={setSelected} selectedWp={selectedWp} subplan={subplan} filter={filter} onCopy={onCopy} onStart={onStart} onClear={onClear} inShell={inShell} /> :
-             layout === 'kanban'          ? <Kanban           data={DATA} selected={selected} setSelected={setSelected} selectedWp={selectedWp} subplan={subplan}                onCopy={onCopy} onStart={onStart} onClear={onClear} inShell={inShell} /> :
-                                            <DagHierarchical  data={DATA} selected={selected} setSelected={setSelected} selectedWp={selectedWp} subplan={subplan}                onCopy={onCopy} onStart={onStart} onClear={onClear} inShell={inShell} />
+            {layout === 'mission-control' ? <MissionControl   data={filteredData} selected={selected} setSelected={setSelected} selectedWp={selectedWp} subplan={subplan} filter={filter} onCopy={onCopy} onStart={onStart} onClear={onClear} inShell={inShell} /> :
+             layout === 'kanban'          ? <Kanban           data={filteredData} selected={selected} setSelected={setSelected} selectedWp={selectedWp} subplan={subplan}                onCopy={onCopy} onStart={onStart} onClear={onClear} inShell={inShell} /> :
+                                            <DagHierarchical  data={filteredData} selected={selected} setSelected={setSelected} selectedWp={selectedWp} subplan={subplan}                onCopy={onCopy} onStart={onStart} onClear={onClear} inShell={inShell} />
             }
           </main>
           <footer className="page-foot">

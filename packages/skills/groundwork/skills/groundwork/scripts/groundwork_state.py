@@ -714,10 +714,40 @@ def cmd_issue_sync_data(args):
     milestones = anchor.get("milestones", {})
     briefs = _extract_wp_briefs(plan)
     phase_titles = _extract_phase_titles(plan)
-    wps = []
+
+    # Map children (WPs that list this WP in depends_on)
+    children_map = {}
     for k, v in ids.items():
         if k.startswith("WP-"):
-            wps.append({
+            for dep in v.get("depends_on", []):
+                if dep.startswith("WP-"):
+                    children_map.setdefault(dep, []).append(k)
+
+    wps = []
+    with_tasklists = getattr(args, "with_tasklists", False)
+    for k, v in ids.items():
+        if k.startswith("WP-"):
+            child_ids = sorted(children_map.get(k, []))
+            child_wps = []
+            tasklist_md = ""
+            if child_ids:
+                lines = []
+                for cid in child_ids:
+                    c_entry = ids.get(cid, {})
+                    c_status = c_entry.get("status", "queued")
+                    c_done = c_status == "done"
+                    c_issue = c_entry.get("issue")
+                    c_num = f"#{c_issue['number']}" if c_issue and "number" in c_issue else cid
+                    lines.append(f"- [{'x' if c_done else ' '}] {c_num} — {cid}: {c_entry.get('title', cid)}")
+                    child_wps.append({
+                        "id": cid,
+                        "title": c_entry.get("title", ""),
+                        "status": c_status,
+                        "issue": c_issue,
+                    })
+                tasklist_md = "### Dependent Work Packages\n" + "\n".join(lines)
+
+            wp_item = {
                 "id": k,
                 "title": v.get("title", ""),
                 "status": v.get("status", "queued"),
@@ -728,8 +758,13 @@ def cmd_issue_sync_data(args):
                 "gate": v.get("gate"),
                 "brief": briefs.get(k, ""),
                 "issue": v.get("issue"),
+                "children": child_wps,
                 "updated_at": v.get("updated_at") or anchor.get("updated"),
-            })
+            }
+            if with_tasklists and tasklist_md:
+                wp_item["tasklist_md"] = tasklist_md
+            wps.append(wp_item)
+
     emit({
         "plan_title": _plan_title(plan, anchor),
         "plan_slug": os.path.basename(os.path.normpath(plan)),
@@ -1624,6 +1659,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     g = sub.add_parser("issue-sync-data", help="emit model for git issue sync & export")
     g.add_argument("--plan", required=True)
+    g.add_argument("--with-tasklists", action="store_true", help="include tasklists markdown for parent WPs with child dependents or subplans")
     g.set_defaults(func=cmd_issue_sync_data)
 
     g = sub.add_parser("apply-issue-sync", help="apply batch status updates and issue registrations from git issue sync")
