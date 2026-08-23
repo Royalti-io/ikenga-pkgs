@@ -39,6 +39,7 @@ python3 <skill>/scripts/groundwork_state.py <subcommand> [args]
   plans-index-data --plans-dir DIR                           # cross-plan rollup of every plan under a plans/ dir
   write-region-plain --file PATH --id ID (--content STR | --content-file P)  # anchorless fence write (plans-index)
   register-issue   --plan DIR --id ID --number N --url URL [--provider P] [--labels L]
+  register-milestone --plan DIR --phase P1 --title T --id ID --url URL
   issue-sync-data  --plan DIR                                # JSON model for issue sync & export
   apply-issue-sync --plan DIR --updates-file PATH            # apply batch status updates from git issue sync
 ```
