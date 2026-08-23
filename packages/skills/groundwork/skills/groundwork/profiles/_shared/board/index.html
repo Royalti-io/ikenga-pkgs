@@ -1231,6 +1231,10 @@ WHAT TO DO RIGHT NOW
         surface: 'new-session', icon: 'copy', disabled: false, needsPicker: 'subplan',
         standaloneForm: '/groundwork subplan --archetype {archetype} --topic "{topic}" --ref {ref}',
         seededForm: 'Scaffold a new groundwork sub-plan in `{plan_folder}` (plan title: {plan_title}).\n\nArchetype: {archetype} (one of: diff-plan, decision-doc, bug-doc). Topic: {topic}. Reference: {ref}.\n\nIf the groundwork skill is loaded in this session, follow its `subplan` action verbatim — read `.claude/skills/groundwork/actions/subplan.md`, resolve the next free `NN` number ≥ 06, render the matching template from `profiles/_shared/templates/subplans/{archetype}.md`, write to `{plan_folder}/NN-<slug>.md`, register in `.groundwork.json.subplans`, and cross-link from `00-README.md`. If the skill is not loaded, read the canonical reference instance for the archetype (`{plan_folder}/06-startSeededChat-extraction.md` for diff-plan, `07-spine-version-migration.md` for decision-doc, `08-index-board-fence-confusion.md` for bug-doc) and mirror its section shape with the new topic.\n\nDon\'t reuse a number already in use; don\'t write to 09 (reserved for orchestrate).' },
+      { id: 'issue-sync', label: 'Sync Git issues', desc: 'Sync WP status with GitHub/GitLab/git-bug issues',
+        surface: 'active-session', icon: 'git-pull-request', disabled: false,
+        standaloneForm: '/groundwork issue-sync',
+        seededForm: 'Run groundwork issue-sync on `{plan_folder}` (plan title: {plan_title}).\n\nIf the groundwork skill is loaded in this session, follow its `issue-sync` action verbatim — read `.claude/skills/groundwork/actions/issues.md`, detect available provider CLI (gh, glab, or git-bug), provision missing milestones/issues, and perform timestamped bi-directional status sync. If the skill is not loaded, inspect `{plan_folder}/.groundwork.json` and sync WP issue statuses by hand.' },
       { id: 'init',     label: 'Initialize plan', desc: 'Scaffold a new groundwork plan folder',
         surface: 'new-session', icon: 'spark', disabled: false, needsPicker: 'init',
         standaloneForm: '/groundwork init {target_folder} --profile {profile} --goal "{goal}"',
@@ -1640,6 +1644,22 @@ WHAT TO DO RIGHT NOW
               >
                 <Icon name="bolt" size={12} /> Run<span aria-hidden="true">…</span>
                 <span className="palette-kbd" aria-hidden="true">⌘K</span>
+              </button>
+              <button
+                className="btn btn-sm"
+                onClick={() => {
+                  const cmd = `/groundwork issue-sync ${meta.plan_folder || 'plans/groundwork'}`;
+                  if (inShell && window.art?.sendToActiveSession) {
+                    window.art.sendToActiveSession(cmd);
+                  } else {
+                    navigator.clipboard.writeText(cmd);
+                    alert('Copied issue-sync command to clipboard:\n' + cmd);
+                  }
+                }}
+                title="Sync WP status with Git issues (gh / glab / git-bug)"
+                aria-label="Sync Git issues"
+              >
+                <Icon name="git-pull-request" size={12} /> Sync Issues
               </button>
               <div className="seg seg-sm" role="tablist" aria-label="Board layout">
                 <button className={layout === 'mission-control' ? 'is-on' : ''} onClick={() => setLayout('mission-control')} title="Mission Control — dense WP table + cross-cutting rail">

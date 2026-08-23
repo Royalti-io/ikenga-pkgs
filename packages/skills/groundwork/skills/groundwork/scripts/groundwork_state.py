@@ -671,10 +671,24 @@ def cmd_register_issue(args):
     emit({"result": "registered", "id": args.id, "issue": entry["issue"]})
 
 
+def cmd_register_milestone(args):
+    anchor = load_anchor(args.plan)
+    milestones = anchor.setdefault("milestones", {})
+    milestones[args.phase] = {
+        "id": args.id,
+        "title": args.title,
+        "url": args.url,
+        "registered_at": _now(),
+    }
+    save_anchor(args.plan, anchor)
+    emit({"result": "registered", "phase": args.phase, "milestone": milestones[args.phase]})
+
+
 def cmd_issue_sync_data(args):
     plan = args.plan
     anchor = load_anchor(plan)
     ids = anchor.get("ids", {})
+    milestones = anchor.get("milestones", {})
     briefs = _extract_wp_briefs(plan)
     wps = []
     for k, v in ids.items():
@@ -684,6 +698,7 @@ def cmd_issue_sync_data(args):
                 "title": v.get("title", ""),
                 "status": v.get("status", "queued"),
                 "wave": v.get("wave"),
+                "phase": v.get("phase", f"P{v.get('wave', 0) + 1}"),
                 "tier": v.get("tier"),
                 "depends_on": v.get("depends_on", []),
                 "gate": v.get("gate"),
@@ -695,6 +710,7 @@ def cmd_issue_sync_data(args):
         "plan_title": _plan_title(plan, anchor),
         "plan_slug": os.path.basename(os.path.normpath(plan)),
         "profile": anchor.get("profile"),
+        "milestones": milestones,
         "wps": wps,
     })
 
@@ -1572,6 +1588,14 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--provider", default="github")
     g.add_argument("--labels")
     g.set_defaults(func=cmd_register_issue)
+
+    g = sub.add_parser("register-milestone", help="register a forge milestone for a phase in the anchor")
+    g.add_argument("--plan", required=True)
+    g.add_argument("--phase", required=True)
+    g.add_argument("--title", required=True)
+    g.add_argument("--id", required=True)
+    g.add_argument("--url", required=True)
+    g.set_defaults(func=cmd_register_milestone)
 
     g = sub.add_parser("issue-sync-data", help="emit model for git issue sync & export")
     g.add_argument("--plan", required=True)

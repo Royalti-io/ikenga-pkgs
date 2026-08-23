@@ -37,11 +37,28 @@ Parses JSON stdout returning `wps` array with fields: `id`, `title`, `status`, `
 Run `git remote -v` in the workspace:
 - If remote points to `github.com` (or enterprise GitHub): provider is `github`, CLI tool is `gh`.
 - If remote points to `gitlab.com` (or self-hosted GitLab): provider is `gitlab`, CLI tool is `glab`.
-- Fallback: Default to `gh`. If `gh` or `glab` CLI is not installed/authenticated, report warning and skip remote sync.
+- If `git-bug` is installed (`which git-bug`) and remote forge CLI is unavailable/disabled: provider is `git-bug`.
+- Fallback: Default to `gh`. If `gh`, `glab`, or `git-bug` CLI is not installed/authenticated, report warning and skip remote sync.
 
 ---
 
-### Step 3: Export Unlinked WPs (`--export`)
+### Step 3: Phase-to-Milestone Provisioning
+
+Before creating issues, `issue-sync` maps Groundwork Phases (`P1`, `P2`) to forge milestones:
+
+1. Check existing forge milestones: `gh api repos/{owner}/{repo}/milestones` (or `glab api projects/:id/milestones`).
+2. If milestone for `Phase <N>: <Plan Title>` does not exist, create it:
+   ```bash
+   gh api repos/{owner}/{repo}/milestones -f title="Phase 1: <Plan Title>" -f description="Groundwork Phase 1"
+   ```
+3. Register milestone in `.groundwork.json`:
+   ```bash
+   python3 <skill>/scripts/groundwork_state.py register-milestone --plan <plan> --phase P1 --title "Phase 1: <Plan Title>" --id <NUM> --url <URL>
+   ```
+
+---
+
+### Step 4: Export Unlinked WPs (`--export`)
 
 For each WP where `issue` is `null`:
 
@@ -49,7 +66,7 @@ For each WP where `issue` is `null`:
 2. **Build Body**:
    ```markdown
    ## <WP-ID>: <title>
-   **Plan**: <plan_slug> | **Wave**: <wave> | **Tier**: <tier>
+   **Plan**: <plan_slug> | **Phase**: <phase> | **Wave**: <wave> | **Tier**: <tier>
 
    ### Brief & Definition of Done
    <brief>
@@ -57,19 +74,23 @@ For each WP where `issue` is `null`:
    ---
    *Tracked by groundwork plan `<plan_slug>`*
    ```
-3. **Invoke Forge CLI**:
+3. **Invoke Provider CLI**:
    - **GitHub**:
      ```bash
-     gh issue create --title "[WP-01] Canvas extraction" --body "..." --label "groundwork"
+     gh issue create --title "[WP-01] Canvas extraction" --body "..." --label "groundwork" --milestone "Phase 1: <Plan Title>"
      ```
    - **GitLab**:
      ```bash
-     glab issue create --title "[WP-01] Canvas extraction" --description "..." --label "groundwork"
+     glab issue create --title "[WP-01] Canvas extraction" --description "..." --label "groundwork" --milestone "Phase 1: <Plan Title>"
+     ```
+   - **`git-bug` (Offline)**:
+     ```bash
+     git-bug bug new -m "[WP-01] Canvas extraction"
      ```
 4. **Register in State Anchor**:
-   Parse issue number and URL from command output, then register:
+   Parse issue number/ID and URL from command output, then register:
    ```bash
-   python3 <skill>/scripts/groundwork_state.py register-issue --plan <plan> --id <WP-ID> --number <NUM> --url <URL> --provider <github|gitlab>
+   python3 <skill>/scripts/groundwork_state.py register-issue --plan <plan> --id <WP-ID> --number <NUM> --url <URL> --provider <github|gitlab|git-bug>
    ```
 
 ---
