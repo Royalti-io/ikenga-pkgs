@@ -1265,18 +1265,38 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
       className: "gname"
     }, n.name)))));
   }
+  function useLiveNodeContent(node) {
+    const [liveText, setLiveText] = useState(node ? node.content : null);
+    useEffect(() => {
+      setLiveText(node ? node.content : null);
+      if (!node || !node.path || node.type === 'dir') return;
+      let alive = true;
+      fetch(srcFor(node.path))
+        .then(r => r.ok ? r.text() : null)
+        .then(t => {
+          if (alive && t != null) {
+            setLiveText(t);
+          }
+        })
+        .catch(() => {});
+      return () => { alive = false; };
+    }, [node ? node.path : null]);
+    return liveText;
+  }
+
   function MarkdownView({
     node,
     sub
   }) {
-    if (!node.embedded || node.content == null) return React.createElement(ReferencedCard, {
+    const content = useLiveNodeContent(node);
+    if (content == null) return React.createElement(ReferencedCard, {
       node: node,
-      reason: "Markdown body wasn't embedded (over the size budget). Open it from the plan folder."
+      reason: "Markdown body wasn't embedded or readable directly. Open it from the plan folder."
     });
     if (sub === 'raw') return React.createElement("pre", {
       className: "code"
-    }, node.content);
-    const segs = renderMarkdownSegments(node.content);
+    }, content);
+    const segs = renderMarkdownSegments(content);
     return React.createElement("div", {
       className: "viewer-pad md-body"
     }, segs.map((s, i) => s.auto ? React.createElement("div", {
@@ -1298,14 +1318,15 @@ function(a,b,c){if(!Vd(b))throw Error(m(200));return Wd(null,a,b,!1,c)};Q.unmoun
   function CodeView({
     node
   }) {
-    if (!node.embedded || node.content == null) return React.createElement(ReferencedCard, {
+    const content = useLiveNodeContent(node);
+    if (content == null) return React.createElement(ReferencedCard, {
       node: node,
-      reason: "File content wasn't embedded. Open it from the plan folder."
+      reason: "File content wasn't embedded or readable directly. Open it from the plan folder."
     });
-    let body = node.content;
+    let body = content;
     if (node.type === 'json') {
       try {
-        body = JSON.stringify(JSON.parse(node.content), null, 2);
+        body = JSON.stringify(JSON.parse(content), null, 2);
       } catch (e) {}
     }
     return React.createElement("pre", {

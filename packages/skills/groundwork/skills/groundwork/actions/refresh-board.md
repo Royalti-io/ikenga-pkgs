@@ -39,7 +39,9 @@
    The artifact's `index.html` (living spec) is NEVER touched by this action — that's a hand-authored doc; `refresh-board` only owns `board.html` + `manifest.json` (initial scaffold) + `data/` + `assets/` (initial scaffold).
 5. **Register** `artifact/board.html` in `.groundwork.json.docs` with two fenced regions: `board-data` (the JSON model) and `board-meta` (plan title, profile, `plan_folder` (e.g. `plans/groundwork`), `plan_slug` (basename of `plan_folder`), goal, `orchestrated_at`, last-refresh stamp). `plan_folder` + `plan_slug` are read by the board's Kickoff card (WP-20) for orchestrator-brief placeholder substitution; the canonical template carries `{{plan_folder}}` / `{{plan_slug}}` placeholders that `refresh-board` substitutes at write-time. **`orchestrated_at`** (Round 8) is the date-portion of `.groundwork.json.orchestrate.last_run` (or omitted/null if orchestrate has never run); the board's PageHead collapses the full Kickoff card to a slim "Re-kickoff" button when it's present, saving header real estate on warm boards.
 6. **Show drift indicator**: compute "files changed since last refresh" by comparing the docs' on-disk hashes against the values from the last `refresh-board.last_run`. Embed in the board's right rail.
-7. **Print** the artifact path + a hint to open it: `open artifact/board.html` or paste into the Ikenga shell.
+7. **Sync Explorer & Open/Return Artifact**:
+   - If `artifact/explorer.html` exists (or `--explorer` is passed), also run `python3 <skill>/scripts/groundwork_state.py explorer-data --plan <plan>` and update the `explorer-data` fence in `artifact/explorer.html`.
+   - **Open/Return**: Output the clickable links `file://<absolute-path>/artifact/explorer.html` and `file://<absolute-path>/artifact/board.html`. In the shell / webview host, open `artifact/explorer.html` (or `artifact/board.html`) so the user immediately views the refreshed plan board.
 
 ---
 
