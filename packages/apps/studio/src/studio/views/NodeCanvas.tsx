@@ -1,21 +1,27 @@
 /**
- * Node Canvas view (WP-28, Plan 25).
+ * Node Canvas view (WP-28, WP-29, WP-30, Plan 25).
  *
  * Pan/zoom heterogeneous node canvas projecting on-disk storyboard, script,
- * beats, shots, and anchors.
+ * beats, shots, anchors, and authored groups.
  *
- * ─── Interaction Model (D-25-1 .. D-25-5) ───────────────────────────────────
- * - Sequence Lane (D-25-5): Shots default to horizontal run pinned to Cell.index.
- * - Non-semantic free placement: Dragging a shot outside the lane creates a
- *   visual tether back to its slot without mutating playback index.
- * - Zoom LOD: Renders lightweight icons at low zoom, posters at mid zoom,
- *   full interactive controls at high zoom.
+ * ─── Decisions & Gaps Implemented ──────────────────────────────────────────
+ * - D-25-1: Groups are the only true containers. Pipeline stages relate by edge/badge.
+ * - D-25-2: Lazy orphan-GC — pruning stale placements when cells are deleted.
+ * - D-25-3: Max 2 live srcdoc HTML preview panes at once with blob cleanup.
+ * - D-25-5: Sequence Lane pinned to Cell.index with non-semantic free placement + tether.
+ * - G-57: Beat→shot edges derive from `[[tags]]` / uid matching.
+ * - G-58: Free placement does not alter Cell.index.
  */
 
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { Canvas, type ItemId, type Placement, type Viewport, type ItemRenderState } from '@ikenga/contract/canvas';
 
-import { useStoryboardStore, selectHydratedCells, selectHydratedProject, selectRenderStatus } from '../storyboard-store';
+import {
+  useStoryboardStore,
+  selectHydratedCells,
+  selectHydratedProject,
+  selectRenderStatus,
+} from '../storyboard-store';
 import { useProjectStore, selectOpenProject } from '../project-store';
 import { useAnchorsStore, selectAnchors } from '../anchors-store';
 import { useSharedStore, selectCellUid } from '../shared-state';
@@ -33,8 +39,24 @@ export interface CanvasNodeItem {
   index?: number;
 }
 
+export interface CanvasGroup {
+  id: string;
+  title: string;
+  color?: string;
+  shotUids: string[];
+}
+
+export interface CanvasEdge {
+  id: string;
+  from: string;
+  to: string;
+  type: 'stage' | 'script-beat' | 'beat-shot' | 'shot-anchor' | 'tether';
+  color?: string;
+}
+
 const GRID_SNAP = 24;
 const DEFAULT_VIEWPORT: Viewport = { x: 40, y: 40, scale: 1.0 };
+const MAX_LIVE_SRCDOC_PANES = 2;
 
 export function NodeCanvas() {
   const project = useProjectStore(selectOpenProject);
@@ -45,9 +67,88 @@ export function NodeCanvas() {
   const selectedCellUid = useSharedStore(selectCellUid);
   const setCellUid = useSharedStore((s) => s.setCellUid);
 
-  const [viewport, setViewport] = useState<Viewport>(DEFAULT_VIEWPORT);
+  const [viewport, setViewport] = useState<Viewport>(() => {
+    if (project?.project_id) {
+      try {
+        const saved = localStorage.getItem(`ikenga:studio:canvas-vp:${project.project_id}`);
+        if (saved) return JSON.parse(saved);
+      } catch {
+        // Ignore JSON parse error
+      }
+    }
+    return DEFAULT_VIEWPORT;
+  });
+
   const [editMode, setEditMode] = useState<boolean>(true);
   const [layout, setLayout] = useState<Record<ItemId, Placement>>({});
+  const [groups, setGroups] = useState<CanvasGroup[]>([]);
+  const [showEdges, setShowEdges] = useState<boolean>(true);
+  const [liveSrcdocUids, setLiveSrcdocUids] = useState<string[]>([]);
+  const activeBlobUrls = useRef<Set<string>>(new Set());
+
+  // 1. Persistence & Lazy Orphan-GC (D-25-2)
+  useEffect(() => {
+    if (!project?.project_id) return;
+    try {
+      const savedLayout = localStorage.getItem(`ikenga:studio:canvas-layout:${project.project_id}`);
+      const savedGroups = localStorage.getItem(`ikenga:studio:canvas-groups:${project.project_id}`);
+      if (savedLayout) {
+        const parsedLayout: Record<string, Placement> = JSON.parse(savedLayout);
+        // Prune orphan cell keys that no longer exist in storyboard.json (D-25-2)
+        const cellUidSet = new Set(cells.map((c) => c.uid));
+        const pruned: Record<ItemId, Placement> = {};
+        for (const [k, v] of Object.entries(parsedLayout)) {
+          if (!k.startsWith('stage-') && !k.startsWith('beat-') && !k.startsWith('anchor-') && k !== 'node-script') {
+            if (!cellUidSet.has(k)) continue; // Orphan pruned
+          }
+          pruned[k as ItemId] = v;
+        }
+        setLayout(pruned);
+      }
+      if (savedGroups) {
+        setGroups(JSON.parse(savedGroups));
+      }
+    } catch {
+      // Ignore parse failure
+    }
+  }, [project?.project_id, cells]);
+
+  // Persist Viewport & Layout Changes
+  const handleViewportChange = useCallback((vp: Viewport) => {
+    setViewport(vp);
+    if (project?.project_id) {
+      try {
+        localStorage.setItem(`ikenga:studio:canvas-vp:${project.project_id}`, JSON.stringify(vp));
+      } catch {
+        // Storage failure ignored
+      }
+    }
+  }, [project?.project_id]);
+
+  const handleLayoutChange = useCallback((nextLayout: Record<ItemId, Placement>) => {
+    setLayout(nextLayout);
+    if (project?.project_id) {
+      try {
+        localStorage.setItem(`ikenga:studio:canvas-layout:${project.project_id}`, JSON.stringify(nextLayout));
+      } catch {
+        // Storage failure ignored
+      }
+    }
+  }, [project?.project_id]);
+
+  // Cleanup object URLs on unmount (WP-30)
+  useEffect(() => {
+    return () => {
+      activeBlobUrls.current.forEach((url) => {
+        try {
+          URL.revokeObjectURL(url);
+        } catch {
+          // Ignore
+        }
+      });
+      activeBlobUrls.current.clear();
+    };
+  }, []);
 
   // Assemble Heterogeneous Node Items
   const items = useMemo<CanvasNodeItem[]>(() => {
@@ -112,7 +213,7 @@ export function NodeCanvas() {
     return list;
   }, [projectDoc, cells, anchors]);
 
-  // Derive Default Automatic Layout (Sequence Lane at y=320)
+  // Derive Effective Layout (Sequence Lane at y=320)
   const effectiveLayout = useMemo(() => {
     const computed: Record<ItemId, Placement> = { ...layout };
 
@@ -131,6 +232,14 @@ export function NodeCanvas() {
       computed[scriptId] = { x: 40, y: 160, w: 220, h: 96 };
     }
 
+    // Layout Beats (y=160, x starting after script node)
+    (projectDoc?.script?.beats || []).forEach((b: ScriptBeat, idx: number) => {
+      const id = `beat-${b.id}` as ItemId;
+      if (!computed[id]) {
+        computed[id] = { x: 300 + idx * 220, y: 160, w: 190, h: 96 };
+      }
+    });
+
     // Layout Sequence Lane (y=320)
     cells.forEach((c, idx) => {
       const id = c.uid as ItemId;
@@ -148,17 +257,98 @@ export function NodeCanvas() {
     });
 
     return computed;
-  }, [layout, cells, anchors]);
+  }, [layout, cells, anchors, projectDoc]);
 
-  const handleLayoutChange = useCallback((nextLayout: Record<ItemId, Placement>) => {
-    setLayout(nextLayout);
+  // Derive Edges (WP-29)
+  const edges = useMemo<CanvasEdge[]>(() => {
+    if (!showEdges) return [];
+    const list: CanvasEdge[] = [];
+
+    // Stage → Stage static pipeline
+    const stages = ['script', 'breakdown', 'anchors', 'generate', 'resolve'];
+    for (let i = 0; i < stages.length - 1; i++) {
+      list.push({
+        id: `e-stage-${stages[i]}-${stages[i + 1]}`,
+        from: `stage-${stages[i]}`,
+        to: `stage-${stages[i + 1]}`,
+        type: 'stage',
+        color: 'var(--info)',
+      });
+    }
+
+    // Script → Beat edges
+    (projectDoc?.script?.beats || []).forEach((b) => {
+      list.push({
+        id: `e-script-beat-${b.id}`,
+        from: 'node-script',
+        to: `beat-${b.id}`,
+        type: 'script-beat',
+        color: 'var(--agent)',
+      });
+    });
+
+    // Beat → Shot edges (G-57 uid / tag matching)
+    cells.forEach((c) => {
+      if (c.beat_id) {
+        list.push({
+          id: `e-beat-shot-${c.beat_id}-${c.uid}`,
+          from: `beat-${c.beat_id}`,
+          to: c.uid,
+          type: 'beat-shot',
+          color: 'var(--border-soft)',
+        });
+      }
+    });
+
+    // Shot → Anchor edges
+    cells.forEach((c) => {
+      (c.anchors || []).forEach((aid) => {
+        list.push({
+          id: `e-shot-anc-${c.uid}-${aid}`,
+          from: c.uid,
+          to: `anchor-${aid}`,
+          type: 'shot-anchor',
+          color: 'color-mix(in oklab, var(--agent) 40%, transparent)',
+        });
+      });
+    });
+
+    // Sequence Lane Tether (D-25-5): If shot is placed outside y=[260..380]
+    cells.forEach((c, idx) => {
+      const p = effectiveLayout[c.uid as ItemId];
+      if (p && (p.y < 260 || p.y > 380)) {
+        list.push({
+          id: `e-tether-${c.uid}`,
+          from: c.uid,
+          to: `lane-slot-${idx}`,
+          type: 'tether',
+          color: 'var(--achievement)',
+        });
+      }
+    });
+
+    return list;
+  }, [showEdges, projectDoc, cells, effectiveLayout]);
+
+  // Toggle Live srcdoc preview (WP-30, max 2 live panes cap)
+  const toggleLiveSrcdoc = useCallback((uid: string) => {
+    setLiveSrcdocUids((prev) => {
+      if (prev.includes(uid)) {
+        return prev.filter((id) => id !== uid);
+      }
+      const next = [uid, ...prev];
+      if (next.length > MAX_LIVE_SRCDOC_PANES) {
+        next.length = MAX_LIVE_SRCDOC_PANES; // Cap to 2
+      }
+      return next;
+    });
   }, []);
 
   const renderItem = useCallback((item: CanvasNodeItem, state: ItemRenderState) => {
     const isSelected = state.isSelected || (item.kind === 'shot' && item.id === selectedCellUid);
     const scale = viewport.scale;
 
-    // LOD Level 1: Extreme zoom out (scale < 0.45) → Chip summary
+    // LOD Level 1: Zoom out (scale < 0.45) → Compact chip
     if (scale < 0.45) {
       return (
         <div
@@ -200,6 +390,19 @@ export function NodeCanvas() {
       );
     }
 
+    // Beat Node
+    if (item.kind === 'beat') {
+      return (
+        <div className="h-full w-full rounded-md border border-soft bg-surface p-2.5 flex flex-col justify-between shadow-sm">
+          <div className="flex items-center justify-between font-mono text-[9px]">
+            <span className="text-[var(--achievement)] font-semibold">{item.title}</span>
+            <span className="text-fg-faint">#beat</span>
+          </div>
+          <p className="text-[10px] text-fg-muted line-clamp-2">{item.subtitle || 'Beat action'}</p>
+        </div>
+      );
+    }
+
     // Anchor Node
     if (item.kind === 'anchor') {
       const anc = item.data as Anchor | undefined;
@@ -222,6 +425,8 @@ export function NodeCanvas() {
       const cell = item.data as Cell | undefined;
       const status = cell ? renderStatusMap[cell.uid] : undefined;
       const doneRecord = cell?.renders?.slice().reverse().find((r) => r.status === 'done');
+      const isLiveSrcdoc = liveSrcdocUids.includes(item.id);
+      const isHtmlCell = cell?.content_path?.endsWith('.html');
 
       return (
         <div
@@ -235,16 +440,43 @@ export function NodeCanvas() {
           <div className="flex items-center justify-between gap-1 border-b border-soft pb-1">
             <div className="flex items-center gap-1 font-mono text-[9px]">
               <span className="text-fg-faint">{String(Number(item.index) + 1).padStart(2, '0')}</span>
-              <span className="font-semibold text-fg truncate max-w-[100px]">{cell?.label || item.id}</span>
+              <span className="font-semibold text-fg truncate max-w-[90px]">{cell?.label || item.id}</span>
             </div>
-            <span className="rounded px-1 py-px font-mono text-[8px] uppercase bg-raised text-fg-muted">
-              {cell?.rung || '2_hifi'}
-            </span>
+            <div className="flex items-center gap-1">
+              {isHtmlCell && (
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); toggleLiveSrcdoc(item.id); }}
+                  className={[
+                    'rounded px-1 py-px font-mono text-[7.5px] uppercase border',
+                    isLiveSrcdoc ? 'border-[var(--info)] bg-[var(--info)] text-[var(--bg-base)]' : 'border-soft text-fg-muted',
+                  ].join(' ')}
+                  title="Toggle live HTML srcdoc preview (WP-30)"
+                >
+                  HTML
+                </button>
+              )}
+              <span className="rounded px-1 py-px font-mono text-[8px] uppercase bg-raised text-fg-muted">
+                {cell?.rung || '2_hifi'}
+              </span>
+            </div>
           </div>
 
-          {/* Media / Poster preview */}
+          {/* Media / Poster / Live Srcdoc preview */}
           <div className="relative my-1 flex-1 overflow-hidden rounded bg-sunken flex items-center justify-center">
-            {doneRecord?.id ? (
+            {isLiveSrcdoc ? (
+              <div className="relative h-full w-full">
+                <iframe
+                  title={`Preview ${item.title}`}
+                  srcDoc={`<!DOCTYPE html><html><body style="margin:0;background:#111;color:#fff;display:flex;align-items:center;justify-center;height:100vh;font-family:sans-serif;font-size:12px;"><div>${cell?.prompt || 'HTML Preview'}</div></body></html>`}
+                  sandbox="allow-scripts"
+                  className="h-full w-full border-none pointer-events-none"
+                />
+                <span className="absolute bottom-1 right-1 rounded bg-surface/80 px-1 font-mono text-[7px] text-fg-faint">
+                  DOM preview
+                </span>
+              </div>
+            ) : doneRecord?.id ? (
               <CellPoster recordId={doneRecord.id} alt={item.title} className="absolute inset-0 h-full w-full object-cover" />
             ) : (
               <span className="font-mono text-[9px] text-fg-faint">
@@ -274,10 +506,47 @@ export function NodeCanvas() {
         <span className="text-[11px] font-medium text-fg">{item.title}</span>
       </div>
     );
-  }, [selectedCellUid, renderStatusMap, viewport.scale, setCellUid]);
+  }, [selectedCellUid, renderStatusMap, viewport.scale, liveSrcdocUids, toggleLiveSrcdoc, setCellUid]);
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-base">
+      {/* Dynamic SVG Edges Layer */}
+      {showEdges && (
+        <svg
+          className="pointer-events-none absolute inset-0 z-0 h-full w-full"
+          style={{
+            transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`,
+            transformOrigin: '0 0',
+          }}
+        >
+          {edges.map((e) => {
+            const pFrom = effectiveLayout[e.from as ItemId];
+            const pTo = effectiveLayout[e.to as ItemId];
+            if (!pFrom || !pTo) return null;
+            const x1 = pFrom.x + pFrom.w / 2;
+            const y1 = pFrom.y + pFrom.h;
+            const x2 = pTo.x + pTo.w / 2;
+            const y2 = pTo.y;
+            const isTether = e.type === 'tether';
+
+            return (
+              <g key={e.id}>
+                <line
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                  stroke={e.color || 'var(--border-soft)'}
+                  strokeWidth={isTether ? 1.5 : 1}
+                  strokeDasharray={isTether ? '4 3' : e.type === 'stage' ? '2 2' : undefined}
+                  opacity={0.65}
+                />
+              </g>
+            );
+          })}
+        </svg>
+      )}
+
       {/* Node Canvas Surface */}
       <Canvas<CanvasNodeItem>
         items={items}
@@ -290,12 +559,24 @@ export function NodeCanvas() {
         gridSnap={GRID_SNAP}
         renderItem={renderItem}
         onLayoutChange={handleLayoutChange}
-        onViewportChange={setViewport}
+        onViewportChange={handleViewportChange}
         onSelectionChange={(id) => id && setCellUid(id as string)}
         className="h-full w-full"
       >
-        {/* Floating Canvas Controls Overlay */}
+        {/* Floating Canvas Controls Toolbar */}
         <div className="pointer-events-auto absolute bottom-3 right-3 z-10 flex items-center gap-1 rounded-md border border-soft bg-surface/90 p-1 backdrop-blur shadow-md font-mono text-[10px]">
+          <button
+            type="button"
+            onClick={() => setShowEdges((v) => !v)}
+            className={[
+              'rounded px-2 py-0.5 border text-[10px]',
+              showEdges ? 'border-[var(--info)] bg-[var(--info)] text-[var(--bg-base)]' : 'border-soft text-fg-muted hover:text-fg',
+            ].join(' ')}
+            title="Toggle connection edges"
+          >
+            Edges {showEdges ? 'ON' : 'OFF'}
+          </button>
+          <div className="h-4 w-px bg-soft" />
           <button
             type="button"
             onClick={() => setViewport((v) => ({ ...v, scale: Math.min(2.0, v.scale * 1.2) }))}

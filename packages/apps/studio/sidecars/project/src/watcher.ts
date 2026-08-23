@@ -65,6 +65,7 @@ const WATCH_GLOBS = [
   'anchors/**',
   'blocks/**',
   'archetypes/**',
+  '.studio/**',
 ];
 
 const IGNORED = [
