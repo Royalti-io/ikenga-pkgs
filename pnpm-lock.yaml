@@ -238,22 +238,6 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
 
-  packages/engine/gemini:
-    dependencies:
-      '@ikenga/contract':
-        specifier: ^0.7.0
-        version: 0.7.0
-    devDependencies:
-      '@types/node':
-        specifier: ^22.10.0
-        version: 22.19.19
-      tsx:
-        specifier: ^4.21.0
-        version: 4.21.0
-      typescript:
-        specifier: ^5.4.0
-        version: 5.9.3
-
   packages/engine/noop:
     dependencies:
       '@ikenga/contract':

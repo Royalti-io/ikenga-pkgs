@@ -151,5 +151,47 @@ export function exportTools(sidecar: SidecarClient): ToolDef[] {
           platform: args.platform,
         }),
     },
+    {
+      name: 'export.davinci_timeline',
+      description:
+        'Export a project\'s rendered storyboard cells and audio bed into DaVinci Resolve Studio (via live scripting API) or as an interchangeable FCPXML/OTIO file. Includes beat-sync markers (downbeats + onsets from audio_analysis) and RenderRecord provenance metadata notes.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          projectId: { type: 'string' },
+          rung: { type: 'number', description: 'Optional. 0|1|2 — restrict to one rung.' },
+          cellIds: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Optional. Explicit cell uids, in export order.',
+          },
+          outputPath: {
+            type: 'string',
+            description: 'Optional. Output path for the .fcpxml file (defaults to exports/<name>.fcpxml).',
+          },
+          fps: { type: 'number', description: 'Target timeline frame rate (defaults to 30).' },
+          includeAudioStems: { type: 'boolean', description: 'Include audio stems as separate tracks.' },
+          enableBeatSync: { type: 'boolean', description: 'Inject beat markers from audio_analysis.' },
+        },
+        required: ['projectId'],
+        additionalProperties: false,
+      },
+      handler: (args) =>
+        callSidecar(
+          sidecar,
+          'export.davinci_timeline',
+          {
+            projectId: args.projectId,
+            rung: args.rung,
+            cellIds: args.cellIds,
+            outputPath: args.outputPath,
+            fps: args.fps,
+            includeAudioStems: args.includeAudioStems,
+            enableBeatSync: args.enableBeatSync,
+          },
+          EXTERNAL_CALL_TIMEOUT_MS,
+        ),
+    },
   ];
 }
+

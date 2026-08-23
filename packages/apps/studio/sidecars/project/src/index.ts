@@ -62,6 +62,7 @@ import * as anchors from './anchors.js';
 import * as assets from './assets.js';
 import * as archetypes from './archetypes.js';
 import { buildPromptPackage } from './prompt-package.js';
+import { exportDaVinciTimeline } from './export/davinci.js';
 import { RenderRunner, type ProjectLookup } from './render-runner.js';
 import { ExportRunner, type ExportLookup, type MusicPreset } from './exporter.js';
 import { getAdapter, listEngines, resolveEngineWithRequest, EngineResolutionError } from './registry.js';
@@ -551,6 +552,26 @@ function buildHandlers(db: Db): BuiltHandlers {
           cellId: params.cellId as string | undefined,
           platform: params.platform,
         }).result;
+
+      // ── export.* (Plan 24 / WP-23 — DaVinci Resolve & OTIO) ──
+      case 'export.davinci_timeline': {
+        const found = open.get(params.projectId as string);
+        if (!found) {
+          return { ok: false, error: 'project-not-open', message: `Project ${params.projectId} not open` };
+        }
+        return exportDaVinciTimeline({
+          projectId: found.projectId,
+          project: found.project,
+          projectRoot: found.path,
+          rendersDir: join(found.path, 'renders'),
+          rung: params.rung as number | undefined,
+          cellIds: params.cellIds as string[] | undefined,
+          outputPath: params.outputPath as string | undefined,
+          fps: params.fps as number | undefined,
+          includeAudioStems: params.includeAudioStems as boolean | undefined,
+          enableBeatSync: params.enableBeatSync as boolean | undefined,
+        });
+      }
 
       default:
         return { ok: false, error: 'method-not-implemented', message: method };

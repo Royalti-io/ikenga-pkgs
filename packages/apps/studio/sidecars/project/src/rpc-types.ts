@@ -120,4 +120,6 @@ export type RpcMethod =
   | 'export.read_bytes'
   | 'export.check_bed'
   // export.* (Stage 4 / Track B — prompt handoff)
-  | 'export.prompt_package';
+  | 'export.prompt_package'
+  // export.* (Plan 24 / WP-23 — DaVinci Resolve & OTIO)
+  | 'export.davinci_timeline';
