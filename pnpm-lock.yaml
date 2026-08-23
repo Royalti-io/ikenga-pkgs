@@ -248,6 +248,19 @@ importers:
         specifier: ^5.4.0
         version: 5.9.3
 
+  packages/engine/openrouter:
+    dependencies:
+      '@ikenga/contract':
+        specifier: ^0.7.0
+        version: 0.7.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.0
+        version: 22.19.19
+      typescript:
+        specifier: ^5.8.2
+        version: 5.9.3
+
   packages/lib/pkg-runtime: {}
 
   packages/lib/registry-client:
