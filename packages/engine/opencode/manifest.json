@@ -1,0 +1,63 @@
+{
+  "id": "com.ikenga.engine-opencode",
+  "name": "OpenCode Engine",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "engine",
+
+  "author": {
+    "name": "Royalti",
+    "key": "royalti"
+  },
+
+  "ui": {},
+
+  "permissions": {
+    "shell.execute": ["opencode"],
+    "fs.read": ["$pkg_data/sessions/**"],
+    "fs.write": ["$pkg_data/sessions/**"]
+  },
+
+  "settings": {
+    "schema": [
+      {
+        "key": "opencode_binary",
+        "type": "string",
+        "label": "Path to `opencode` CLI",
+        "default": "opencode",
+        "description": "Resolved against $PATH if not absolute."
+      },
+      {
+        "key": "model",
+        "type": "string",
+        "label": "Default model",
+        "default": "claude-3-7-sonnet"
+      }
+    ]
+  },
+
+  "engine": {
+    "agentId": "opencode",
+    "display": "OpenCode",
+    "capabilities": {
+      "streaming": true,
+      "toolUse": true,
+      "thinking": false,
+      "artifacts": false,
+      "fileAttachments": true,
+      "imageInput": false,
+      "slashCommands": true,
+      "modelSwitching": true,
+      "promptCaching": false,
+      "agenticTools": true,
+      "mcp": true,
+      "sessionResume": true
+    },
+    "onboarding": {
+      "requiredVaultKeys": [],
+      "requiredEnvVars": [],
+      "authCommand": "opencode /init",
+      "docsUrl": "https://opencode.ai"
+    }
+  }
+}

@@ -1,0 +1,63 @@
+{
+  "id": "com.ikenga.engine-pi",
+  "name": "Pi Coding Agent Engine",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "engine",
+
+  "author": {
+    "name": "Royalti",
+    "key": "royalti"
+  },
+
+  "ui": {},
+
+  "permissions": {
+    "shell.execute": ["pi"],
+    "fs.read": ["$pkg_data/sessions/**"],
+    "fs.write": ["$pkg_data/sessions/**"]
+  },
+
+  "settings": {
+    "schema": [
+      {
+        "key": "pi_binary",
+        "type": "string",
+        "label": "Path to `pi` CLI",
+        "default": "pi",
+        "description": "Resolved against $PATH if not absolute."
+      },
+      {
+        "key": "model",
+        "type": "string",
+        "label": "Default model",
+        "default": "claude-3-7-sonnet"
+      }
+    ]
+  },
+
+  "engine": {
+    "agentId": "pi",
+    "display": "Pi Coding Agent",
+    "capabilities": {
+      "streaming": true,
+      "toolUse": true,
+      "thinking": false,
+      "artifacts": false,
+      "fileAttachments": true,
+      "imageInput": false,
+      "slashCommands": false,
+      "modelSwitching": true,
+      "promptCaching": false,
+      "agenticTools": false,
+      "mcp": false,
+      "sessionResume": true
+    },
+    "onboarding": {
+      "requiredVaultKeys": [],
+      "requiredEnvVars": [],
+      "authCommand": "pi /login",
+      "docsUrl": "https://github.com/earendil-works/pi"
+    }
+  }
+}
