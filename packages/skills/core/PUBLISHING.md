@@ -1,113 +1,40 @@
 # PUBLISHING — @ikenga/skill-core
 
-> **Status: WP-15 build DONE, offline-verified — not yet published.**
-> The package on this page is scaffolded, validated, and round-trip-proven
-> offline. The commands below have NOT been run. npm publish and mirror-repo
-> creation are the explicit supervised follow-up that must be run by the
-> maintainer in a gated session (same gate as `@ikenga/skill-pa`).
+> **The per-skill mirror model this file described is retired.** It is kept as
+> a pointer because sibling `held-changesets/README.md` files still link here.
 
----
+Skills are distributed through the **marketplace** at
+[`ikenga-hq/marketplace`](https://github.com/ikenga-hq/marketplace), which
+installs each skill straight from this monorepo (`source: git-subdir` →
+`ikenga-hq/ikenga-pkgs`, `path: packages/skills/<name>`). There is no
+separate mirror repo to create, and no 3-copy sync to run.
 
-## The 3-copy sync
+## To publish a skill
 
-`skill-core` travels through three copies before a user can `npx skills add` it,
-exactly like `skill-pa` and `skill-groundwork`.
+Add an entry to `.claude-plugin/marketplace.json` in that repo. Users then run:
 
 ```
-Copy 1  ikenga/.claude/skills/skill-core/  ← dev source (workspace dogfood)
-   ↓    node ./scripts/sync-from-dev.mjs
-Copy 2  ikenga-pkgs/packages/skills/core/   ← canonical (this repo; Changesets-versioned)
-   ↓    node ./scripts/build-mirror.mjs
-Copy 3  dist-mirror/                          ← staged mirror tree (local only)
-   ↓    git push ikenga-hq/skill-core
-Mirror  github.com/ikenga-hq/skill-core     ← public mirror (npx skills add target)
+/plugin marketplace add ikenga-hq/marketplace
+/plugin install <name>@ikenga
 ```
 
-For the initial publish, Copy 2 (this directory) is the authoritative source;
-`sync-from-dev` becomes relevant on subsequent edit→publish cycles. Author
-`scripts/sync-from-dev.mjs` + `scripts/build-mirror.mjs` modelled on the
-`skill-pa` / `skill-groundwork` equivalents (change `SKILL_NAME = 'skill-core'`,
-`SKILL_SLUG = 'core'`, `MIRROR_REPO = 'ikenga-hq/skill-core'`, and the
-`--src` path to `ikenga/.claude/skills/skill-core/`).
+## What changed
 
-The package's `files` field controls what ships to npm:
+The old runbook told you to `gh repo create ikenga-hq/<name> --public` and
+push a generated mirror. Following it now creates a repo the marketplace makes
+unnecessary. Only **three** mirror repos still exist, and no new ones are being
+created:
 
-```json
-"files": ["manifest.json", "skills", "README.md"]
-```
+| Mirror | Why it stays |
+|---|---|
+| `ikenga-hq/groundwork` | `npx skills add` line published in blog posts and on ikenga.dev |
+| `ikenga-hq/ikenga-artifact-builder` | same |
+| `ikenga-hq/ikenga-contribute` | same |
 
-The skill tree lives under `skills/skill-core/`.
+Business-ops skills (`finance`, `sales`, `pa`, `mail`, `outbound`,
+`strategy`, `query`, `tasks`, `content`, `research`) are **not** in the
+marketplace at all — they read `ikenga.db` through `host.dbQuery` and need a
+running shell, so they ship with it.
 
----
-
-## Exact commands a maintainer runs to publish (supervised gates)
-
-> **NONE of these have been run yet.** Run in order, in a supervised session.
-
-### Step 0 — Verify the skill tree is current
-
-```bash
-# From ikenga-pkgs root
-ls packages/skills/core/skills/skill-core/actions/
-# Expect: setup.md
-```
-
-### Step 1 — Add a changeset
-
-```bash
-# From ikenga-pkgs root
-pnpm changeset      # bump "@ikenga/skill-core": minor (initial 0.1.0)
-```
-
-### Step 2 — Version the package (Changesets)
-
-```bash
-pnpm changeset version
-# Review package.json bump + CHANGELOG.md before proceeding.
-```
-
-### Step 3 — Publish to npm (SUPERVISED GATE)
-
-```bash
-# Ensure ~/.npmrc has the @ikenga granular publish token (expires 2026-08-20).
-pnpm --filter @ikenga/skill-core publish --access public
-# Verify: npm view @ikenga/skill-core
-```
-
-### Step 4 — Build + push the mirror repo (SUPERVISED GATE, one-time)
-
-```bash
-# From packages/skills/core/
-node ./scripts/build-mirror.mjs
-gh repo create ikenga-hq/skill-core \
-  --public \
-  --description "skill-core — the Ikenga skill-graph identity hub (setup)" \
-  --homepage "https://ikenga.dev"
-cd dist-mirror && git init -b main && git add . \
-  && git commit -m "chore: initial mirror from @ikenga/skill-core@0.1.0" \
-  && git remote add origin https://github.com/ikenga-hq/skill-core.git \
-  && git push -u origin main
-```
-
-### Step 5 — Verify end-to-end install
-
-```bash
-mkdir /tmp/skill-core-test && cd /tmp/skill-core-test
-npx skills add ikenga-hq/skill-core
-ls .claude/skills/skill-core/      # expect SKILL.md + actions/setup.md
-```
-
----
-
-## Notes
-
-- The `@ikenga/` npm scope is owned by Royalti, Inc. The granular publish token
-  is saved in `~/.npmrc`; it expires 2026-08-20. Regenerate via `claude-in-chrome`
-  if expired (see memory: `npm_publish_token`).
-- `ikenga-hq/skill-core` does not exist yet. Creating it is an explicit
-  supervised gate (Step 4).
-- Keep `private: true` in the mirror `package.json` — the mirror repo is an
-  install surface, not a second npm publish path.
-- **Why this matters:** once `skill-core` is in the Ọba catalog, installing any
-  P4 domain pkg auto-pulls it through the forward-dependency resolver (Ọba
-  Phase 4, WP-11..16). skill-core is the resolver's first real test dependency.
+Rationale: `plans/2026-08-23-ikenga-skill-marketplace/` in the workspace repo.
+Retirement tracked as ikenga-pkgs#66.

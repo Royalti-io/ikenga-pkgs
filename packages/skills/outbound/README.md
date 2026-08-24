@@ -8,11 +8,9 @@ the outbound-channel approved-drafts commit, per the **R22 founder decision**).
 
 ## Install
 
-```bash
-npx skills add ikenga-hq/skill-outbound   # publish deferred (supervised)
-```
-
-Or via the Ikenga CLI once the 3-copy publish sync is wired (WP-14 pattern).
+> **Not separately installable.** This skill reads workspace data through
+> `host.dbQuery` against `ikenga.db`, so it needs a running Ikenga shell — it
+> ships with the shell rather than through the skill marketplace.
 
 ## What it does
 

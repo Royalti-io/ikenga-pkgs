@@ -8,8 +8,9 @@ Engine-agnostic 3-pass storyboard workflow. The only Studio-coupled fragment is 
 
 ## Install
 
-```bash
-npx skills add ikenga-hq/storyboard-workflow   # coming in the publish session
+```
+/plugin marketplace add ikenga-hq/marketplace
+/plugin install storyboard-workflow@ikenga
 ```
 
 ## Provenance

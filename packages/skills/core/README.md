@@ -7,12 +7,9 @@ on nothing.
 
 ## Install
 
-```bash
-npx skills add ikenga-hq/skill-core   # coming in the publish session
-```
-
-Or via the Ikenga CLI once the 3-copy publish sync is wired (see
-[PUBLISHING.md](./PUBLISHING.md)).
+> **Not separately installable.** This skill reads workspace data through
+> `host.dbQuery` against `ikenga.db`, so it needs a running Ikenga shell — it
+> ships with the shell rather than through the skill marketplace.
 
 ## What it does
 
