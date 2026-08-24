@@ -1,7 +1,7 @@
 # ikenga-pkgs
 
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Discussions](https://img.shields.io/badge/community-discussions-5865F2.svg)](https://github.com/Royalti-io/ikenga-pkgs/discussions)
+[![Discussions](https://img.shields.io/badge/community-discussions-5865F2.svg)](https://github.com/ikenga-hq/ikenga-pkgs/discussions)
 [![Newsletter](https://img.shields.io/badge/newsletter-Building%20in%20the%20Loop-e8590c.svg)](https://buildingintheloop.substack.com/subscribe)
 
 > The canonical home for first-party Ikenga packages — engines, MCP servers, mini-apps, and
@@ -10,7 +10,7 @@
 ## What it is
 
 Every first-party Ikenga package lives here
-([ADR-009](https://github.com/Royalti-io/ikenga/blob/main/docs/adr/009-monorepo-pkgs-all-open.md)),
+([ADR-009](https://github.com/ikenga-hq/ikenga/blob/main/docs/adr/009-monorepo-pkgs-all-open.md)),
 versioned and published with Changesets. It's a good place to read working examples of
 each pkg archetype before authoring your own.
 
@@ -44,15 +44,15 @@ Each PR that changes a package must include a `.changeset/*.md` (the
 
 ## Registry
 
-Published versions appear in the [ikenga-registry](https://github.com/Royalti-io/ikenga-registry)
+Published versions appear in the [ikenga-registry](https://github.com/ikenga-hq/ikenga-registry)
 within seconds of `pnpm changeset publish` completing, via the
 `scripts/update-registry-index.mjs` step in the release workflow. The shell and
 `ikenga` CLI both consume that registry for discovery and install.
 
 ## Links
 
-- [`ikenga`](https://github.com/Royalti-io/ikenga) — the desktop shell that loads these
-- [`ikenga-contract`](https://github.com/Royalti-io/ikenga-contract) — the manifest schema each pkg validates against
+- [`ikenga`](https://github.com/ikenga-hq/ikenga) — the desktop shell that loads these
+- [`ikenga-contract`](https://github.com/ikenga-hq/ikenga-contract) — the manifest schema each pkg validates against
 - [Building in the Loop](https://buildingintheloop.substack.com/subscribe) — biweekly letters on running a real multi-agent Claude Code system
 
 ## License

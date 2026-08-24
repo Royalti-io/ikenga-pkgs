@@ -19,4 +19,4 @@ removes the install dir.
 
 If you're looking for an example of how to build a real pkg with UI,
 sidecars, MCP, or scheduled work, see the other packages in this monorepo
-or the public [Ikenga shell repo](https://github.com/Royalti-io/ikenga).
+or the public [Ikenga shell repo](https://github.com/ikenga-hq/ikenga).

@@ -1,6 +1,6 @@
 # `@ikenga/registry-client`
 
-Read-side client for the [Ikenga registry](https://github.com/Royalti-io/ikenga-registry).
+Read-side client for the [Ikenga registry](https://github.com/ikenga-hq/ikenga-registry).
 Used by the Ikenga shell and the `ikenga` CLI to:
 
 1. **Fetch the signed root index** (`index.json`) and verify its minisign
@@ -20,7 +20,7 @@ plan.
 ```ts
 import { fetchIndex, fetchPkgDetail, resolveInstallPlan } from '@ikenga/registry-client';
 
-const REGISTRY_URL = 'https://royalti-io.github.io/ikenga-registry/index.json';
+const REGISTRY_URL = 'https://registry.ikenga.dev/index.json';
 const REGISTRY_PUBKEY = 'RWRTqugAYXnZRgZPMyuqRNB3G41wg+AhSU2yT8nmDNNQlWQPeCfRXAvI';
 
 const { index, indexUrl } = await fetchIndex({
