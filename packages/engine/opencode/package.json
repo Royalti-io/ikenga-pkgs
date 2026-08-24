@@ -32,7 +32,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@ikenga/contract": "workspace:*"
+    "@ikenga/contract": "^0.7.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
