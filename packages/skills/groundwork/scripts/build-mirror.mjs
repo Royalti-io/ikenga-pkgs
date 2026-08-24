@@ -32,10 +32,16 @@
  *   1. (hermetic) Any pending .changeset/*.md entry that still targets
  *      this package means main has unreleased content for it — the local
  *      version is pre-bump by definition. Hard-fail.
- *   2. (best-effort, network) Compare local version against the published
- *      npm version. If npm's version is newer, the local checkout is
- *      stale — hard-fail. If the registry is unreachable, warn and
- *      continue (don't make a hermetic script hard-depend on the network).
+ *   2. (best-effort, network) Compare local version against the HIGHEST
+ *      version published to npm — max(versions), not the `latest`
+ *      dist-tag, which can point below it after a rewind. If npm's is
+ *      newer, the local checkout is stale — hard-fail. If the registry is
+ *      unreachable, warn and continue (don't make a hermetic script
+ *      hard-depend on the network).
+ *
+ * Output excludes local build residue (__pycache__/*.pyc, node_modules,
+ * .pytest_cache) so running the skill's Python helpers can't leak bytecode
+ * into the published install surface.
  *
  * Pass --allow-version-drift to bypass both and build anyway.
  *
@@ -45,7 +51,7 @@
  */
 
 import { readFileSync, writeFileSync, mkdirSync, readdirSync, statSync, rmSync, existsSync, cpSync } from 'node:fs';
-import { join, dirname, resolve } from 'node:path';
+import { join, dirname, resolve, basename } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -79,7 +85,23 @@ async function main() {
   mkdirSync(OUT, { recursive: true });
 
   // 1. skills/<name>/ — copied from the synced tree.
-  cpSync(SYNCED, join(OUT, 'skills', SKILL_NAME), { recursive: true });
+  // Local build residue must not reach the mirror. The skill ships Python
+  // helpers, so running any of them leaves `__pycache__/*.pyc` next to the
+  // sources — machine- and interpreter-specific bytecode that would be
+  // published to the install surface. (Observed 2026-08-24: four
+  // `cpython-312.pyc` files under scripts/.) Filter on copy rather than
+  // cleaning up afterwards, so the output is correct regardless of what the
+  // working tree happens to contain.
+  const MIRROR_EXCLUDE = new Set(['__pycache__', 'node_modules', '.pytest_cache', '.DS_Store']);
+  cpSync(SYNCED, join(OUT, 'skills', SKILL_NAME), {
+    recursive: true,
+    filter: (srcPath) => {
+      const base = basename(srcPath);
+      if (MIRROR_EXCLUDE.has(base)) return false;
+      if (base.endsWith('.pyc') || base.endsWith('.pyo')) return false;
+      return true;
+    },
+  });
 
   // 2. LICENSE — copied verbatim.
   cpSync(join(PKG_ROOT, 'LICENSE'), join(OUT, 'LICENSE'));
@@ -146,13 +168,25 @@ async function checkVersionParity(src) {
     }
   }
 
-  // 2. Best-effort network check: local version vs. published npm version.
+  // 2. Best-effort network check: local version vs. the HIGHEST version
+  //    published to npm.
+  //
+  //    This deliberately reads the full packument rather than `/latest`.
+  //    `/latest` resolves the dist-tag, which is not the same thing as the
+  //    newest version and can point *below* it. groundwork is the live
+  //    example: an accidental 0.7.0 -> 0.8.0 -> 0.9.0 run on 2026-08-23 was
+  //    rewound by `b8b15ac chore(groundwork): reset version line to 0.7.2`,
+  //    so npm holds 0.8.0 and 0.9.0 while `latest` is 0.7.6. Asking for
+  //    `/latest` returned 0.7.6, matched the local version exactly, and the
+  //    guard passed — blind to two higher published versions. Comparing
+  //    against max(versions) is what this check was always meant to do.
+  //
   //    Warn (don't block) if the registry is unreachable — this script is
   //    otherwise hermetic and shouldn't hard-depend on network access.
   try {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
-    const res = await fetch(`https://registry.npmjs.org/${encodeURIComponent(src.name)}/latest`, {
+    const res = await fetch(`https://registry.npmjs.org/${encodeURIComponent(src.name)}`, {
       signal: controller.signal,
     });
     clearTimeout(timeout);
@@ -160,11 +194,26 @@ async function checkVersionParity(src) {
       console.warn(`[mirror] npm registry lookup for ${src.name} returned ${res.status} — skipping this check.`);
       return;
     }
-    const { version: published } = await res.json();
-    if (published && published !== src.version && isNewer(published, src.version)) {
+    const packument = await res.json();
+    const all = Object.keys(packument.versions || {});
+    if (all.length === 0) {
+      console.warn(`[mirror] npm returned no versions for ${src.name} — skipping this check.`);
+      return;
+    }
+    const published = all.reduce((hi, v) => (isNewer(v, hi) ? v : hi), all[0]);
+    if (published !== src.version && isNewer(published, src.version)) {
+      const distTag = packument['dist-tags']?.latest;
       console.error(
-        `[mirror] refusing to build: local version ${src.version} is behind the published npm version ${published}.`
+        `[mirror] refusing to build: local version ${src.version} is behind the highest published npm version ${published}.`
       );
+      if (distTag && distTag !== published) {
+        console.error(
+          `[mirror] note: npm's \`latest\` dist-tag is ${distTag}, BELOW ${published} — the version line was likely rewound.`
+        );
+        console.error(
+          '[mirror] a rewound line means those higher versions are burned: publishing over them fails with E403.'
+        );
+      }
       console.error('[mirror] this checkout is stale — `git pull` on ikenga-pkgs main and retry.');
       console.error('[mirror] or pass --allow-version-drift to build anyway.');
       process.exit(1);
