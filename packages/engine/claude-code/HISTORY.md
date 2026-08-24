@@ -4,7 +4,7 @@ This pkg was extracted from the Ikenga shell on 2026-05-06 as a snapshot copy.
 
 ## Source files
 
-From `royalti-io/ikenga`:
+From `ikenga-hq/ikenga`:
 
 | Source (in shell) | Destination (in pkg) |
 |---|---|

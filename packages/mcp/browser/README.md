@@ -62,4 +62,4 @@ fail with a structured error if `control.json` is missing or stale.
 
 ## License
 
-[Apache-2.0](https://github.com/Royalti-io/ikenga-pkgs/blob/main/LICENSE).
+[Apache-2.0](https://github.com/ikenga-hq/ikenga-pkgs/blob/main/LICENSE).

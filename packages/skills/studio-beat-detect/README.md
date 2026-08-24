@@ -8,8 +8,9 @@ Portable beat-detection skill — self-contained beat_detect.py (stdlib + option
 
 ## Install
 
-```bash
-npx skills add ikenga-hq/studio-beat-detect   # coming in the publish session
+```
+/plugin marketplace add ikenga-hq/marketplace
+/plugin install studio-beat-detect@ikenga
 ```
 
 ## beat_detect.py

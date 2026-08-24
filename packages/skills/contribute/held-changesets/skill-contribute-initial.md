@@ -12,7 +12,7 @@ Changesets, issue/PR template field-sets) rather than inventing rules, and
 sends):
 
 - `issue-draft` — reads the target repo's actual issue-template field-set (falling
-  back to the org default at `Royalti-io/.github`), collects answers via
+  back to the org default at `ikenga-hq/.github`), collects answers via
   `AskUserQuestion` (auto-gathering env/version/OS for bugs), assembles a filled
   Markdown body, previews it, and submits via `gh issue create --body-file` only on
   confirmation. Uses `--body-file` rather than `--web` because the `gh` CLI cannot

@@ -7,5 +7,5 @@ catalog, and onboarding wizard can carry a stable `"cursor-agent"` engine
 id today; the body fills out once the Cursor CLI is installable locally
 and an `--acp`-equivalent flag is verified (expected shape: ACP passthrough
 identical to `@ikenga/pkg-engine-gemini`). See
-[ADR-013](https://github.com/Royalti-io/ikenga/blob/main/docs/adr/013-multi-engine-runtime-wire-protocols.md)
+[ADR-013](https://github.com/ikenga-hq/ikenga/blob/main/docs/adr/013-multi-engine-runtime-wire-protocols.md)
 §1 + §6.

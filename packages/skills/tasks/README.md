@@ -6,11 +6,9 @@ tasks domain. **Dispatch-only** (R4): task CRUD belongs to the tasks app pkg
 
 ## Install
 
-```bash
-npx skills add ikenga-hq/skill-tasks   # coming in WP-14
-```
-
-Or via the Ikenga CLI once the 3-copy publish sync is wired (WP-14).
+> **Not separately installable.** This skill reads workspace data through
+> `host.dbQuery` against `ikenga.db`, so it needs a running Ikenga shell — it
+> ships with the shell rather than through the skill marketplace.
 
 ## What it does
 

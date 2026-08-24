@@ -1,6 +1,6 @@
 # @ikenga/pkg-browser
 
-The browser engine behind Ikenga's `/iyke/browser/*` contract — a Playwright verb engine the shell (and its agents) use to drive Chrome. Replaces the Rust chromiumoxide engine ([ADR-018](https://github.com/Royalti-io/ikenga/blob/main/docs/adr/018-chrome-automation-adopt-playwright.md)).
+The browser engine behind Ikenga's `/iyke/browser/*` contract — a Playwright verb engine the shell (and its agents) use to drive Chrome. Replaces the Rust chromiumoxide engine ([ADR-018](https://github.com/ikenga-hq/ikenga/blob/main/docs/adr/018-chrome-automation-adopt-playwright.md)).
 
 ## What it gives you
 

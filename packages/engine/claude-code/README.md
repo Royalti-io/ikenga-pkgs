@@ -27,4 +27,4 @@ The chat adapter contract (`src/chat/adapter.ts` + `adapters/`) is the foundatio
 
 ## Status
 
-`v0.1.0` — initial snapshot carve from `royalti-io/ikenga`. The shell still owns these sources at `src/chat/`, `src/routes/sessions/`, etc.; this pkg is a parallel home for ongoing development. See `HISTORY.md` for the cutover plan.
+`v0.1.0` — initial snapshot carve from `ikenga-hq/ikenga`. The shell still owns these sources at `src/chat/`, `src/routes/sessions/`, etc.; this pkg is a parallel home for ongoing development. See `HISTORY.md` for the cutover plan.

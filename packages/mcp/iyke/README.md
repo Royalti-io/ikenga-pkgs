@@ -3,7 +3,7 @@
 [![npm](https://img.shields.io/npm/v/@ikenga/mcp-iyke.svg)](https://www.npmjs.com/package/@ikenga/mcp-iyke)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-A [Model Context Protocol](https://modelcontextprotocol.io/) server that exposes the [Ikenga](https://github.com/Royalti-io/ikenga) desktop app's **iyke control bridge** — so any MCP client (Claude Code, Cursor, custom agents) can drive a running Ikenga session the same way a developer types into the `iyke` CLI at a shell.
+A [Model Context Protocol](https://modelcontextprotocol.io/) server that exposes the [Ikenga](https://github.com/ikenga-hq/ikenga) desktop app's **iyke control bridge** — so any MCP client (Claude Code, Cursor, custom agents) can drive a running Ikenga session the same way a developer types into the `iyke` CLI at a shell.
 
 ## What this is
 
@@ -115,6 +115,6 @@ For security issues, see [SECURITY.md](SECURITY.md) — please don't open a publ
 
 ## Related
 
-- **[Ikenga shell](https://github.com/Royalti-io/ikenga)** — the desktop app this drives.
+- **[Ikenga shell](https://github.com/ikenga-hq/ikenga)** — the desktop app this drives.
 - **[@ikenga/contract](https://www.npmjs.com/package/@ikenga/contract)** — shared manifest + iyke runtime constants.
 - **[Model Context Protocol](https://modelcontextprotocol.io/)** — the protocol this server speaks.

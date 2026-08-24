@@ -6,8 +6,9 @@ Script → storyboard, in one pass. Segments a script into shots (cells) and ext
 
 ## Install
 
-```bash
-npx skills add ikenga-hq/studio-breakdown
+```
+/plugin marketplace add ikenga-hq/marketplace
+/plugin install studio-breakdown@ikenga
 ```
 
 ## Use

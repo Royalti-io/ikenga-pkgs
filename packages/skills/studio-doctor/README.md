@@ -8,8 +8,9 @@ Studio toolchain preflight — pure-shell check.sh that verifies the local rende
 
 ## Install
 
-```bash
-npx skills add ikenga-hq/studio-doctor   # coming in the publish session
+```
+/plugin marketplace add ikenga-hq/marketplace
+/plugin install studio-doctor@ikenga
 ```
 
 ## check.sh

@@ -8,8 +8,9 @@ Pure schema/convention doc for video script structure. Engine-agnostic, zero dep
 
 ## Install
 
-```bash
-npx skills add ikenga-hq/video-script-structure   # coming in the publish session
+```
+/plugin marketplace add ikenga-hq/marketplace
+/plugin install video-script-structure@ikenga
 ```
 
 ## Provenance

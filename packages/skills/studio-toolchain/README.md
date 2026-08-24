@@ -14,8 +14,9 @@ Studio toolchain suite — the interview/instantiate/render/author loop (init, o
 
 ## Install
 
-```bash
-npx skills add ikenga-hq/studio-toolchain   # coming in the publish session
+```
+/plugin marketplace add ikenga-hq/marketplace
+/plugin install studio-toolchain@ikenga
 ```
 
 ## Peer dependency
