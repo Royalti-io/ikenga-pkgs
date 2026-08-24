@@ -1,0 +1,15 @@
+{
+  "id": "3d",
+  "name": "3D Motion Graphics & Multi-View Anchor",
+  "description": "Procedural 3D typography, beat-synced visualizer meshes, and multi-angle 3D character/anchor plates. Renders headless through Blender; anchor plates double as fal.ai conditioning input.",
+  "builtin": true,
+  "chain": [
+    { "block_id": "3d.kinetic-type", "bindings": {} },
+    { "block_id": "3d.audio-visualizer", "bindings": {} },
+    { "block_id": "3d.anchor-plate", "bindings": {} }
+  ],
+  "metadata": {
+    "default_engine": "blender",
+    "supported_aspect_ratios": ["16:9", "9:16", "1:1"]
+  }
+}
