@@ -187,6 +187,10 @@ const EXTENDED_METHODS = new Set<string>([
   'export.read_bytes',
   'export.check_bed',
   'export.prompt_package',
+  // Plan 24 / WP-23 — DaVinci Resolve & OTIO. G-75 #1: this was implemented
+  // in index.ts's `extended()` switch since WP-23 but never registered
+  // here, so every call 404'd with -32601 method-not-found over stdio.
+  'export.davinci_timeline',
 ]);
 
 export function startRpcLoop(handlers: RpcHandlers): { close(): void } {

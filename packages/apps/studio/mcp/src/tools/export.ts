@@ -154,7 +154,7 @@ export function exportTools(sidecar: SidecarClient): ToolDef[] {
     {
       name: 'export.davinci_timeline',
       description:
-        'Export a project\'s rendered storyboard cells and audio bed into DaVinci Resolve Studio (via live scripting API) or as an interchangeable FCPXML/OTIO file. Includes beat-sync markers (downbeats + onsets from audio_analysis) and RenderRecord provenance metadata notes.',
+        'Export a project\'s rendered storyboard cells into DaVinci Resolve Studio (via live scripting API, when Resolve is running and reachable) or as an interchangeable FCPXML/OTIO file (always written as the durable fallback). Beat-sync markers (downbeats, beats, and onsets from audio_analysis) are injected unless `enableBeatSync:false`. Does NOT split audio into separate stem tracks — clip audio, if any, travels embedded in each video asset.',
       inputSchema: {
         type: 'object',
         properties: {
@@ -167,11 +167,14 @@ export function exportTools(sidecar: SidecarClient): ToolDef[] {
           },
           outputPath: {
             type: 'string',
-            description: 'Optional. Output path for the .fcpxml file (defaults to exports/<name>.fcpxml).',
+            description:
+              'Optional. Absolute or project-relative output path for the .fcpxml file; defaults to exports/<name>.fcpxml.',
           },
           fps: { type: 'number', description: 'Target timeline frame rate (defaults to 30).' },
-          includeAudioStems: { type: 'boolean', description: 'Include audio stems as separate tracks.' },
-          enableBeatSync: { type: 'boolean', description: 'Inject beat markers from audio_analysis.' },
+          enableBeatSync: {
+            type: 'boolean',
+            description: 'Inject beat/downbeat/onset markers from audio_analysis. Defaults to true.',
+          },
         },
         required: ['projectId'],
         additionalProperties: false,
@@ -186,7 +189,6 @@ export function exportTools(sidecar: SidecarClient): ToolDef[] {
             cellIds: args.cellIds,
             outputPath: args.outputPath,
             fps: args.fps,
-            includeAudioStems: args.includeAudioStems,
             enableBeatSync: args.enableBeatSync,
           },
           EXTERNAL_CALL_TIMEOUT_MS,

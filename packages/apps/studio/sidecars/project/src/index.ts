@@ -584,7 +584,6 @@ function buildHandlers(db: Db): BuiltHandlers {
           cellIds: params.cellIds as string[] | undefined,
           outputPath: params.outputPath as string | undefined,
           fps: params.fps as number | undefined,
-          includeAudioStems: params.includeAudioStems as boolean | undefined,
           enableBeatSync: params.enableBeatSync as boolean | undefined,
         });
       }
