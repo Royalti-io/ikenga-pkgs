@@ -1,0 +1,97 @@
+{
+  "id": "com.ikenga.git",
+  "name": "Git",
+  "version": "0.1.0",
+  "ikenga_api": "1",
+  "kind": "embedded",
+  "author": {
+    "name": "Royalti",
+    "key": "royalti"
+  },
+
+  "ui": {
+    "nav": [
+      {
+        "id": "git.changes",
+        "label": "Changes",
+        "icon": "git-branch",
+        "section": "source",
+        "route": "/pkg/com.ikenga.git/"
+      },
+      {
+        "id": "git.history",
+        "label": "History",
+        "icon": "history",
+        "section": "source",
+        "route": "/pkg/com.ikenga.git/history"
+      },
+      {
+        "id": "git.branches",
+        "label": "Branches",
+        "icon": "git-fork",
+        "section": "source",
+        "route": "/pkg/com.ikenga.git/branches"
+      },
+      {
+        "id": "git.worktrees",
+        "label": "Worktrees",
+        "icon": "layout-grid",
+        "section": "source",
+        "route": "/pkg/com.ikenga.git/worktrees"
+      },
+      {
+        "id": "git.prs",
+        "label": "PRs",
+        "icon": "git-pull-request",
+        "section": "source",
+        "route": "/pkg/com.ikenga.git/prs"
+      }
+    ],
+    "routes": [
+      {
+        "path": "/",
+        "kind": "iframe",
+        "source": "ui/dist/index.html"
+      }
+    ],
+    "csp": {
+      "default-src": ["'self'"],
+      "script-src": ["'self'", "'unsafe-inline'"],
+      "style-src": ["'self'", "'unsafe-inline'"],
+      "font-src": ["'self'", "data:"],
+      "img-src": ["'self'", "data:"],
+      "connect-src": ["'self'"]
+    }
+  },
+
+  "sidecars": [
+    {
+      "name": "pa-com-ikenga-git-main",
+      "bin": "sidecar/dist/sidecar.js",
+      "stdio": "json",
+      "restart_when_changed": ["sidecar/dist/sidecar.js"],
+      "auto_restart": true
+    }
+  ],
+
+  "mcp": [
+    {
+      "name": "git",
+      "command": "node",
+      "args": ["mcp/dist/index.js"],
+      "lifecycle": "long-lived",
+      "restart_when_changed": ["mcp/dist/index.js"],
+      "auto_restart": true
+    }
+  ],
+
+  "permissions": {
+    "shell.execute": ["node", "bun", "git", "gh"],
+    "fs.read": ["$home/**"],
+    "fs.write": ["$home/**"],
+    "net": [],
+    "sqlite.tables": [],
+    "vault.keys": [],
+    "engine": []
+  }
+}

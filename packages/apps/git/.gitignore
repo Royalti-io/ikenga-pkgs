@@ -1,0 +1,11 @@
+node_modules/
+*.tsbuildinfo
+
+# sidecar/dist and mcp/dist are build outputs (bash sidecar/build.sh,
+# bash mcp/build.sh) — not tracked, same convention as com.ikenga.studio.
+#
+# ui/dist is a thin no-build pkg — dist/ is the source, not a build output
+# (same convention as com.ikenga.tasks) — override the workspace-level
+# `dist/` ignore for it.
+!ui/dist/
+!ui/dist/**

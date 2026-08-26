@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Git</title>
+    <!-- No <link rel="stylesheet">: WebKitGTK can't load subresources (link/
+         fetch/img) from the about:srcdoc document the shell mounts — only
+         inlined scripts work (see the boot script below, same pattern as
+         com.ikenga.tasks). CSS is inline here for the scaffold placeholder;
+         WP-06 replaces this whole file with the real side-menu shell. -->
+    <style>
+      :root {
+        --git-bg: var(--bg-base, #fff);
+        --git-fg: var(--fg, #111);
+        --git-muted: var(--fg-muted, #666);
+        font-family: var(--font-body, system-ui, -apple-system, sans-serif);
+      }
+      * { box-sizing: border-box; }
+      html, body, #root { height: 100%; overflow: hidden; margin: 0; }
+      html body {
+        background: var(--git-bg);
+        color: var(--git-fg);
+        font: 14px/1.4 var(--font-body, system-ui);
+        -webkit-font-smoothing: antialiased;
+      }
+      #root {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 1.25rem;
+        text-align: center;
+      }
+      #root .muted { color: var(--git-muted); font-size: 0.85rem; margin-top: 0.35rem; }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <div>
+        <div>Git — scaffold</div>
+        <div class="muted">Changes · History · Branches views land in WP-06/07/08/09.</div>
+      </div>
+    </div>
+    <!--
+      Resolved against document.baseURI (the host-injected <base href>), same
+      pattern as com.ikenga.tasks — a relative import from an about:srcdoc
+      document otherwise fails with "does not resolve to a valid URL".
+    -->
+    <script type="module">
+      try {
+        await import(new URL('app.js', document.baseURI).href);
+      } catch (e) {
+        const root = document.getElementById('root');
+        root.innerHTML = `<div style="color:var(--danger,#c44)">Failed to load app.js: ${e.message ?? e}</div>`;
+        throw e;
+      }
+    </script>
+  </body>
+</html>

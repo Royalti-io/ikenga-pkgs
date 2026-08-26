@@ -1,0 +1,12 @@
+{
+  "name": "@ikenga/git-sidecar",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Long-lived JSON-RPC-over-stdio sidecar for com.ikenga.git — repo discovery, fs-watch, status cache, mutation RPC over the user's own git/gh binaries. WP-02 scaffold stub; discovery/watch/cache/RPC land in WP-04.",
+  "type": "module",
+  "scripts": {
+    "build": "bash build.sh",
+    "dev": "bash build.sh --watch",
+    "typecheck": "tsc -p ../tsconfig.json --noEmit"
+  }
+}

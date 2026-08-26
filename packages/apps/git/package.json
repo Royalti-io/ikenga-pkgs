@@ -1,0 +1,39 @@
+{
+  "name": "@ikenga/pkg-git",
+  "version": "0.1.0",
+  "description": "com.ikenga.git — Git mini-app pkg (Bun sidecar + MCP + UI) that tracks every Ikenga project's repo(s), reuses the user's existing git/gh auth by shelling out rather than storing credentials, and makes agent worktrees, attribution and stale-base hazards first-class.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ikenga-hq/ikenga-pkgs.git",
+    "directory": "packages/apps/git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "files": [
+    "manifest.json",
+    "ui/dist",
+    "mcp/dist",
+    "sidecar/dist",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build:sidecar": "bash sidecar/build.sh",
+    "dev:sidecar": "bash sidecar/build.sh --watch",
+    "build:mcp": "bash mcp/build.sh",
+    "dev:mcp": "bash mcp/build.sh --watch",
+    "build": "npm run build:sidecar && npm run build:mcp",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.23.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.0"
+  }
+}
