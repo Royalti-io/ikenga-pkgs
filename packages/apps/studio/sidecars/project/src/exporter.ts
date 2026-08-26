@@ -168,8 +168,9 @@ export interface ExportRequest {
   engine?: string;
 }
 
-/** Engines whose `renders/<engine>/<rungDir>/<uid>.mp4` we probe, in order. */
-const ENGINE_PROBE_ORDER = ['hyperframes', 'excalidraw', 'chrome', 'remotion'];
+/** Engines whose `renders/<engine>/<rungDir>/<uid>.mp4` we probe, in order.
+ *  'fal' + 'blender' appended in WP-32 (G-68) so their renders export too. */
+const ENGINE_PROBE_ORDER = ['hyperframes', 'excalidraw', 'chrome', 'remotion', 'fal', 'blender'];
 
 /** A resolved input: the cell + the absolute path to its rendered MP4. */
 export interface ResolvedInput {

@@ -30,8 +30,9 @@
 //     and `anchor.generate` both write `prompt`; `description` is the older
 //     key nothing on this codepath writes any more (kept as a fallback).
 //   • Engine chip     — REAL, and only where it is real (D-3). `Cell.renderer`
-//     CANNOT carry the truth: its enum is hyperframes|remotion|excalidraw|veo|
-//     kling|runway|auto — there is no `fal` value. Engine + model live on
+//     CANNOT carry the truth: it is the *pick/intent* (and since WP-32/G-68 its
+//     enum does include `fal` + `blender`), not what actually ran. Engine +
+//     model live on
 //     `RenderRecord.engine` + `.model_id`, and only AFTER something rendered.
 //     The chip therefore requires a record whose `status === 'done'` — NOT
 //     merely a record's existence. `recordByUid` ranks done>running>queued>
@@ -288,8 +289,9 @@ interface ShotRow {
   renderer: string;
   track: Track;
   /** The shot's `done` RenderRecord, when something really rendered for it.
-   *  The ONLY honest source of engine + model (D-3) — `Cell.renderer`'s enum
-   *  has no `fal` value, so it cannot answer this. Undefined = nothing has
+   *  The ONLY honest source of engine + model (D-3) — `Cell.renderer` is the
+   *  pick/intent (it now includes `fal`/`blender` since WP-32/G-68), not what
+   *  actually ran, so it cannot answer this. Undefined = nothing has
    *  successfully rendered (no record at all, or only queued/running/failed/
    *  cancelled ones), and we fall back to the labelled Track pill rather than
    *  claiming an engine "rendered this shot" when none did. */

@@ -7,8 +7,9 @@
  * adapters; this module imports them and exposes lookup + engine resolution.
  *
  * G23 — content-path → engine auto-resolution. The order is fixed
- * (`.html → hyperframes`, `.excalidraw → excalidraw`, `.tsx → remotion`
- * [rejected as P2], else → fal). This mirrors the MCP-layer RenderShim
+ * (`.html → hyperframes`, `.excalidraw → excalidraw`, `.py`/`.blend → blender`,
+ * `.tsx → remotion` [rejected as P2], empty → fal, anything else → honest
+ * error). This mirrors the MCP-layer RenderShim
  * resolution that WP-06 implemented in-MCP, but now lives at the sidecar
  * enqueue boundary so it is enforced regardless of caller.
  */

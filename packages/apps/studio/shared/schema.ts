@@ -184,7 +184,10 @@ export const BlockSchema = z.object({
   description: z.string(),
   category: z.enum(['narrative', 'visual', 'audio', 'timing', 'style']).optional(),
   default_duration_ms: z.number().int().nonnegative().optional(),
-  default_renderer: z.enum(['hyperframes', 'remotion', 'auto']).default('auto'),
+  // 'excalidraw' added in WP-32 (G-68) — sketch blocks may now name it directly
+  // instead of the older `default_renderer: 'auto'` + `metadata.renderer_hint`
+  // workaround (which remains valid for blocks targeting older schemas).
+  default_renderer: z.enum(['hyperframes', 'remotion', 'excalidraw', 'auto']).default('auto'),
   template_path: z.string(),                   // 'blocks/hook/stat/template.html' (relative to owning skill)
   parameters: z.array(BlockParameterSchema).default([]),
   tags: z.array(z.string()).default([]),
@@ -437,7 +440,10 @@ export const CellSchema = z.object({
 
   // ── Content + production (new) ────
   // 'excalidraw' added in Round 6 — cells whose content_path is a .excalidraw JSON file.
-  renderer: z.enum(['hyperframes', 'remotion', 'excalidraw', 'veo', 'kling', 'runway', 'auto']).default('auto'),
+  // 'blender' + 'fal' added in WP-32 (G-68) — the local Blender adapter and the
+  // fal.ai network engine, matching the sidecar adapter registry. Additive only;
+  // schema_version stays 1 (every existing document still parses unchanged).
+  renderer: z.enum(['hyperframes', 'remotion', 'excalidraw', 'blender', 'fal', 'veo', 'kling', 'runway', 'auto']).default('auto'),
   content_path: z.string(),                    // 'cells/hifi/<uid>/content.html' (HF) | 'Composition.tsx' (Remotion) | 'content.excalidraw' (Excalidraw)
   notes: z.string().default(''),
   reference_layer: z.array(AssetRefSchema).default([]),

@@ -25,7 +25,7 @@ That's **19** of the 36 library blocks. The remaining 17 are owned by archetype 
 ## Templates
 
 - All non-sketch core blocks ship **`index.html`** (HyperFrames entry; G-39) with a `data-duration` scene and `{{param}}` placeholders.
-- Sketch blocks ship a minimal valid **`.excalidraw`** scene (a few rectangles + text). Because `BlockSchema.default_renderer` is `hyperframes | remotion | auto` only, sketch blocks use `default_renderer: 'auto'` + `metadata.renderer_hint: 'excalidraw'`.
+- Sketch blocks ship a minimal valid **`.excalidraw`** scene (a few rectangles + text). `BlockSchema.default_renderer` now accepts `excalidraw` directly (WP-32/G-68); the shipped sketch blocks keep the older `default_renderer: 'auto'` + `metadata.renderer_hint: 'excalidraw'` form, which stays valid against pre-G-68 schemas.
 
 ## Discovery
 

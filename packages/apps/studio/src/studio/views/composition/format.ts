@@ -58,6 +58,8 @@ export function engineLabel(engine: string | undefined): string {
   if (e.startsWith('hf') || e.includes('hyperframe')) return 'HyperFrames';
   if (e.includes('remotion')) return 'Remotion';
   if (e.includes('excalidraw')) return 'Excalidraw';
+  if (e.includes('blender')) return 'Blender';
+  if (e.includes('fal')) return 'fal.ai';
   return engine;
 }
 
