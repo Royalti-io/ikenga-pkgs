@@ -8,6 +8,6 @@
     "build": "bash build.sh",
     "dev": "bash build.sh --watch",
     "typecheck": "tsc -p ../../tsconfig.json --noEmit",
-    "test": "bun run src/registry.test.ts && bun run src/session.test.ts"
+    "test": "bun run src/registry.test.ts && bun run src/session.test.ts && bun run src/storyboard.test.ts"
   }
 }

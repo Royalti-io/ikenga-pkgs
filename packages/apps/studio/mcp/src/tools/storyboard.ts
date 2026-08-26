@@ -93,7 +93,7 @@ export function storyboardTools(sidecar: SidecarClient): ToolDef[] {
     {
       name: 'storyboard.write_cell_content',
       description:
-        "Persist a cell's authored source file (the FULL edited html) to its content_path and bump last_edited (the project FS watcher surfaces the change). This is the durable save seam for the cell editor.",
+        "Persist a cell's authored source file (the FULL edited html) to its content_path, atomically (tmp+rename). Does not touch storyboard.json — the project FS watcher observes the content file directly and emits a single cells/changed. This is the durable save seam for the cell editor.",
       inputSchema: {
         type: 'object',
         properties: {

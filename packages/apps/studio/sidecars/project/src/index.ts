@@ -393,11 +393,11 @@ function buildHandlers(db: Db): BuiltHandlers {
         return storyboard.writeFountain(root, params.text).result;
       case 'storyboard.read_cell_content':
         return storyboard.readCellContent(root, params.cellId as string).result;
-      case 'storyboard.write_cell_content': {
-        const r = storyboard.writeCellContent(root, params.cellId as string, params.html);
-        if (r.project) syncOpenProject(params.projectId as string, r.project);
-        return r.result;
-      }
+      case 'storyboard.write_cell_content':
+        // Content-only write — no storyboard.json mutation, so no `project`
+        // to sync back (see storyboard.ts's writeCellContent doc comment for
+        // why: one fs write in, one watcher emit out).
+        return storyboard.writeCellContent(root, params.cellId as string, params.html).result;
       case 'storyboard.list_cells':
         return storyboard.listCells(root, {
           beat_id: params.beat_id as string | undefined,

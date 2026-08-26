@@ -13,8 +13,15 @@
  * directly here (see storyboard-fs.ts) to avoid double-emit.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 import {
   CellSchema,
@@ -99,11 +106,24 @@ export function readCellContent(projectRoot: string, cellId: string): Storyboard
 }
 
 /**
- * Write a cell's authored source file (the save seam for the Cell-view editor).
- * Persists the FULL edited html to `content_path` (creating the cell dir if
- * needed) and bumps `last_edited` on the record so Canvas / records reflect the
- * save. This is the durable counterpart the old blur-persist path was missing —
- * the render runner reads the same file, so a saved edit renders next time.
+ * Write a cell's authored source file (the save seam for the Cell-view editor,
+ * G-48). Persists the FULL edited html to `content_path` (creating the cell
+ * dir if needed) — the durable counterpart the old blur-persist path was
+ * missing (it wrote only `last_edited` into storyboard.json and kept the
+ * actual edit in an in-memory override that died on remount). The render
+ * runner reads this same file, so a saved edit renders next time.
+ *
+ * Writes tmp+rename in the cell's own directory (G-5 atomic-write
+ * convention, matching `writeProjectAtomic` / `assets.ts` imports) so the
+ * project watcher — which watches `cells/**` directly — never observes a
+ * partially written content file.
+ *
+ * Deliberately does NOT touch storyboard.json: content lives entirely at
+ * `content_path` (the Cell record only carries the pointer), so a content
+ * save is a single filesystem write and therefore a single watcher-driven
+ * `cells/changed` emit, not two. (`last_edited` is bumped by the metadata
+ * mutations — `write_cell`, `set_approved`, etc. — that already round-trip
+ * the whole record; it is not consumed anywhere off a content-only save.)
  */
 export function writeCellContent(
   projectRoot: string,
@@ -114,18 +134,16 @@ export function writeCellContent(
     return { result: { ok: false, error: 'invalid-args', message: 'html must be a string' } };
   }
   const project = readProject(projectRoot);
-  const idx = project.cells.findIndex((c) => c.uid === cellId);
-  if (idx < 0) {
+  const cell = project.cells.find((c) => c.uid === cellId);
+  if (!cell) {
     return { result: { ok: false, error: 'cell-not-found', message: cellId } };
   }
-  const cell = project.cells[idx];
   const abs = absContentPath(projectRoot, cell);
-  mkdirSync(dirname(abs), { recursive: true });
-  writeFileSync(abs, html, 'utf8');
-  // Bump last_edited so the storyboard doc + Canvas freshness track the save.
-  const cells = project.cells.slice();
-  cells[idx] = { ...cell, last_edited: new Date().toISOString() };
-  const next = writeProjectAtomic(projectRoot, { ...project, cells });
+  const dir = dirname(abs);
+  mkdirSync(dir, { recursive: true });
+  const tmp = join(dir, `.${basename(abs)}.${randomUUID().slice(0, 8)}.tmp`);
+  writeFileSync(tmp, html, 'utf8');
+  renameSync(tmp, abs);
   return {
     result: {
       ok: true,
@@ -133,7 +151,6 @@ export function writeCellContent(
       content_path: cell.content_path,
       bytes: Buffer.byteLength(html, 'utf8'),
     },
-    project: next,
   };
 }
 

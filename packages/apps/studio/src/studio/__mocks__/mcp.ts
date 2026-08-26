@@ -278,6 +278,11 @@ function emit<E extends StudioEventName>(
 let _recordCounter = 0;
 const nextRecordId = () => `rec-${++_recordCounter}-${Date.now().toString(36)}`;
 
+/** Cell content store — see the `storyboard.read_cell_content`/`write_cell_content`
+ *  cases below. Absent key = `exists:false`, same contract as the real sidecar's
+ *  `content.html`-not-yet-written state. */
+const CELL_CONTENT = new Map<string, string>();
+
 function callMockTool(
   hub: EventHub,
   name: string,
@@ -299,6 +304,35 @@ function callMockTool(
       const cell = MOCK_CELLS.find((c) => c.uid === uid);
       if (!cell) throw new Error(`mock: cell ${uid} not found`);
       return cell;
+    }
+    // Cell content (Wave 3 / G-48 — real cell-editor save seam). Content
+    // lives at `content_path`, separate from the Cell record itself, so it
+    // gets its own tiny store here rather than a field on MOCK_CELLS.
+    // `storyboardApi.*` is real-mode only (Cell.tsx gates every call behind
+    // `hasRealCells`), so these cases exist for mock-contract parity with
+    // the sidecar's storyboard.read_cell_content/write_cell_content, not
+    // because the standalone Cell view ever reaches them.
+    case 'storyboard.read_cell_content': {
+      const uid = args.cell_uid as string;
+      const cell = MOCK_CELLS.find((c) => c.uid === uid);
+      if (!cell) throw new Error(`mock: cell ${uid} not found`);
+      const html = CELL_CONTENT.get(uid);
+      return { html: html ?? '', content_path: cell.content_path, exists: html !== undefined };
+    }
+    case 'storyboard.write_cell_content': {
+      const uid = args.cell_uid as string;
+      const html = args.html as string;
+      const cell = MOCK_CELLS.find((c) => c.uid === uid);
+      if (!cell) throw new Error(`mock: cell ${uid} not found`);
+      CELL_CONTENT.set(uid, html);
+      // Mirrors the real sidecar: a content save is its own fs write and its
+      // own single cells/changed emit — it does not also patch the Cell
+      // record, so unlike write_cell below this never touches MOCK_CELLS.
+      queueMicrotask(() => emit(hub, 'cells/changed', {
+        project_id: MOCK_PROJECT_ID,
+        changed_uids: [uid],
+      }));
+      return { content_path: cell.content_path, bytes: new TextEncoder().encode(html).length };
     }
     case 'storyboard.write_cell': {
       const uid = args.cell_uid as string;
