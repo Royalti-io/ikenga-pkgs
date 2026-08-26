@@ -52,6 +52,26 @@
         "path": "/",
         "kind": "iframe",
         "source": "ui/dist/index.html"
+      },
+      {
+        "path": "/history",
+        "kind": "iframe",
+        "source": "ui/dist/index.html"
+      },
+      {
+        "path": "/branches",
+        "kind": "iframe",
+        "source": "ui/dist/index.html"
+      },
+      {
+        "path": "/worktrees",
+        "kind": "iframe",
+        "source": "ui/dist/index.html"
+      },
+      {
+        "path": "/prs",
+        "kind": "iframe",
+        "source": "ui/dist/index.html"
       }
     ],
     "csp": {
