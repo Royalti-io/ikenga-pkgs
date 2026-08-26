@@ -215,6 +215,25 @@ export function storyboardTools(sidecar: SidecarClient): ToolDef[] {
         }),
     },
     {
+      name: 'storyboard.reorder_cells',
+      description:
+        "Reassign Cell.index across the named cells, in the order given. `order` is the FULL sequence, front to back — each named cell's index becomes its position; cells not named are left untouched. One atomic write, so the watcher emits once however many ordinals moved. This is the node canvas's sequence-lane gesture (Plan 25 D-25-5); free 2D placement on the canvas is non-semantic and never calls this. Note: the exporter sorts by time.start first and index second, so this moves the board's ordinals without rewriting composition-absolute times.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          projectId: { type: 'string' },
+          order: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['projectId', 'order'],
+        additionalProperties: false,
+      },
+      handler: (args) =>
+        callSidecar(sidecar, 'storyboard.reorder_cells', {
+          projectId: args.projectId,
+          order: args.order,
+        }),
+    },
+    {
       name: 'storyboard.set_approved',
       description: 'Flip the approved boolean on a cell.',
       inputSchema: {

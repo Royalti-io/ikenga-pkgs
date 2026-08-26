@@ -445,6 +445,44 @@ export function createRealMcpClient(): McpClient {
         cacheCells(cells);
         return { cells };
       }
+      // storyboard.reorder_cells (Plan 25 D-25-5) — the sequence lane's index
+      // write. projectId injected; `order` is the full lane order front-to-back.
+      // The reordered cells are NOT returned (the sidecar answers with a count),
+      // so we drop the stale cache and let the watcher-driven refetch reseed it
+      // rather than serving indexes we know are now wrong.
+      case 'storyboard.reorder_cells': {
+        const a = requireActive('storyboard.reorder_cells');
+        const body = await raw('storyboard.reorder_cells', {
+          projectId: a.projectId,
+          order: args.order,
+        });
+        cellCache.clear();
+        return { moved: (body.moved as number) ?? 0, order: (body.order as string[]) ?? [] };
+      }
+
+      // ─── canvas (Plan 25 / G-76 — authored layout in .studio/canvas.json) ──
+      // projectId injected from the active project, same as every other
+      // project-scoped verb. `exists:false` is a real answer ("never arranged"),
+      // never an error, so it passes through with a null doc.
+      case 'canvas.read': {
+        const projectId = (args.project_id as string) ?? requireActive('canvas.read').projectId;
+        const body = await raw('canvas.read', { projectId });
+        return {
+          exists: Boolean(body.exists),
+          doc: (body.doc as unknown) ?? null,
+          path: (body.path as string) ?? '',
+        };
+      }
+      case 'canvas.write': {
+        const projectId = (args.project_id as string) ?? requireActive('canvas.write').projectId;
+        const body = await raw('canvas.write', { projectId, doc: args.doc });
+        return {
+          path: (body.path as string) ?? '',
+          bytes: (body.bytes as number) ?? 0,
+          doc: (body.doc as unknown) ?? null,
+        };
+      }
+
       case 'storyboard.set_approved': {
         const a = requireActive('storyboard.set_approved');
         await raw('storyboard.set_approved', {

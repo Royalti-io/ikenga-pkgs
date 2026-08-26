@@ -69,6 +69,7 @@ import {
 } from './session.js';
 import { listRecentProjects, recordProjectMeta as recordRecentMeta } from './recents.js';
 import * as storyboard from './storyboard.js';
+import * as canvas from './canvas.js';
 import * as breakdown from './breakdown.js';
 import * as anchors from './anchors.js';
 import * as assets from './assets.js';
@@ -434,6 +435,22 @@ function buildHandlers(db: Db): BuiltHandlers {
         if (r.project) syncOpenProject(params.projectId as string, r.project);
         return r.result;
       }
+      // Plan 25 / D-25-5 — the sequence lane's one sanctioned mutation.
+      case 'storyboard.reorder_cells': {
+        const r = storyboard.reorderCells(root, params.order);
+        if (r.project) syncOpenProject(params.projectId as string, r.project);
+        return r.result;
+      }
+
+      // ── canvas.* (Plan 25 / G-76 — authored layout store) ──
+      case 'canvas.read':
+        return canvas.readCanvas(root).result;
+      case 'canvas.write':
+        // Writes <root>/.studio/canvas.json atomically; the FS watcher (which
+        // already carries `.studio/**`) emits the single cells/changed, so we
+        // do NOT emit here. Never touches storyboard.json.
+        return canvas.writeCanvas(root, params.doc).result;
+
       case 'storyboard.upsert_rung': {
         const r = storyboard.upsertRung(
           root,
@@ -622,6 +639,19 @@ function buildHandlers(db: Db): BuiltHandlers {
         .prepare(`SELECT project_id FROM projects WHERE path = ?`)
         .get(abs) as { project_id?: string } | undefined;
       const projectId = knownRow?.project_id ?? randomUUID();
+      // Plan 25 / G-76 — create `.studio/` BEFORE the watcher starts. The
+      // watcher drops targets that don't exist at watch start (see watcher.ts's
+      // Windows note), so on a project that has never been arranged the
+      // already-registered `.studio/**` glob would otherwise be dead: the first
+      // canvas.write would land silently and "arrange on one machine, watch it
+      // move on another" would only work from the SECOND open onwards.
+      try {
+        canvas.ensureStudioDir(abs);
+      } catch (e) {
+        // A read-only project dir is a legitimate state; layout persistence
+        // degrades (canvas.write will report the failure) but the open proceeds.
+        logErr(`could not create .studio/ in ${abs}: ${(e as Error).message}`);
+      }
       const watcher = await startWatcher(projectId, abs);
       const open_: OpenProject = { projectId, path: abs, project, watcher };
       open.set(projectId, open_);

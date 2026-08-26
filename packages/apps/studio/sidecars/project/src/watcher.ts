@@ -85,6 +85,11 @@ const WATCH_GLOBS = [
   'anchors/**',
   'blocks/**',
   'archetypes/**',
+  // Plan 25 asks for `canvas.json`; we watch the whole `.studio/` directory
+  // instead because chokidar is watching plain paths (see the header) and a
+  // directory target also survives the file being created for the first time.
+  // The canvas writer keeps its scratch file OUT of `.studio/` precisely so
+  // this stays one emit per save — see canvas.ts.
   '.studio/**',
 ];
 

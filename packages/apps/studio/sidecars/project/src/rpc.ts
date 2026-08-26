@@ -161,6 +161,13 @@ const EXTENDED_METHODS = new Set<string>([
   'storyboard.upsert_beat',
   'storyboard.upsert_rung',
   'storyboard.set_approved',
+  // Plan 25 / D-25-5 — reordering WITHIN the sequence lane is the only canvas
+  // gesture allowed to mutate `Cell.index`; free placement never reaches here.
+  'storyboard.reorder_cells',
+  // Plan 25 / G-76 — authored canvas layout persisted to
+  // <projectRoot>/.studio/canvas.json (NOT localStorage, NOT storyboard.json).
+  'canvas.read',
+  'canvas.write',
   'breakdown.run',
   'anchor.list',
   'anchor.create',

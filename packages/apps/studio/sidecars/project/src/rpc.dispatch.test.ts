@@ -48,7 +48,12 @@ function stubHandlers(): RpcHandlers {
       // Deliberately narrow: proves EXTENDED_METHODS gating in rpc.ts routes
       // the method through to a handler at all — not what the real
       // index.ts handler does with it (davinci.test.ts covers that).
-      if (method === 'export.davinci_timeline') {
+      if (
+        method === 'export.davinci_timeline' ||
+        method === 'canvas.read' ||
+        method === 'canvas.write' ||
+        method === 'storyboard.reorder_cells'
+      ) {
         return { ok: true, stub: true, method };
       }
       return { ok: false, error: 'internal-error' as ErrorCode, message: `stub: unhandled ${method}` };
@@ -110,6 +115,18 @@ async function main(): Promise<number> {
     assert.ok(davinciResp.result, 'expected a result envelope');
     assert.equal((davinciResp.result as Record<string, unknown>).method, 'export.davinci_timeline');
     ok('export.davinci_timeline dispatches through startRpcLoop (no -32601 method-not-found)');
+
+    // ── G-76: the additive Plan-25 verbs are registered too ─────────────
+    // Same failure mode as G-75 #1 — a handler implemented in index.ts but
+    // missing from rpc.ts's gate is unreachable over the real stdio transport.
+    const additive = ['canvas.read', 'canvas.write', 'storyboard.reorder_cells'];
+    for (let i = 0; i < additive.length; i++) {
+      const name = additive[i]!;
+      const resp = await send(10 + i, name, { projectId: 'p1' });
+      assert.equal(resp.error, undefined, `expected no error for ${name}, got: ${JSON.stringify(resp.error)}`);
+      assert.equal((resp.result as Record<string, unknown>).method, name);
+      ok(`${name} dispatches through startRpcLoop (no -32601 method-not-found)`);
+    }
 
     // ── Negative control: a truly unregistered method still 404s ────────
     const unknownResp = await send(2, 'export.totally_made_up_method', {});

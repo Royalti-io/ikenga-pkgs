@@ -1,16 +1,50 @@
 /**
- * Node Canvas view (WP-28, WP-29, WP-30, Plan 25).
+ * Node Canvas view (WP-28 · WP-29 · WP-30, Plan 25) — behind the view switch.
  *
- * Pan/zoom heterogeneous node canvas projecting on-disk storyboard, script,
- * beats, shots, anchors, and authored groups.
+ * A pan/zoom canvas of heterogeneous, expandable nodes projecting the on-disk
+ * project: pipeline stages, the script, its beats, the boarded shots, and the
+ * anchors they reference. The canvas is a PROJECTION, not a document: project
+ * files are the truth, the canvas renders them and offers actions back.
  *
- * ─── Decisions & Gaps Implemented ──────────────────────────────────────────
- * - D-25-1: Groups are the only true containers. Pipeline stages relate by edge/badge.
- * - D-25-2: Lazy orphan-GC — pruning stale placements when cells are deleted.
- * - D-25-3: Max 2 live srcdoc HTML preview panes at once with blob cleanup.
- * - D-25-5: Sequence Lane pinned to Cell.index with non-semantic free placement + tether.
- * - G-57: Beat→shot edges derive from `[[tags]]` / uid matching.
- * - G-58: Free placement does not alter Cell.index.
+ * ─── What this file implements ────────────────────────────────────────────
+ * - Authored state lives in `<project>/.studio/canvas.json`, through the
+ *   `canvas.read` / `canvas.write` RPCs — never localStorage (invisible to the
+ *   watcher and to a second machine) and never `storyboard.json` (an agent
+ *   rewrite would wipe it). localStorage survives ONLY as the off-shell /
+ *   standalone-dev fallback, where there is no project on disk at all.
+ * - D-25-1: `group` is the only true container. Stage relationships are an
+ *   edge + a chip on the shot; stages never own shots.
+ * - D-25-2: orphan reconciliation is LAZY — a placement whose cell vanished is
+ *   tombstoned, and only swept at project open past the grace window. Nothing
+ *   is pruned on a cells refetch, so an agent mid-rewrite cannot scatter the
+ *   arrangement.
+ * - D-25-3: at most 2 live srcdoc panes; no media below the LOD threshold.
+ * - D-25-5: shots default into a sequence lane derived from `Cell.index`; an
+ *   in-lane drop writes `Cell.index` through `storyboard.reorder_cells`; free
+ *   placement is non-semantic and a broken-out shot draws a tether back to its
+ *   lane slot. The lane collapses to a strip.
+ * - G-57: beat → shot edges derive from the `[[tags]]` in `script.fountain`,
+ *   keyed by uid, through the SAME `../lib/tag-linking` module the Breakdown
+ *   rail uses. The `beat_id` FK is not consulted — it is null on every real
+ *   project, which is the whole point of the gap.
+ * - G-58: free placement never writes `Cell.index`.
+ *
+ * ─── What this file deliberately does NOT do yet ──────────────────────────
+ * - Rendering-ladder row 2 (expanded → `<video>` via `render.read_bytes`) is
+ *   not here; the Cell and Composition views own real playback, and G-59 says
+ *   an expanded node must not reimplement the Cell view. Collapsed tiles show
+ *   a poster, expanded un-rendered ones a live draft, and that is the whole
+ *   ladder this surface claims.
+ * - The plan's per-kind ACTIONS table (breakdown.run / anchor.generate /
+ *   render / retry / export.compose) is not wired. The only mutations this
+ *   canvas performs are the lane reorder and its own layout.
+ * - D-25-4's stage rollup ships only its uncontroversial half (counts primary,
+ *   a failed member promotes a warning). The founder decision is still open.
+ * - No `createObjectURL` happens in this file, so there is nothing here to
+ *   revoke: posters are owned by `CellPoster`'s module-scope LRU (which revokes
+ *   on eviction) and the draft pane is a `srcDoc` string. The previous
+ *   `activeBlobUrls` set never had anything inserted into it and is gone rather
+ *   than standing as decoration for a cleanup that wasn't happening.
  */
 
 import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
@@ -25,7 +59,35 @@ import {
 import { useProjectStore, selectOpenProject } from '../project-store';
 import { useAnchorsStore, selectAnchors } from '../anchors-store';
 import { useSharedStore, selectCellUid } from '../shared-state';
-import { CellPoster } from './composition/CellPoster';
+import { CellPoster, prefetchPosters } from './composition/CellPoster';
+import { getMcpClient, canvasApi, storyboardApi } from '../mcp-client';
+import { subscribeStudioEvent } from '../bridge';
+import { parseFountain, type FountainDoc } from '../lib/fountain';
+import { deriveBeatShotLinks } from '../lib/tag-linking';
+import { buildDraftDoc } from '../lib/draft-doc';
+import {
+  emptyCanvasDoc,
+  normalizeCanvasDoc,
+  sweepOrphans,
+  type CanvasDoc,
+  type CanvasGroup,
+} from '../lib/canvas-doc';
+import {
+  GRID_SNAP,
+  LANE_STRIP_H,
+  LANE_X0,
+  LANE_STEP,
+  PIPELINE_STAGES,
+  deriveShotStage,
+  inLaneBand,
+  laneOrderFrom,
+  laneSlot,
+  orderChanged,
+  rollupStages,
+  stageNodeId,
+  stripDerived,
+  type StageId,
+} from '../lib/canvas-model';
 import type { Cell, Anchor, ScriptBeat } from '../mcp-types';
 
 export type NodeKind = 'stage' | 'script' | 'beat' | 'shot' | 'anchor' | 'group';
@@ -39,24 +101,51 @@ export interface CanvasNodeItem {
   index?: number;
 }
 
-export interface CanvasGroup {
-  id: string;
-  title: string;
-  color?: string;
-  shotUids: string[];
-}
-
 export interface CanvasEdge {
   id: string;
   from: string;
-  to: string;
-  type: 'stage' | 'script-beat' | 'beat-shot' | 'shot-anchor' | 'tether';
+  to?: string;
+  /** Absolute canvas coordinate for an edge whose far end is not a node — the
+   *  D-25-5 tether, which points at a lane SLOT, not at some phantom node id. */
+  toPoint?: { x: number; y: number };
+  type: 'stage' | 'script-beat' | 'beat-shot' | 'shot-anchor' | 'stage-shot' | 'tether';
   color?: string;
 }
 
-const GRID_SNAP = 24;
 const DEFAULT_VIEWPORT: Viewport = { x: 40, y: 40, scale: 1.0 };
 const MAX_LIVE_SRCDOC_PANES = 2;
+/** Below this scale we skip media entirely (D-25-3 cap 4) — and, with it, the
+ *  poster batch, so a zoomed-out board costs nothing. */
+const LOD_MEDIA_MIN_SCALE = 0.45;
+const SAVE_DEBOUNCE_MS = 400;
+
+const SCRIPT_NODE_ID = 'node-script';
+const NON_CELL_PREFIXES = ['stage-', 'beat-', 'anchor-', 'group-'];
+
+/** Layout keys that address a shot (i.e. a cell uid) rather than a derived or
+ *  authored non-cell node. Used only for tombstoning — never for deletion. */
+function isCellKey(key: string): boolean {
+  if (key === SCRIPT_NODE_ID) return false;
+  return !NON_CELL_PREFIXES.some((p) => key.startsWith(p));
+}
+
+/** The watcher reports `<root>/.studio/canvas.json` as a `path:` pseudo-uid.
+ *  Separators are OS-native, hence the normalize. */
+function isCanvasDocUid(uid: string): boolean {
+  if (!uid.startsWith('path:')) return false;
+  return uid.replace(/\\/g, '/').endsWith('.studio/canvas.json');
+}
+
+/** Compare docs by content, ignoring the sidecar-stamped `updated_at` — which
+ *  changes on every save and would otherwise make every write look like a
+ *  remote edit coming back through the watcher. */
+function serializeDoc(doc: CanvasDoc): string {
+  const { updated_at: _ignored, ...rest } = doc;
+  void _ignored;
+  return JSON.stringify(rest);
+}
+
+const localKey = (projectId: string) => `ikenga:studio:canvas-doc:${projectId}`;
 
 export function NodeCanvas() {
   const project = useProjectStore(selectOpenProject);
@@ -67,115 +156,257 @@ export function NodeCanvas() {
   const selectedCellUid = useSharedStore(selectCellUid);
   const setCellUid = useSharedStore((s) => s.setCellUid);
 
-  const [viewport, setViewport] = useState<Viewport>(() => {
-    if (project?.project_id) {
-      try {
-        const saved = localStorage.getItem(`ikenga:studio:canvas-vp:${project.project_id}`);
-        if (saved) return JSON.parse(saved);
-      } catch {
-        // Ignore JSON parse error
-      }
-    }
-    return DEFAULT_VIEWPORT;
-  });
+  // ─── authored state (.studio/canvas.json) ──────────────────────────────
+  const [doc, setDoc] = useState<CanvasDoc>(emptyCanvasDoc);
+  /** The project id `doc` was hydrated for. Saving before hydration completes
+   *  would write an empty document over a real arrangement. */
+  const [hydratedFor, setHydratedFor] = useState<string | null>(null);
+  const [persistMode, setPersistMode] = useState<'rpc' | 'local' | 'none'>('none');
+  const [persistError, setPersistError] = useState<string | null>(null);
+  const lastSavedRef = useRef<string>('');
 
-  const [editMode, setEditMode] = useState<boolean>(true);
-  const [layout, setLayout] = useState<Record<ItemId, Placement>>({});
-  const [groups, setGroups] = useState<CanvasGroup[]>([]);
+  // ─── canvas-local (never shared, never persisted) ──────────────────────
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [showEdges, setShowEdges] = useState<boolean>(true);
   const [liveSrcdocUids, setLiveSrcdocUids] = useState<string[]>([]);
-  const activeBlobUrls = useRef<Set<string>>(new Set());
+  const [cellHtml, setCellHtml] = useState<Record<string, { html: string; exists: boolean } | 'loading' | 'error'>>({});
+  const [fountain, setFountain] = useState<FountainDoc | null>(null);
+  const [reorderBusy, setReorderBusy] = useState(false);
 
-  // 1. Persistence & Lazy Orphan-GC (D-25-2)
+  const viewport = doc.viewport ?? DEFAULT_VIEWPORT;
+
+  // Read cells without making the reconciliation effects depend on them.
+  const cellsRef = useRef<Cell[]>(cells);
+  cellsRef.current = cells;
+
+  // ─── hydrate on project open (and ONLY there) ──────────────────────────
   useEffect(() => {
-    if (!project?.project_id) return;
-    try {
-      const savedLayout = localStorage.getItem(`ikenga:studio:canvas-layout:${project.project_id}`);
-      const savedGroups = localStorage.getItem(`ikenga:studio:canvas-groups:${project.project_id}`);
-      if (savedLayout) {
-        const parsedLayout: Record<string, Placement> = JSON.parse(savedLayout);
-        // Prune orphan cell keys that no longer exist in storyboard.json (D-25-2)
-        const cellUidSet = new Set(cells.map((c) => c.uid));
-        const pruned: Record<ItemId, Placement> = {};
-        for (const [k, v] of Object.entries(parsedLayout)) {
-          if (!k.startsWith('stage-') && !k.startsWith('beat-') && !k.startsWith('anchor-') && k !== 'node-script') {
-            if (!cellUidSet.has(k)) continue; // Orphan pruned
-          }
-          pruned[k as ItemId] = v;
+    const pid = project?.project_id;
+    if (!pid) {
+      setDoc(emptyCanvasDoc());
+      setHydratedFor(null);
+      setPersistMode('none');
+      lastSavedRef.current = '';
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      let loaded = emptyCanvasDoc();
+      let mode: 'rpc' | 'local' | 'none' = 'none';
+      let err: string | null = null;
+      try {
+        const client = await getMcpClient();
+        if (client.mode === 'real') {
+          mode = 'rpc';
+          const res = await canvasApi.read(client);
+          loaded = res.exists ? normalizeCanvasDoc(res.doc) : emptyCanvasDoc();
+        } else {
+          // Standalone / demo: there is no project on disk to hold the file, so
+          // the browser is the only place left. Explicitly the fallback, not
+          // the design.
+          mode = 'local';
+          const raw = localStorage.getItem(localKey(pid));
+          loaded = raw ? normalizeCanvasDoc(JSON.parse(raw) as unknown) : emptyCanvasDoc();
         }
-        setLayout(pruned);
+      } catch (e) {
+        // A FAILED read must not become an empty document: the next drag would
+        // persist the blank over the real arrangement. Stay unhydrated (saving
+        // is gated on `hydratedFor`) and say so.
+        err = (e as Error).message;
+        mode = 'none';
       }
-      if (savedGroups) {
-        setGroups(JSON.parse(savedGroups));
+      if (cancelled) return;
+      if (mode === 'none') {
+        setPersistError(err);
+        setPersistMode('none');
+        return;
       }
-    } catch {
-      // Ignore parse failure
-    }
-  }, [project?.project_id, cells]);
-
-  // Persist Viewport & Layout Changes
-  const handleViewportChange = useCallback((vp: Viewport) => {
-    setViewport(vp);
-    if (project?.project_id) {
-      try {
-        localStorage.setItem(`ikenga:studio:canvas-vp:${project.project_id}`, JSON.stringify(vp));
-      } catch {
-        // Storage failure ignored
+      // D-25-2 — the ONE lazy sweep point. Skipped when no cells have loaded
+      // yet: reconciling an arrangement against an empty board would tombstone
+      // every placement on it.
+      const live = cellsRef.current;
+      if (live.length > 0) {
+        loaded = sweepOrphans(loaded, new Set(live.map((c) => c.uid)), isCellKey);
       }
-    }
+      lastSavedRef.current = serializeDoc(loaded);
+      setDoc(loaded);
+      setPersistMode(mode);
+      setPersistError(null);
+      setHydratedFor(pid);
+    })();
+    return () => { cancelled = true; };
   }, [project?.project_id]);
 
-  const handleLayoutChange = useCallback((nextLayout: Record<ItemId, Placement>) => {
-    setLayout(nextLayout);
-    if (project?.project_id) {
-      try {
-        localStorage.setItem(`ikenga:studio:canvas-layout:${project.project_id}`, JSON.stringify(nextLayout));
-      } catch {
-        // Storage failure ignored
-      }
-    }
-  }, [project?.project_id]);
-
-  // Cleanup object URLs on unmount (WP-30)
+  // ─── D-25-2: tombstone-only reconciliation on a cells refetch ──────────
+  // Marks/clears tombstones. Never deletes a placement — that is the project-
+  // open sweep's job, past the grace window.
   useEffect(() => {
-    return () => {
-      activeBlobUrls.current.forEach((url) => {
+    if (!project?.project_id || hydratedFor !== project.project_id) return;
+    if (cells.length === 0) return;
+    const live = new Set(cells.map((c) => c.uid));
+    setDoc((prev) => {
+      const orphans = { ...prev.orphans };
+      let changed = false;
+      for (const key of Object.keys(prev.layout)) {
+        if (!isCellKey(key)) continue;
+        if (live.has(key)) {
+          if (orphans[key] !== undefined) { delete orphans[key]; changed = true; }
+        } else if (orphans[key] === undefined) {
+          orphans[key] = Date.now();
+          changed = true;
+        }
+      }
+      return changed ? { ...prev, orphans } : prev;
+    });
+  }, [cells, hydratedFor, project?.project_id]);
+
+  // ─── debounced persist ─────────────────────────────────────────────────
+  useEffect(() => {
+    const pid = project?.project_id;
+    if (!pid || hydratedFor !== pid || persistMode === 'none') return;
+    const serialized = serializeDoc(doc);
+    if (serialized === lastSavedRef.current) return;
+    const t = setTimeout(() => {
+      void (async () => {
         try {
-          URL.revokeObjectURL(url);
-        } catch {
-          // Ignore
+          if (persistMode === 'rpc') {
+            const client = await getMcpClient();
+            if (client.mode !== 'real') return;
+            await canvasApi.write(client, { ...doc, updated_at: '' });
+          } else {
+            localStorage.setItem(localKey(pid), serialized);
+          }
+          lastSavedRef.current = serialized;
+          setPersistError(null);
+        } catch (e) {
+          setPersistError((e as Error).message);
         }
-      });
-      activeBlobUrls.current.clear();
-    };
+      })();
+    }, SAVE_DEBOUNCE_MS);
+    return () => clearTimeout(t);
+  }, [doc, project?.project_id, hydratedFor, persistMode]);
+
+  // ─── live layout: arrange here, watch it move there ────────────────────
+  useEffect(() => {
+    const pid = project?.project_id;
+    if (!pid || persistMode !== 'rpc' || hydratedFor !== pid) return;
+    return subscribeStudioEvent('cells/changed', (payload) => {
+      if (!(payload.changed_uids ?? []).some(isCanvasDocUid)) return;
+      void (async () => {
+        try {
+          const client = await getMcpClient();
+          if (client.mode !== 'real') return;
+          const res = await canvasApi.read(client);
+          if (!res.exists) return;
+          const incoming = normalizeCanvasDoc(res.doc);
+          const serialized = serializeDoc(incoming);
+          // Our own write echoing back through the watcher — not a remote edit.
+          if (serialized === lastSavedRef.current) return;
+          lastSavedRef.current = serialized;
+          setDoc(incoming);
+        } catch {
+          // Transient read failure — keep what we have rather than blanking it.
+        }
+      })();
+    });
+  }, [project?.project_id, persistMode, hydratedFor]);
+
+  // ─── the script, for G-57 tag-derived beat→shot edges ──────────────────
+  const loadFountain = useCallback(async () => {
+    try {
+      const client = await getMcpClient();
+      const { exists, text } = await storyboardApi.read_fountain(client);
+      setFountain(exists && text ? parseFountain(text) : null);
+    } catch {
+      // No script.fountain reachable → no tags → no beat→shot edges. An empty
+      // answer, not a wrong one.
+      setFountain(null);
+    }
   }, []);
 
-  // Assemble Heterogeneous Node Items
+  useEffect(() => {
+    if (!project?.project_id) { setFountain(null); return; }
+    void loadFountain();
+  }, [project?.project_id, loadFountain]);
+
+  useEffect(() => {
+    if (!project?.project_id) return;
+    return subscribeStudioEvent('cells/changed', (payload) => {
+      if (!(payload.changed_uids ?? []).some((u) => u.startsWith('project:script'))) return;
+      void loadFountain();
+    });
+  }, [project?.project_id, loadFountain]);
+
+  // ─── derived model ─────────────────────────────────────────────────────
+
+  const groupById = useMemo(() => {
+    const m = new Map<string, CanvasGroup>();
+    for (const g of doc.groups) m.set(g.id, g);
+    return m;
+  }, [doc.groups]);
+
+  /** A shot lives in at most ONE group (D-25-1). First declaration wins if a
+   *  hand-edited canvas.json lists a uid twice. */
+  const groupOfShot = useMemo(() => {
+    const m = new Map<string, CanvasGroup>();
+    for (const g of doc.groups) {
+      for (const uid of g.shotUids) if (!m.has(uid)) m.set(uid, g);
+    }
+    return m;
+  }, [doc.groups]);
+
+  const collapsedSet = useMemo(() => new Set(doc.collapsed), [doc.collapsed]);
+
+  /** Lane order: `Cell.index` ascending, stable in storyboard order on a board
+   *  whose indexes have never been set (they are all 0 on a fresh scaffold). */
+  const laneShots = useMemo(() => {
+    return cells.map((c, i) => ({ cell: c, seq: i }))
+      .sort((a, b) => a.cell.index - b.cell.index || a.seq - b.seq)
+      .map((e) => e.cell);
+  }, [cells]);
+
+  const laneOrdinal = useMemo(() => {
+    const m = new Map<string, number>();
+    laneShots.forEach((c, i) => m.set(c.uid, i));
+    return m;
+  }, [laneShots]);
+
+  const hiddenShotUids = useMemo(() => {
+    const hidden = new Set<string>();
+    for (const g of doc.groups) {
+      if (!g.collapsed) continue;
+      for (const uid of g.shotUids) hidden.add(uid);
+    }
+    return hidden;
+  }, [doc.groups]);
+
+  const shotStage = useMemo(() => {
+    const m = new Map<string, StageId>();
+    for (const c of cells) m.set(c.uid, deriveShotStage(c, renderStatusMap[c.uid]));
+    return m;
+  }, [cells, renderStatusMap]);
+
+  const rollup = useMemo(
+    () => rollupStages(cells, (uid) => renderStatusMap[uid]),
+    [cells, renderStatusMap],
+  );
+
   const items = useMemo<CanvasNodeItem[]>(() => {
     const list: CanvasNodeItem[] = [];
 
-    // 1. Pipeline Stages
-    const stages = ['Script', 'Breakdown', 'Anchors', 'Generate', 'Resolve'];
-    stages.forEach((st, idx) => {
-      list.push({
-        id: `stage-${st.toLowerCase()}`,
-        kind: 'stage',
-        title: st,
-        index: idx,
-      });
+    PIPELINE_STAGES.forEach((st, idx) => {
+      list.push({ id: stageNodeId(st.id), kind: 'stage', title: st.title, data: st.id, index: idx });
     });
 
-    // 2. Script Node
     if (projectDoc?.script) {
       list.push({
-        id: 'node-script',
+        id: SCRIPT_NODE_ID,
         kind: 'script',
         title: projectDoc.title || 'Screenplay',
         subtitle: `${projectDoc.script.beats?.length || 0} beats`,
       });
     }
 
-    // 3. Beat Nodes
     (projectDoc?.script?.beats || []).forEach((b: ScriptBeat, idx: number) => {
       list.push({
         id: `beat-${b.id}`,
@@ -187,8 +418,8 @@ export function NodeCanvas() {
       });
     });
 
-    // 4. Shot Nodes (Sequence Lane)
-    cells.forEach((cell: Cell, idx: number) => {
+    laneShots.forEach((cell: Cell, idx: number) => {
+      if (hiddenShotUids.has(cell.uid)) return; // inside a collapsed group
       list.push({
         id: cell.uid,
         kind: 'shot',
@@ -199,109 +430,138 @@ export function NodeCanvas() {
       });
     });
 
-    // 5. Anchor Nodes
-    anchors.forEach((anc: Anchor) => {
+    doc.groups.forEach((g) => {
       list.push({
-        id: `anchor-${anc.id}`,
-        kind: 'anchor',
-        title: anc.name,
-        subtitle: anc.kind,
-        data: anc,
+        id: `group-${g.id}`,
+        kind: 'group',
+        title: g.title || 'Group',
+        subtitle: `${g.shotUids.length} shot${g.shotUids.length === 1 ? '' : 's'}`,
+        data: g,
       });
     });
 
+    anchors.forEach((anc: Anchor) => {
+      list.push({ id: `anchor-${anc.id}`, kind: 'anchor', title: anc.name, subtitle: anc.kind, data: anc });
+    });
+
     return list;
-  }, [projectDoc, cells, anchors]);
+  }, [projectDoc, laneShots, hiddenShotUids, doc.groups, anchors]);
 
-  // Derive Effective Layout (Sequence Lane at y=320)
-  const effectiveLayout = useMemo(() => {
-    const computed: Record<ItemId, Placement> = { ...layout };
+  /**
+   * The DERIVED default placement for every node. Recomputed each render and
+   * never persisted — `stripDerived` below drops anything that still equals its
+   * entry here, which is what keeps the lane tracking `Cell.index` after the
+   * user has dragged something else.
+   */
+  const derivedLayout = useMemo(() => {
+    const derived: Record<string, Placement> = {};
 
-    // Layout Stages row (y=40)
-    const stages = ['stage-script', 'stage-breakdown', 'stage-anchors', 'stage-generate', 'stage-resolve'];
-    stages.forEach((sid, idx) => {
-      const id = sid as ItemId;
-      if (!computed[id]) {
-        computed[id] = { x: 40 + idx * 240, y: 40, w: 200, h: 64 };
-      }
+    PIPELINE_STAGES.forEach((st, idx) => {
+      derived[stageNodeId(st.id)] = { x: 40 + idx * 240, y: 40, w: 200, h: 64 };
     });
 
-    // Layout Script node (y=160)
-    const scriptId = 'node-script' as ItemId;
-    if (!computed[scriptId]) {
-      computed[scriptId] = { x: 40, y: 160, w: 220, h: 96 };
-    }
+    derived[SCRIPT_NODE_ID] = { x: 40, y: 160, w: 220, h: 96 };
 
-    // Layout Beats (y=160, x starting after script node)
     (projectDoc?.script?.beats || []).forEach((b: ScriptBeat, idx: number) => {
-      const id = `beat-${b.id}` as ItemId;
-      if (!computed[id]) {
-        computed[id] = { x: 300 + idx * 220, y: 160, w: 190, h: 96 };
-      }
+      derived[`beat-${b.id}`] = { x: 300 + idx * 220, y: 160, w: 190, h: 96 };
     });
 
-    // Layout Sequence Lane (y=320)
-    cells.forEach((c, idx) => {
-      const id = c.uid as ItemId;
-      if (!computed[id]) {
-        computed[id] = { x: 40 + idx * 220, y: 320, w: 200, h: 220 };
-      }
+    laneShots.forEach((c, idx) => {
+      derived[c.uid] = laneSlot(idx, doc.lane_collapsed);
     });
 
-    // Layout Anchors (y=600)
+    doc.groups.forEach((g, gi) => {
+      const firstOrdinal = g.shotUids
+        .map((uid) => laneOrdinal.get(uid))
+        .filter((n): n is number => n !== undefined)
+        .sort((a, b) => a - b)[0];
+      const x = firstOrdinal !== undefined ? LANE_X0 + firstOrdinal * LANE_STEP : LANE_X0 + gi * 220;
+      derived[`group-${g.id}`] = { x, y: 600, w: 200, h: 84 };
+    });
+
     anchors.forEach((a, idx) => {
-      const id = `anchor-${a.id}` as ItemId;
-      if (!computed[id]) {
-        computed[id] = { x: 40 + idx * 220, y: 600, w: 180, h: 140 };
-      }
+      derived[`anchor-${a.id}`] = { x: 40 + idx * 220, y: 760, w: 180, h: 140 };
     });
 
-    return computed;
-  }, [layout, cells, anchors, projectDoc]);
+    return derived;
+  }, [projectDoc, laneShots, doc.lane_collapsed, doc.groups, laneOrdinal, anchors]);
 
-  // Derive Edges (WP-29)
+  /** What the primitive actually gets: derived defaults with the authored
+   *  placements laid on top, then collapse applied to the height. */
+  const effectiveLayout = useMemo(() => {
+    const computed: Record<ItemId, Placement> = {};
+    for (const [id, p] of Object.entries(derivedLayout)) computed[id as ItemId] = p;
+    for (const [id, p] of Object.entries(doc.layout)) computed[id as ItemId] = p;
+    for (const id of doc.collapsed) {
+      const p = computed[id as ItemId];
+      if (p && p.h > LANE_STRIP_H) computed[id as ItemId] = { ...p, h: LANE_STRIP_H };
+    }
+    return computed;
+  }, [derivedLayout, doc.layout, doc.collapsed]);
+
+  // Refs, so the drag handler reads the CURRENT model without re-identifying
+  // itself (and re-registering with the primitive) on every render.
+  const derivedLayoutRef = useRef(derivedLayout);
+  derivedLayoutRef.current = derivedLayout;
+  const laneShotsRef = useRef(laneShots);
+  laneShotsRef.current = laneShots;
+  const docRef = useRef(doc);
+  docRef.current = doc;
+
+  // ─── edges ─────────────────────────────────────────────────────────────
+
+  const beatShotLinks = useMemo(() => {
+    // G-57 — tags keyed by uid, via the same module Breakdown links on. The
+    // `beat_id` FK is deliberately not consulted anywhere in this file.
+    return deriveBeatShotLinks(
+      fountain,
+      cells.map((c) => ({ uid: c.uid, shotId: c.label || c.uid })),
+      (projectDoc?.script?.beats ?? []).map((b) => ({
+        id: b.id,
+        ...(b.scene_id ? { scene_id: b.scene_id } : {}),
+        ...(b.shot_id ? { shot_id: b.shot_id } : {}),
+      })),
+    );
+  }, [fountain, cells, projectDoc]);
+
   const edges = useMemo<CanvasEdge[]>(() => {
     if (!showEdges) return [];
     const list: CanvasEdge[] = [];
+    const visible = new Set(items.map((i) => i.id));
 
-    // Stage → Stage static pipeline
-    const stages = ['script', 'breakdown', 'anchors', 'generate', 'resolve'];
-    for (let i = 0; i < stages.length - 1; i++) {
+    for (let i = 0; i < PIPELINE_STAGES.length - 1; i++) {
       list.push({
-        id: `e-stage-${stages[i]}-${stages[i + 1]}`,
-        from: `stage-${stages[i]}`,
-        to: `stage-${stages[i + 1]}`,
+        id: `e-stage-${PIPELINE_STAGES[i].id}-${PIPELINE_STAGES[i + 1].id}`,
+        from: stageNodeId(PIPELINE_STAGES[i].id),
+        to: stageNodeId(PIPELINE_STAGES[i + 1].id),
         type: 'stage',
         color: 'var(--info)',
       });
     }
 
-    // Script → Beat edges
     (projectDoc?.script?.beats || []).forEach((b) => {
       list.push({
         id: `e-script-beat-${b.id}`,
-        from: 'node-script',
+        from: SCRIPT_NODE_ID,
         to: `beat-${b.id}`,
         type: 'script-beat',
         color: 'var(--agent)',
       });
     });
 
-    // Beat → Shot edges (G-57 uid / tag matching)
-    cells.forEach((c) => {
-      if (c.beat_id) {
-        list.push({
-          id: `e-beat-shot-${c.beat_id}-${c.uid}`,
-          from: `beat-${c.beat_id}`,
-          to: c.uid,
-          type: 'beat-shot',
-          color: 'var(--border-soft)',
-        });
-      }
-    });
+    for (const link of beatShotLinks) {
+      if (!visible.has(link.cellUid)) continue;
+      list.push({
+        id: `e-beat-shot-${link.beatId}-${link.cellUid}`,
+        from: `beat-${link.beatId}`,
+        to: link.cellUid,
+        type: 'beat-shot',
+        color: 'var(--border-soft)',
+      });
+    }
 
-    // Shot → Anchor edges
     cells.forEach((c) => {
+      if (!visible.has(c.uid)) return;
       (c.anchors || []).forEach((aid) => {
         list.push({
           id: `e-shot-anc-${c.uid}-${aid}`,
@@ -313,43 +573,301 @@ export function NodeCanvas() {
       });
     });
 
-    // Sequence Lane Tether (D-25-5): If shot is placed outside y=[260..380]
-    cells.forEach((c, idx) => {
+    // D-25-1 stage MEMBERSHIP. Every shot carries its stage as a chip
+    // unconditionally; the edges are drawn on demand — for the selected stage's
+    // members, or for the selected shot's own stage — because 40-100
+    // simultaneous membership lines make the board unreadable, which is the one
+    // thing the canvas exists to fix.
+    const selStage = selectedNodeId?.startsWith('stage-')
+      ? (selectedNodeId.slice('stage-'.length) as StageId)
+      : null;
+    cells.forEach((c) => {
+      if (!visible.has(c.uid)) return;
+      const stage = shotStage.get(c.uid);
+      if (!stage) return;
+      const isSelectedStage = selStage === stage;
+      const isSelectedShot = selectedNodeId === c.uid;
+      if (!isSelectedStage && !isSelectedShot) return;
+      list.push({
+        id: `e-stage-shot-${stage}-${c.uid}`,
+        from: stageNodeId(stage),
+        to: c.uid,
+        type: 'stage-shot',
+        color: 'color-mix(in oklab, var(--info) 55%, transparent)',
+      });
+    });
+
+    // D-25-5 tether — a broken-out shot points back at its lane SLOT, which is
+    // a coordinate, not a node. (The previous version aimed at a `lane-slot-N`
+    // id that was never in the layout, so the renderer bailed and no tether
+    // could ever draw.)
+    laneShots.forEach((c, idx) => {
+      if (!visible.has(c.uid)) return;
       const p = effectiveLayout[c.uid as ItemId];
-      if (p && (p.y < 260 || p.y > 380)) {
-        list.push({
-          id: `e-tether-${c.uid}`,
-          from: c.uid,
-          to: `lane-slot-${idx}`,
-          type: 'tether',
-          color: 'var(--achievement)',
-        });
-      }
+      if (!p || inLaneBand(p)) return;
+      const slot = laneSlot(idx, doc.lane_collapsed);
+      list.push({
+        id: `e-tether-${c.uid}`,
+        from: c.uid,
+        toPoint: { x: slot.x + slot.w / 2, y: slot.y },
+        type: 'tether',
+        color: 'var(--achievement)',
+      });
     });
 
     return list;
-  }, [showEdges, projectDoc, cells, effectiveLayout]);
+  }, [showEdges, items, projectDoc, beatShotLinks, cells, shotStage, selectedNodeId, laneShots, effectiveLayout, doc.lane_collapsed]);
 
-  // Toggle Live srcdoc preview (WP-30, max 2 live panes cap)
+  // ─── posters: ONE render.list_posters for the board (not N+1) ──────────
+  const visibleDoneRecordIds = useMemo(() => {
+    if (viewport.scale < LOD_MEDIA_MIN_SCALE) return [] as string[];
+    const ids: string[] = [];
+    for (const item of items) {
+      if (item.kind !== 'shot') continue;
+      const cell = item.data as Cell | undefined;
+      const done = cell?.renders?.slice().reverse().find((r) => r.status === 'done');
+      if (done?.id) ids.push(done.id);
+    }
+    return ids;
+  }, [items, viewport.scale]);
+
+  useEffect(() => {
+    if (visibleDoneRecordIds.length > 0) prefetchPosters(visibleDoneRecordIds);
+  }, [visibleDoneRecordIds]);
+
+  // ─── live srcdoc panes (WP-30, D-25-3) ─────────────────────────────────
+
+  /** Which uids we have already asked the sidecar for. A ref, not state: the
+   *  fetch effect must not re-run (and tear down its own in-flight request)
+   *  merely because it wrote `loading` into the map it depends on. */
+  const contentRequested = useRef<Set<string>>(new Set());
+
   const toggleLiveSrcdoc = useCallback((uid: string) => {
     setLiveSrcdocUids((prev) => {
-      if (prev.includes(uid)) {
-        return prev.filter((id) => id !== uid);
-      }
-      const next = [uid, ...prev];
-      if (next.length > MAX_LIVE_SRCDOC_PANES) {
-        next.length = MAX_LIVE_SRCDOC_PANES; // Cap to 2
-      }
-      return next;
+      if (prev.includes(uid)) return prev.filter((id) => id !== uid);
+      // D-25-3 cap 1 — at most two live panes on the canvas at once.
+      return [uid, ...prev].slice(0, MAX_LIVE_SRCDOC_PANES);
     });
   }, []);
 
+  // Release the source of any pane that is no longer open (closed, or evicted
+  // by the cap), so re-opening it reads the file again instead of replaying
+  // whatever it said the first time. Declared BEFORE the fetch effect so a
+  // single toggle reconciles then loads, in that order.
+  useEffect(() => {
+    const open = new Set(liveSrcdocUids);
+    for (const uid of Array.from(contentRequested.current)) {
+      if (!open.has(uid)) contentRequested.current.delete(uid);
+    }
+    setCellHtml((prev) => {
+      const next: typeof prev = {};
+      let dropped = false;
+      for (const [uid, value] of Object.entries(prev)) {
+        if (open.has(uid)) next[uid] = value;
+        else dropped = true;
+      }
+      return dropped ? next : prev;
+    });
+  }, [liveSrcdocUids]);
+
+  // Load the cell's REAL authored source for each open pane, through the same
+  // `storyboard.read_cell_content` seam the Cell view's editor uses. The
+  // previous version interpolated `cell.prompt` into a hardcoded placeholder
+  // document instead — which previewed nothing real AND made agent-authored
+  // project text into live markup.
+  useEffect(() => {
+    const pending = liveSrcdocUids.filter((uid) => !contentRequested.current.has(uid));
+    if (pending.length === 0) return;
+    for (const uid of pending) contentRequested.current.add(uid);
+    setCellHtml((prev) => {
+      const next = { ...prev };
+      for (const uid of pending) next[uid] = 'loading';
+      return next;
+    });
+    void (async () => {
+      const client = await getMcpClient();
+      for (const uid of pending) {
+        try {
+          const res = await storyboardApi.read_cell_content(client, uid);
+          setCellHtml((prev) => ({ ...prev, [uid]: { html: res.html, exists: res.exists } }));
+        } catch {
+          contentRequested.current.delete(uid); // let a retry happen
+          setCellHtml((prev) => ({ ...prev, [uid]: 'error' }));
+        }
+      }
+    })();
+  }, [liveSrcdocUids]);
+
+  // A new project is a new set of cells — drop every cached source.
+  useEffect(() => {
+    contentRequested.current.clear();
+    setCellHtml({});
+    setLiveSrcdocUids([]);
+  }, [project?.project_id]);
+
+  // ─── mutations ─────────────────────────────────────────────────────────
+
+  const handleViewportChange = useCallback((vp: Viewport) => {
+    setDoc((prev) => (
+      prev.viewport && prev.viewport.x === vp.x && prev.viewport.y === vp.y && prev.viewport.scale === vp.scale
+        ? prev
+        : { ...prev, viewport: vp }
+    ));
+  }, []);
+
+  const setViewport = useCallback((fn: (v: Viewport) => Viewport) => {
+    setDoc((prev) => ({ ...prev, viewport: fn(prev.viewport ?? DEFAULT_VIEWPORT) }));
+  }, []);
+
+  /**
+   * D-25-5's one sanctioned gesture. A drop inside the lane band rewrites the
+   * board's ordinals through `storyboard.reorder_cells`; anything else is free
+   * placement and writes nothing but layout.
+   */
+  const commitLaneReorder = useCallback(async (nextLayout: Record<ItemId, Placement>) => {
+    const shots = laneShotsRef.current;
+    if (shots.length < 2) return;
+    const before = shots.map((c) => c.uid);
+    const after = laneOrderFrom(
+      shots.map((c) => ({ uid: c.uid, index: c.index })),
+      (uid) => nextLayout[uid as ItemId],
+    );
+    if (!orderChanged(before, after)) return;
+    setReorderBusy(true);
+    try {
+      const client = await getMcpClient();
+      if (client.mode !== 'real') return; // demo board: nothing on disk to reorder
+      await storyboardApi.reorder_cells(client, after);
+      await useStoryboardStore.getState().refetch();
+    } catch (e) {
+      setPersistError(`reorder failed: ${(e as Error).message}`);
+    } finally {
+      setReorderBusy(false);
+    }
+  }, []);
+
+  const handleLayoutChange = useCallback((nextLayout: Record<ItemId, Placement>) => {
+    const derived = derivedLayoutRef.current;
+    const prevDoc = docRef.current;
+    const laneUids = new Set(laneShotsRef.current.map((c) => c.uid));
+    const collapsed = new Set(prevDoc.collapsed);
+
+    // Collapse is a VIEW state applied to the height on the way out
+    // (`effectiveLayout`), so the strip height it produces must not come back
+    // in as an authored one — otherwise expanding a node the user had also
+    // dragged would leave it stuck at 44px forever.
+    const normalized: Record<string, Placement> = {};
+    for (const [id, p] of Object.entries(nextLayout as Record<string, Placement>)) {
+      normalized[id] = collapsed.has(id)
+        ? { ...p, h: prevDoc.layout[id]?.h ?? derived[id]?.h ?? p.h }
+        : p;
+    }
+
+    // Persist ONLY what the user authored: anything still equal to its derived
+    // default is dropped, and a shot resting inside the lane band is dropped
+    // outright — the lane owns its position, so persisting one would freeze it
+    // against the next agent reorder (D-25-5: "lane position = its index …
+    // derived, not authored").
+    const authored = stripDerived(normalized, derived);
+    for (const uid of laneUids) {
+      if (inLaneBand(nextLayout[uid as ItemId])) delete authored[uid];
+    }
+
+    setDoc((prev) => ({ ...prev, layout: authored }));
+    void commitLaneReorder(nextLayout);
+  }, [commitLaneReorder]);
+
+  const handleSelectionChange = useCallback((id: ItemId | null) => {
+    const nodeId = (id as string) ?? null;
+    setSelectedNodeId(nodeId);
+    // cellUid is SHARED state that Cell/Composition read as a real cell uid.
+    // Only a shot node may write it — selecting a beat/stage/anchor/group used
+    // to poison it with `beat-…` / `stage-…`, so switching to the Cell view
+    // afterwards targeted a cell that does not exist.
+    if (nodeId && laneOrdinal.has(nodeId)) setCellUid(nodeId);
+  }, [laneOrdinal, setCellUid]);
+
+  // Cross-view selection the other way: a shot picked in the Rail / Cell view
+  // highlights here too.
+  useEffect(() => {
+    if (selectedCellUid && laneOrdinal.has(selectedCellUid)) setSelectedNodeId(selectedCellUid);
+  }, [selectedCellUid, laneOrdinal]);
+
+  const toggleCollapsed = useCallback((nodeId: string) => {
+    setDoc((prev) => {
+      const has = prev.collapsed.includes(nodeId);
+      return {
+        ...prev,
+        collapsed: has ? prev.collapsed.filter((c) => c !== nodeId) : [...prev.collapsed, nodeId],
+      };
+    });
+  }, []);
+
+  const activeGroup = useMemo(() => {
+    if (!selectedNodeId?.startsWith('group-')) return null;
+    return groupById.get(selectedNodeId.slice('group-'.length)) ?? null;
+  }, [selectedNodeId, groupById]);
+
+  const createGroup = useCallback(() => {
+    setDoc((prev) => {
+      const id = `g${Date.now().toString(36)}`;
+      const seed = selectedNodeId && laneOrdinal.has(selectedNodeId) ? [selectedNodeId] : [];
+      const group: CanvasGroup = {
+        id,
+        title: `Group ${prev.groups.length + 1}`,
+        shotUids: seed,
+        collapsed: false,
+      };
+      return { ...prev, groups: [...prev.groups, group] };
+    });
+  }, [selectedNodeId, laneOrdinal]);
+
+  const toggleMembership = useCallback((groupId: string, uid: string) => {
+    setDoc((prev) => ({
+      ...prev,
+      groups: prev.groups.map((g) => {
+        if (g.id !== groupId) {
+          // A shot lives in exactly one group (D-25-1) — joining one leaves the
+          // other.
+          return g.shotUids.includes(uid) ? { ...g, shotUids: g.shotUids.filter((u) => u !== uid) } : g;
+        }
+        return g.shotUids.includes(uid)
+          ? { ...g, shotUids: g.shotUids.filter((u) => u !== uid) }
+          : { ...g, shotUids: [...g.shotUids, uid] };
+      }),
+    }));
+  }, []);
+
+  const toggleGroupCollapsed = useCallback((groupId: string) => {
+    setDoc((prev) => ({
+      ...prev,
+      groups: prev.groups.map((g) => (g.id === groupId ? { ...g, collapsed: !g.collapsed } : g)),
+    }));
+  }, []);
+
+  const removeGroup = useCallback((groupId: string) => {
+    // The GROUP goes; the shots and their placements stay. (D-25-2's converse:
+    // a cell disappearing never takes its group with it either.)
+    setDoc((prev) => ({
+      ...prev,
+      groups: prev.groups.filter((g) => g.id !== groupId),
+      layout: Object.fromEntries(Object.entries(prev.layout).filter(([k]) => k !== `group-${groupId}`)),
+    }));
+    setSelectedNodeId(null);
+  }, []);
+
+  const toggleLaneCollapsed = useCallback(() => {
+    setDoc((prev) => ({ ...prev, lane_collapsed: !prev.lane_collapsed }));
+  }, []);
+
+  // ─── rendering ─────────────────────────────────────────────────────────
+
   const renderItem = useCallback((item: CanvasNodeItem, state: ItemRenderState) => {
-    const isSelected = state.isSelected || (item.kind === 'shot' && item.id === selectedCellUid);
+    const isSelected = state.isSelected || item.id === selectedNodeId;
     const scale = viewport.scale;
 
-    // LOD Level 1: Zoom out (scale < 0.45) → Compact chip
-    if (scale < 0.45) {
+    // LOD floor — a chip and nothing else. Free (D-25-3 cap 4).
+    if (scale < LOD_MEDIA_MIN_SCALE) {
       return (
         <div
           className={[
@@ -363,20 +881,44 @@ export function NodeCanvas() {
       );
     }
 
-    // Stage Node
     if (item.kind === 'stage') {
+      const stageId = item.data as StageId;
+      const count = rollup.counts[stageId] ?? 0;
+      const failed = rollup.failed[stageId] ?? 0;
       return (
-        <div className="h-full w-full rounded-md border border-dashed border-[var(--info)] bg-[color-mix(in_oklab,var(--info)_8%,var(--bg-surface))] p-3 flex flex-col justify-between">
+        <div
+          className={[
+            'h-full w-full rounded-md border border-dashed p-3 flex flex-col justify-between',
+            'bg-[color-mix(in_oklab,var(--info)_8%,var(--bg-surface))]',
+            isSelected ? 'border-[var(--achievement)]' : 'border-[var(--info)]',
+          ].join(' ')}
+          title={
+            failed > 0
+              ? `${count} shot${count === 1 ? '' : 's'} at this stage · ${failed} failed`
+              : `${count} shot${count === 1 ? '' : 's'} at this stage`
+          }
+        >
           <div className="flex items-center justify-between">
             <span className="font-mono text-[9px] uppercase tracking-wider text-[var(--info)]">Pipeline Stage</span>
-            <span className="font-mono text-[9px] tabular-nums text-fg-faint">0{Number(item.index) + 1}</span>
+            <span className="font-mono text-[9px] tabular-nums text-fg-faint">
+              {String(Number(item.index) + 1).padStart(2, '0')}
+            </span>
           </div>
-          <span className="font-semibold text-fg text-[13px]">{item.title}</span>
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-semibold text-fg text-[13px]">{item.title}</span>
+            <span className="flex items-center gap-1 font-mono text-[10px] tabular-nums text-fg-muted">
+              {/* D-25-4 (proposed): counts are primary; a failure promotes a
+                  warning WITHOUT changing the count. */}
+              {count}/{cells.length}
+              {failed > 0 && (
+                <span className="text-[var(--danger)]" title={`${failed} failed`}>⚠ {failed}</span>
+              )}
+            </span>
+          </div>
         </div>
       );
     }
 
-    // Script Node
     if (item.kind === 'script') {
       return (
         <div className="h-full w-full rounded-md border border-soft bg-surface p-3 flex flex-col justify-between shadow-sm">
@@ -385,17 +927,18 @@ export function NodeCanvas() {
             <span className="font-mono text-[9px] text-fg-faint">{item.subtitle}</span>
           </div>
           <span className="font-medium text-fg text-[12px] truncate">{item.title}</span>
-          <div className="text-[10px] text-fg-muted truncate">Master script source</div>
+          <div className="text-[10px] text-fg-muted truncate">
+            {fountain ? 'script.fountain · tagged links live' : 'no script.fountain on disk'}
+          </div>
         </div>
       );
     }
 
-    // Beat Node
     if (item.kind === 'beat') {
       return (
         <div className="h-full w-full rounded-md border border-soft bg-surface p-2.5 flex flex-col justify-between shadow-sm">
           <div className="flex items-center justify-between font-mono text-[9px]">
-            <span className="text-[var(--achievement)] font-semibold">{item.title}</span>
+            <span className="text-[var(--achievement)] font-semibold truncate">{item.title}</span>
             <span className="text-fg-faint">#beat</span>
           </div>
           <p className="text-[10px] text-fg-muted line-clamp-2">{item.subtitle || 'Beat action'}</p>
@@ -403,7 +946,33 @@ export function NodeCanvas() {
       );
     }
 
-    // Anchor Node
+    if (item.kind === 'group') {
+      const g = item.data as CanvasGroup;
+      return (
+        <div
+          className={[
+            'h-full w-full rounded-md border-2 border-dashed p-2.5 flex flex-col justify-between',
+            'bg-[color-mix(in_oklab,var(--achievement)_7%,var(--bg-surface))]',
+            isSelected ? 'border-[var(--achievement)]' : 'border-[color-mix(in_oklab,var(--achievement)_45%,transparent)]',
+          ].join(' ')}
+        >
+          <div className="flex items-center justify-between font-mono text-[9px]">
+            <span className="uppercase tracking-wider text-[var(--achievement)]">Group</span>
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); toggleGroupCollapsed(g.id); }}
+              className="rounded border border-soft px-1 py-px text-[8px] uppercase text-fg-muted hover:text-fg"
+              title={g.collapsed ? 'Expand this group back onto the canvas' : 'Collapse this group — its shots fold into this tile'}
+            >
+              {g.collapsed ? '▸ Collapsed' : '▾ Expanded'}
+            </button>
+          </div>
+          <div className="truncate text-[12px] font-medium text-fg">{item.title}</div>
+          <div className="font-mono text-[9px] text-fg-faint">{item.subtitle}</div>
+        </div>
+      );
+    }
+
     if (item.kind === 'anchor') {
       const anc = item.data as Anchor | undefined;
       return (
@@ -414,23 +983,52 @@ export function NodeCanvas() {
           </div>
           <div className="font-medium text-fg text-[11px] truncate">{item.title}</div>
           <div className="rounded bg-sunken p-1 text-[9px] font-mono text-fg-faint truncate">
-            {(anc?.metadata?.notes as string) || anc?.asset?.uri || 'Deterministic 3D Plate'}
+            {(anc?.metadata?.notes as string) || anc?.asset?.uri || 'Deterministic 3D plate'}
           </div>
         </div>
       );
     }
 
-    // Shot Node (Sequence Lane item)
     if (item.kind === 'shot') {
       const cell = item.data as Cell | undefined;
-      const status = cell ? renderStatusMap[cell.uid] : undefined;
-      const doneRecord = cell?.renders?.slice().reverse().find((r) => r.status === 'done');
+      if (!cell) return null;
+      const status = renderStatusMap[cell.uid];
+      const doneRecord = cell.renders?.slice().reverse().find((r) => r.status === 'done');
       const isLiveSrcdoc = liveSrcdocUids.includes(item.id);
-      const isHtmlCell = cell?.content_path?.endsWith('.html');
+      const isHtmlCell = cell.content_path?.endsWith('.html');
+      const isCollapsed = collapsedSet.has(item.id);
+      const stage = shotStage.get(cell.uid);
+      const group = groupOfShot.get(cell.uid);
+      const content = cellHtml[cell.uid];
+
+      if (isCollapsed) {
+        return (
+          <div
+            className={[
+              'h-full w-full rounded-md border bg-surface px-2 flex items-center justify-between gap-2 font-mono text-[10px]',
+              isSelected ? 'border-[var(--achievement)] ring-2 ring-[var(--achievement)]' : 'border-soft',
+            ].join(' ')}
+          >
+            <span className="truncate text-fg">
+              {String(Number(item.index) + 1).padStart(2, '0')} · {cell.label || cell.uid}
+            </span>
+            <span className="flex items-center gap-1">
+              {stage && <span className="rounded bg-raised px-1 py-px text-[8px] uppercase text-fg-muted">{stage}</span>}
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); toggleCollapsed(item.id); }}
+                className="rounded border border-soft px-1 text-[8px] text-fg-muted hover:text-fg"
+                title="Expand this shot"
+              >
+                ▾
+              </button>
+            </span>
+          </div>
+        );
+      }
 
       return (
         <div
-          onClick={() => cell && setCellUid(cell.uid)}
           className={[
             'h-full w-full rounded-md border bg-surface p-2 flex flex-col justify-between transition-shadow shadow-sm hover:shadow-md cursor-pointer',
             isSelected ? 'border-[var(--achievement)] ring-2 ring-[var(--achievement)]' : 'border-soft',
@@ -440,7 +1038,7 @@ export function NodeCanvas() {
           <div className="flex items-center justify-between gap-1 border-b border-soft pb-1">
             <div className="flex items-center gap-1 font-mono text-[9px]">
               <span className="text-fg-faint">{String(Number(item.index) + 1).padStart(2, '0')}</span>
-              <span className="font-semibold text-fg truncate max-w-[90px]">{cell?.label || item.id}</span>
+              <span className="font-semibold text-fg truncate max-w-[80px]">{cell.label || item.id}</span>
             </div>
             <div className="flex items-center gap-1">
               {isHtmlCell && (
@@ -451,29 +1049,54 @@ export function NodeCanvas() {
                     'rounded px-1 py-px font-mono text-[7.5px] uppercase border',
                     isLiveSrcdoc ? 'border-[var(--info)] bg-[var(--info)] text-[var(--bg-base)]' : 'border-soft text-fg-muted',
                   ].join(' ')}
-                  title="Toggle live HTML srcdoc preview (WP-30)"
+                  title="Draft preview of this cell's real source — weaker than the render (no scripts, no external assets)"
                 >
-                  HTML
+                  Draft
                 </button>
               )}
-              <span className="rounded px-1 py-px font-mono text-[8px] uppercase bg-raised text-fg-muted">
-                {cell?.rung || '2_hifi'}
-              </span>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); toggleCollapsed(item.id); }}
+                className="rounded border border-soft px-1 py-px font-mono text-[7.5px] text-fg-muted hover:text-fg"
+                title="Collapse this shot to a strip"
+              >
+                ▴
+              </button>
             </div>
           </div>
 
-          {/* Media / Poster / Live Srcdoc preview */}
+          {/* Media — poster, or the cell's REAL source as a draft pane */}
           <div className="relative my-1 flex-1 overflow-hidden rounded bg-sunken flex items-center justify-center">
             {isLiveSrcdoc ? (
               <div className="relative h-full w-full">
-                <iframe
-                  title={`Preview ${item.title}`}
-                  srcDoc={`<!DOCTYPE html><html><body style="margin:0;background:#111;color:#fff;display:flex;align-items:center;justify-center;height:100vh;font-family:sans-serif;font-size:12px;"><div>${cell?.prompt || 'HTML Preview'}</div></body></html>`}
-                  sandbox="allow-scripts"
-                  className="h-full w-full border-none pointer-events-none"
-                />
+                {content === 'loading' || content === undefined ? (
+                  <span className="absolute inset-0 grid place-items-center font-mono text-[9px] text-fg-faint">
+                    loading source…
+                  </span>
+                ) : content === 'error' ? (
+                  <span className="absolute inset-0 grid place-items-center font-mono text-[9px] text-[var(--danger)]">
+                    could not read source
+                  </span>
+                ) : content.exists ? (
+                  <iframe
+                    title={`Draft preview of ${item.title}`}
+                    // The cell's REAL authored html, wrapped by the same builder
+                    // the Cell view's draft pane uses. `sandbox=""` — no scripts
+                    // and never `allow-same-origin`: this is project data an
+                    // agent or a collaborator wrote, so it gets a null origin
+                    // and a static first paint, exactly as the ladder describes.
+                    // NOTHING is string-interpolated into markup here.
+                    srcDoc={buildDraftDoc(content.html)}
+                    sandbox=""
+                    className="h-full w-full border-none pointer-events-none"
+                  />
+                ) : (
+                  <span className="absolute inset-0 grid place-items-center px-2 text-center font-mono text-[9px] text-fg-faint">
+                    no source written yet
+                  </span>
+                )}
                 <span className="absolute bottom-1 right-1 rounded bg-surface/80 px-1 font-mono text-[7px] text-fg-faint">
-                  DOM preview
+                  draft · weaker than the render
                 </span>
               </div>
             ) : doneRecord?.id ? (
@@ -485,14 +1108,41 @@ export function NodeCanvas() {
             )}
           </div>
 
-          {/* Prompt excerpt */}
-          <div className="truncate text-[10px] text-fg-muted font-sans" title={cell?.prompt}>
-            {cell?.prompt || 'No prompt'}
+          {/* Prompt excerpt — TEXT, in a text node. Never markup. */}
+          <div className="truncate text-[10px] text-fg-muted font-sans" title={cell.prompt}>
+            {cell.prompt || 'No prompt'}
+          </div>
+
+          {/* Badges: pipeline stage (D-25-1 membership) + group (containment) */}
+          <div className="flex items-center gap-1 pt-1 font-mono text-[8px]">
+            {stage && (
+              <span
+                className="rounded bg-[color-mix(in_oklab,var(--info)_16%,transparent)] px-1 py-px uppercase text-[var(--info)]"
+                title="Pipeline stage this shot is currently in (membership — stages never own shots)"
+              >
+                {stage}
+              </span>
+            )}
+            {group && (
+              <span className="truncate rounded bg-[color-mix(in_oklab,var(--achievement)_16%,transparent)] px-1 py-px text-[var(--achievement)]">
+                {group.title || 'group'}
+              </span>
+            )}
+            {activeGroup && (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); toggleMembership(activeGroup.id, cell.uid); }}
+                className="ml-auto rounded border border-soft px-1 py-px text-fg-muted hover:text-fg"
+                title={`${activeGroup.shotUids.includes(cell.uid) ? 'Remove from' : 'Add to'} ${activeGroup.title || 'group'}`}
+              >
+                {activeGroup.shotUids.includes(cell.uid) ? '− group' : '+ group'}
+              </button>
+            )}
           </div>
 
           {/* Bottom info bar */}
           <div className="flex items-center justify-between pt-1 border-t border-soft font-mono text-[8.5px] text-fg-faint">
-            <span>{cell?.duration_ms ? `${(cell.duration_ms / 1000).toFixed(1)}s` : '3.0s'}</span>
+            <span>{cell.duration_ms ? `${(cell.duration_ms / 1000).toFixed(1)}s` : '—'}</span>
             <span className={status === 'done' ? 'text-[var(--live)]' : status === 'running' ? 'text-[var(--info)]' : ''}>
               {status === 'done' ? '✓ Ready' : status === 'running' ? '◐ In flight' : '○ Standby'}
             </span>
@@ -506,11 +1156,15 @@ export function NodeCanvas() {
         <span className="text-[11px] font-medium text-fg">{item.title}</span>
       </div>
     );
-  }, [selectedCellUid, renderStatusMap, viewport.scale, liveSrcdocUids, toggleLiveSrcdoc, setCellUid]);
+  }, [
+    selectedNodeId, renderStatusMap, viewport.scale, liveSrcdocUids, toggleLiveSrcdoc,
+    collapsedSet, toggleCollapsed, shotStage, groupOfShot, cellHtml, rollup, cells.length,
+    activeGroup, toggleMembership, toggleGroupCollapsed, fountain,
+  ]);
 
   return (
     <div className="relative h-full w-full overflow-hidden bg-base">
-      {/* Dynamic SVG Edges Layer */}
+      {/* Edge layer — pans/zooms with the canvas. */}
       {showEdges && (
         <svg
           className="pointer-events-none absolute inset-0 z-0 h-full w-full"
@@ -521,50 +1175,99 @@ export function NodeCanvas() {
         >
           {edges.map((e) => {
             const pFrom = effectiveLayout[e.from as ItemId];
-            const pTo = effectiveLayout[e.to as ItemId];
-            if (!pFrom || !pTo) return null;
+            if (!pFrom) return null;
+            let x2: number;
+            let y2: number;
+            if (e.toPoint) {
+              x2 = e.toPoint.x;
+              y2 = e.toPoint.y;
+            } else {
+              const pTo = e.to ? effectiveLayout[e.to as ItemId] : undefined;
+              if (!pTo) return null;
+              x2 = pTo.x + pTo.w / 2;
+              y2 = pTo.y;
+            }
             const x1 = pFrom.x + pFrom.w / 2;
             const y1 = pFrom.y + pFrom.h;
-            const x2 = pTo.x + pTo.w / 2;
-            const y2 = pTo.y;
             const isTether = e.type === 'tether';
 
             return (
-              <g key={e.id}>
-                <line
-                  x1={x1}
-                  y1={y1}
-                  x2={x2}
-                  y2={y2}
-                  stroke={e.color || 'var(--border-soft)'}
-                  strokeWidth={isTether ? 1.5 : 1}
-                  strokeDasharray={isTether ? '4 3' : e.type === 'stage' ? '2 2' : undefined}
-                  opacity={0.65}
-                />
-              </g>
+              <line
+                key={e.id}
+                x1={x1}
+                y1={y1}
+                x2={x2}
+                y2={y2}
+                stroke={e.color || 'var(--border-soft)'}
+                strokeWidth={isTether ? 1.5 : 1}
+                strokeDasharray={isTether ? '4 3' : e.type === 'stage' ? '2 2' : undefined}
+                opacity={0.65}
+              />
             );
           })}
         </svg>
       )}
 
-      {/* Node Canvas Surface */}
       <Canvas<CanvasNodeItem>
         items={items}
         itemId={(it) => it.id as ItemId}
         itemKind={(it) => it.kind}
         layout={effectiveLayout}
         viewport={viewport}
-        editMode={editMode}
-        selectedId={(selectedCellUid as ItemId) || null}
+        editMode
+        selectedId={(selectedNodeId as ItemId) ?? null}
         gridSnap={GRID_SNAP}
         renderItem={renderItem}
         onLayoutChange={handleLayoutChange}
         onViewportChange={handleViewportChange}
-        onSelectionChange={(id) => id && setCellUid(id as string)}
+        onSelectionChange={handleSelectionChange}
+        ariaLabel="Studio node canvas"
         className="h-full w-full"
       >
-        {/* Floating Canvas Controls Toolbar */}
+        {/* Honest status line: where layout is being written, and any failure. */}
+        <div className="pointer-events-none absolute bottom-3 left-3 z-10 flex items-center gap-2 rounded-md border border-soft bg-surface/90 px-2 py-1 font-mono text-[9px] text-fg-faint backdrop-blur">
+          <span title="Authored layout is persisted to the project, not the browser">
+            {persistMode === 'rpc'
+              ? 'layout → .studio/canvas.json'
+              : persistMode === 'local'
+                ? 'layout → browser only (no project on disk)'
+                : 'layout not persisted'}
+          </span>
+          {reorderBusy && <span className="text-[var(--info)]">writing order…</span>}
+          {persistError && <span className="text-[var(--danger)]" title={persistError}>save failed</span>}
+        </div>
+
         <div className="pointer-events-auto absolute bottom-3 right-3 z-10 flex items-center gap-1 rounded-md border border-soft bg-surface/90 p-1 backdrop-blur shadow-md font-mono text-[10px]">
+          <button
+            type="button"
+            onClick={toggleLaneCollapsed}
+            className={[
+              'rounded px-2 py-0.5 border text-[10px]',
+              doc.lane_collapsed ? 'border-[var(--achievement)] text-[var(--achievement)]' : 'border-soft text-fg-muted hover:text-fg',
+            ].join(' ')}
+            title="Collapse the sequence lane to a single strip (D-25-5)"
+          >
+            Lane {doc.lane_collapsed ? 'strip' : 'full'}
+          </button>
+          <button
+            type="button"
+            onClick={createGroup}
+            className="rounded border border-soft px-2 py-0.5 text-fg-muted hover:text-fg"
+            title="Create a group (containing the selected shot, if any). Groups are the only true container."
+          >
+            + Group
+          </button>
+          {activeGroup && (
+            <button
+              type="button"
+              onClick={() => removeGroup(activeGroup.id)}
+              className="rounded border border-soft px-2 py-0.5 text-fg-muted hover:text-[var(--danger)]"
+              title="Delete this group. Its shots and their placements stay."
+            >
+              Ungroup
+            </button>
+          )}
+          <div className="h-4 w-px bg-soft" />
           <button
             type="button"
             onClick={() => setShowEdges((v) => !v)}
@@ -581,7 +1284,7 @@ export function NodeCanvas() {
             type="button"
             onClick={() => setViewport((v) => ({ ...v, scale: Math.min(2.0, v.scale * 1.2) }))}
             className="h-6 w-6 rounded hover:bg-raised text-fg flex items-center justify-center font-bold"
-            title="Zoom In"
+            title="Zoom in"
           >
             +
           </button>
@@ -590,15 +1293,15 @@ export function NodeCanvas() {
             type="button"
             onClick={() => setViewport((v) => ({ ...v, scale: Math.max(0.25, v.scale / 1.2) }))}
             className="h-6 w-6 rounded hover:bg-raised text-fg flex items-center justify-center font-bold"
-            title="Zoom Out"
+            title="Zoom out"
           >
             -
           </button>
           <button
             type="button"
-            onClick={() => setViewport(DEFAULT_VIEWPORT)}
+            onClick={() => setViewport(() => DEFAULT_VIEWPORT)}
             className="rounded px-2 py-0.5 hover:bg-raised text-fg-muted hover:text-fg"
-            title="Reset Viewport"
+            title="Reset viewport"
           >
             Reset
           </button>

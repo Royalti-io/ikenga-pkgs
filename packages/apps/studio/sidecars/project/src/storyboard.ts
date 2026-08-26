@@ -241,6 +241,66 @@ export function deleteCell(projectRoot: string, cellId: string): StoryboardResul
   return { result: { ok: true, cellId }, project: next };
 }
 
+/**
+ * Reassign `Cell.index` across the named cells, in the order given (D-25-5).
+ *
+ * This is the ONE mutation the node canvas's sequence lane performs: dropping a
+ * shot at a new slot inside the lane rewrites the board's ordinals. Free canvas
+ * placement is explicitly non-semantic and never reaches here.
+ *
+ * `order` is the FULL lane order — every uid the caller considers sequenced,
+ * front to back. Each named cell's `index` becomes its position in that array;
+ * cells NOT named are left completely untouched (their index, and everything
+ * else about them, is preserved). One `writeProjectAtomic` for the whole
+ * reorder, so the watcher emits once no matter how many ordinals moved.
+ *
+ * Honesty note: `index` is the ordinal the board reads. The FFmpeg exporter
+ * sorts by `time.start` FIRST and only then by `index` (exporter.ts:224), so on
+ * a board whose cells carry distinct composition-absolute start times a reorder
+ * here moves the lane and the board without moving the cut. Plan 25 G-58 flags
+ * verifying that end-to-end as WP-31 work; this verb deliberately does not
+ * rewrite `time`, because inventing new start times is a different decision
+ * than reordering.
+ */
+export function reorderCells(projectRoot: string, order: unknown): StoryboardResult {
+  if (!Array.isArray(order) || order.some((u) => typeof u !== 'string' || u.length === 0)) {
+    return {
+      result: { ok: false, error: 'invalid-args', message: 'order must be a non-empty string[] of cell uids' },
+    };
+  }
+  const uids = order as string[];
+  const seen = new Set<string>();
+  const duplicates = uids.filter((u) => (seen.has(u) ? true : (seen.add(u), false)));
+  if (duplicates.length > 0) {
+    return {
+      result: { ok: false, error: 'invalid-args', message: `duplicate uids in order: ${duplicates.join(', ')}` },
+    };
+  }
+  const project = readProject(projectRoot);
+  const known = new Set(project.cells.map((c) => c.uid));
+  const missing = uids.filter((u) => !known.has(u));
+  if (missing.length > 0) {
+    return { result: { ok: false, error: 'cell-not-found', message: missing.join(', ') } };
+  }
+  const position = new Map<string, number>();
+  uids.forEach((u, i) => position.set(u, i));
+  const now = new Date().toISOString();
+  let moved = 0;
+  const cells = project.cells.map((c) => {
+    const next = position.get(c.uid);
+    if (next === undefined || next === c.index) return c;
+    moved++;
+    return { ...c, index: next, last_edited: now };
+  });
+  if (moved === 0) {
+    // Nothing to write — do NOT touch storyboard.json (a no-op save would still
+    // bump updated_at and fire a watcher event for a change nobody made).
+    return { result: { ok: true, moved: 0, order: uids } };
+  }
+  const nextProject = writeProjectAtomic(projectRoot, { ...project, cells });
+  return { result: { ok: true, moved, order: uids }, project: nextProject };
+}
+
 export function setApproved(
   projectRoot: string,
   cellId: string,

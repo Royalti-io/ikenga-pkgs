@@ -499,7 +499,15 @@ export function CanvasView() {
   const [dropPath, setDropPath] = useState<Record<string, string>>({});
   const [copiedUid, setCopiedUid] = useState<string | null>(null);
   const [collapsedUids, setCollapsedUids] = useState<Set<string>>(() => new Set());
-  const [canvasMode, setCanvasMode] = useState<'rail' | 'graph'>('graph');
+  // G-61 / G-76 #5 — the Rail is the DEFAULT surface until WP-31 verification
+  // passes. It carries the real-project hydration, poster prefetch, render
+  // beacon, Composition cross-link and create/delete seams that were driven
+  // end-to-end against a real project; the node canvas has not been re-cleared
+  // against any of them. The plan says "land the canvas BEHIND a view switch
+  // first" — WP-28 landed the RAIL behind it instead, so every mount opened the
+  // unverified surface and none of the behaviours WP-31 must re-clear were even
+  // running. Flipped back: the switch stays, the canvas is opt-in.
+  const [canvasMode, setCanvasMode] = useState<'rail' | 'graph'>('rail');
 
   const toggleCollapse = (uid: string) => {
     setCollapsedUids((prev) => {

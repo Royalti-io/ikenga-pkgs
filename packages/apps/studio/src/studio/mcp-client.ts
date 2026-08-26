@@ -281,6 +281,32 @@ export const storyboardApi = {
     c.callTool<{ cells: Cell[] }>('storyboard.list_cells', args ?? {}),
   set_approved:(c: McpClient, cell_uid: string, approved: boolean) =>
     c.callTool<{ ok: true }>('storyboard.set_approved', { cell_uid, approved }),
+  /** Reassign `Cell.index` across the named cells, in the order given — the
+   *  node canvas sequence lane's ONE sanctioned mutation (Plan 25 D-25-5).
+   *  `order` is the FULL lane order front-to-back; cells not named keep their
+   *  index. One atomic write on the sidecar, so one watcher event. Free 2D
+   *  placement on the canvas is non-semantic and must never call this. */
+  reorder_cells: (c: McpClient, order: string[]) =>
+    c.callTool<{ moved: number; order: string[] }>('storyboard.reorder_cells', { order }),
+};
+
+/** The authored canvas document as it comes off `canvas.read` — `exists:false`
+ *  with a null `doc` is a project that has never been arranged, NOT an error. */
+export interface CanvasRead {
+  exists: boolean;
+  doc: unknown;
+  path: string;
+}
+
+export const canvasApi = {
+  /** Read `<project>/.studio/canvas.json` (Plan 25 authored state). Real mode
+   *  only — the mock client has no project on disk, so callers gate on
+   *  `client.mode === 'real'` and fall back to a local cache off-shell. */
+  read:  (c: McpClient) => c.callTool<CanvasRead>('canvas.read'),
+  /** Persist the authored canvas document, atomically. Replaces the file
+   *  wholesale (read → amend → write). Never touches storyboard.json. */
+  write: (c: McpClient, doc: unknown) =>
+    c.callTool<{ path: string; bytes: number; doc: unknown }>('canvas.write', { doc }),
 };
 
 /** One shot `breakdown.run` projected out of the script — an action paragraph

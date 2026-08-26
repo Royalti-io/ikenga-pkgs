@@ -119,6 +119,11 @@ export type RpcMethod =
   | 'storyboard.upsert_beat'
   | 'storyboard.upsert_rung'
   | 'storyboard.set_approved'
+  // storyboard.* (Plan 25 / D-25-5 — the sequence lane's one sanctioned write)
+  | 'storyboard.reorder_cells'
+  // canvas.* (Plan 25 / G-76 — authored layout in <root>/.studio/canvas.json)
+  | 'canvas.read'
+  | 'canvas.write'
   // breakdown.* (plans/studio/19 WP-3 — deterministic script→cells scaffold)
   | 'breakdown.run'
   // anchor.*
