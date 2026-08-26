@@ -746,6 +746,33 @@ export function NodeCanvas() {
     }
   }, []);
 
+  // D-25-5 sanctions the DROP as the index-writing gesture — but the contract
+  // primitive's onLayoutChange fires on every snapped mousemove mid-drag, so
+  // committing there rewrites Cell.index once per slot crossing (and a drag
+  // that ends OUTSIDE the lane can persist a reorder the user never dropped
+  // on). Buffer the latest layout and flush once, at gesture end: pointerup
+  // when a pointer gesture is live, with a debounce fallback for layout
+  // changes that arrive outside one.
+  const pendingReorderRef = useRef<Record<ItemId, Placement> | null>(null);
+  const reorderFlushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const flushLaneReorder = useCallback(() => {
+    if (reorderFlushTimerRef.current) {
+      clearTimeout(reorderFlushTimerRef.current);
+      reorderFlushTimerRef.current = null;
+    }
+    window.removeEventListener('pointerup', flushLaneReorder);
+    const pending = pendingReorderRef.current;
+    pendingReorderRef.current = null;
+    if (pending) void commitLaneReorder(pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [commitLaneReorder]);
+
+  useEffect(() => () => {
+    window.removeEventListener('pointerup', flushLaneReorder);
+    if (reorderFlushTimerRef.current) clearTimeout(reorderFlushTimerRef.current);
+  }, [flushLaneReorder]);
+
   const handleLayoutChange = useCallback((nextLayout: Record<ItemId, Placement>) => {
     const derived = derivedLayoutRef.current;
     const prevDoc = docRef.current;
@@ -774,8 +801,13 @@ export function NodeCanvas() {
     }
 
     setDoc((prev) => ({ ...prev, layout: authored }));
-    void commitLaneReorder(nextLayout);
-  }, [commitLaneReorder]);
+    if (!pendingReorderRef.current) {
+      window.addEventListener('pointerup', flushLaneReorder, { once: true });
+    }
+    pendingReorderRef.current = nextLayout;
+    if (reorderFlushTimerRef.current) clearTimeout(reorderFlushTimerRef.current);
+    reorderFlushTimerRef.current = setTimeout(flushLaneReorder, 400);
+  }, [flushLaneReorder]);
 
   const handleSelectionChange = useCallback((id: ItemId | null) => {
     const nodeId = (id as string) ?? null;
