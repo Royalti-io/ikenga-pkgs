@@ -184,24 +184,31 @@ import type {
 // Separate line (own domain) so the shared type import above stays untouched.
 import type { Anchor, PromptPackage } from './mcp-types';
 
-/** What `project.list` ACTUALLY returns, tolerant of the two real runtime
- *  shapes it resolves to (the "honesty rule" — this boundary genuinely drifts):
+/** What `project.list` / `project.recents` ACTUALLY return, tolerant of the
+ *  three real runtime shapes they resolve to (the "honesty rule" — this
+ *  boundary genuinely drifts):
  *
- *   • real (in-shell): the sidecar's `ProjectSummary` — `projectId` / `name` /
- *     `path` / `lastOpened` (epoch ms), camelCase, ONE row per previously-opened
- *     project, most-recent first. It carries NO archetype / aspect / cell-count /
- *     render-coverage — those are NOT cheaply reachable for a project that isn't
- *     open (render.list is projectId-scoped to the open project).
+ *   • real, project.list: the sidecar's `ProjectSummary` — `projectId` /
+ *     `name` / `path` / `lastOpened` (epoch ms), camelCase, one row per
+ *     previously-opened project, most-recent first. Carries NO archetype /
+ *     aspect / cell-count — those aren't cheaply reachable there (render.list
+ *     is projectId-scoped to the open project).
+ *   • real, project.recents (G-47): the sidecar's `RecentProject` — same
+ *     camelCase shape PLUS `archetypeId` / `cellCount` / `aspect`, recorded at
+ *     open time. Dead paths are filtered out server-side rather than flagged.
  *   • mock (standalone): a full `Project` schema object (snake_case `slug` /
  *     `title` / `archetype_id` / `aspect_ratio` / `cells[]` / `updated_at`).
  *
  *  All fields are optional so the Launcher's `normalizeRecent()` can read
  *  whichever the active client emitted and degrade honestly (drop the coverage
- *  meter + exported/draft pill for real rows that don't carry them). */
+ *  meter + exported/draft pill for rows that don't carry them). */
 export interface RawRecentProject {
-  // real ProjectSummary (camelCase)
+  // real ProjectSummary / RecentProject (camelCase)
   projectId?: string;
   lastOpened?: number;
+  archetypeId?: string;
+  cellCount?: number;
+  aspect?: AspectRatio;
   // full Project / mock (snake_case + schema)
   project_id?: string;
   slug?: string;
@@ -214,7 +221,8 @@ export interface RawRecentProject {
   // shared
   name?: string;
   path?: string;
-  /** Whether the stored path still exists on disk (real project.list only).
+  /** Whether the stored path still exists on disk (real project.list only —
+   *  project.recents omits dead rows entirely, so this is always true there).
    *  Absent on mock/full-Project rows → treated as present. */
   exists?: boolean;
 }
@@ -226,6 +234,11 @@ export const projectApi = {
     c.callTool<{ closed: boolean }>('project.close', { project_id }),
   list:   (c: McpClient) =>
     c.callTool<{ projects: RawRecentProject[] }>('project.list'),
+  /** G-47 — enriched recents (archetype/cell-count/aspect, dead paths
+   *  filtered). Real mode only; the mock client has no matching tool case, so
+   *  callers gate on `client.mode === 'real'` (Launcher does). */
+  recents: (c: McpClient, limit?: number) =>
+    c.callTool<{ projects: RawRecentProject[] }>('project.recents', limit != null ? { limit } : {}),
   create: (c: McpClient, args: { archetype_id: string; path: string; name: string; aspect_ratio?: AspectRatio }) =>
     c.callTool<{ project_id: string }>('project.create', args),
   info:   (c: McpClient, project_id: string) =>

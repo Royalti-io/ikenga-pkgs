@@ -92,7 +92,10 @@ const MIGRATIONS: string[] = [
      project_id   TEXT PRIMARY KEY,
      path         TEXT NOT NULL UNIQUE,
      name         TEXT NOT NULL,
-     last_opened  INTEGER NOT NULL
+     last_opened  INTEGER NOT NULL,
+     archetype_id TEXT,
+     cell_count   INTEGER,
+     aspect       TEXT
    );`,
   `CREATE TABLE IF NOT EXISTS export_queue (
      export_id   TEXT PRIMARY KEY,
@@ -178,6 +181,21 @@ export async function openDb(dbPath?: string, driver?: DbDriver): Promise<Databa
   }
   if (!renderColNames.has('variant')) {
     db.exec(`ALTER TABLE render_queue ADD COLUMN variant TEXT`);
+  }
+
+  // G-47 — recents-registry enrichment columns (archetype_id / cell_count /
+  // aspect). Fresh DBs get them from CREATE TABLE above; existing installs
+  // need an additive ALTER TABLE, same guard pattern as render_queue's.
+  const projectCols = db.prepare(`PRAGMA table_info(projects)`).all() as Array<{ name: string }>;
+  const projectColNames = new Set(projectCols.map((c) => c.name));
+  if (!projectColNames.has('archetype_id')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN archetype_id TEXT`);
+  }
+  if (!projectColNames.has('cell_count')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN cell_count INTEGER`);
+  }
+  if (!projectColNames.has('aspect')) {
+    db.exec(`ALTER TABLE projects ADD COLUMN aspect TEXT`);
   }
 
   return db;

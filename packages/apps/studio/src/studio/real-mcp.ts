@@ -249,6 +249,26 @@ export function createRealMcpClient(): McpClient {
           })),
         };
       }
+      case 'project.recents': {
+        // G-47 — the enriched recents ledger: each row already carries
+        // archetypeId/cellCount/aspect (recorded at open time) and dead
+        // paths are filtered server-side, so this is a straight camelCase
+        // passthrough (no `exists` remap needed — every row is openable).
+        const body = await raw('project.recents', { limit: args.limit });
+        const rows = (body.projects as Array<Record<string, unknown>>) ?? [];
+        return {
+          projects: rows.map((r) => ({
+            project_id: r.projectId as string,
+            name: r.name as string,
+            path: r.path as string,
+            lastOpened: r.lastOpened as number,
+            archetypeId: (r.archetypeId ?? undefined) as string | undefined,
+            cellCount: (r.cellCount ?? undefined) as number | undefined,
+            aspect: (r.aspect ?? undefined) as string | undefined,
+            exists: true,
+          })),
+        };
+      }
       case 'project.info': {
         const body = await raw('project.info', { projectId: args.project_id });
         return body.project as Project;

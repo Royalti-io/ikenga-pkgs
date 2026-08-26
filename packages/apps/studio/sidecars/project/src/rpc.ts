@@ -28,6 +28,8 @@ import type {
   ProjectListResult,
   ProjectOpenParams,
   ProjectOpenResult,
+  ProjectRecentsParams,
+  ProjectRecentsResult,
   ProjectSummary,
   RpcMethod,
 } from './rpc-types.js';
@@ -67,6 +69,11 @@ export interface RpcHandlers {
   close(params: ProjectCloseParams): Promise<{ ok: true } | { ok: false; error: ErrorCode; message?: string }>;
   list(): Promise<ProjectListResult>;
   /**
+   * G-47 — enriched recents registry (archetypeId/cellCount/aspect, dead
+   * paths filtered out). Distinct from `list`: see rpc-types.ts.
+   */
+  recents(params: ProjectRecentsParams): Promise<ProjectRecentsResult>;
+  /**
    * G-50 — persisted open-project state, so a respawned sidecar can offer the
    * reopen. Read-only: it mounts nothing, and the caller's reopen still goes
    * through `project.open` and the WP-04 trust gate.
@@ -95,6 +102,9 @@ const CreateParamsSchema = z.object({
   name: z.string().min(1),
 });
 const InfoParamsSchema = z.object({ projectId: z.string().min(1) });
+const RecentsParamsSchema = z.object({
+  limit: z.number().int().positive().max(200).optional(),
+});
 const LastOpenParamsSchema = z.object({
   limit: z.number().int().positive().max(200).optional(),
   openOnly: z.boolean().optional(),
@@ -222,6 +232,13 @@ export function startRpcLoop(handlers: RpcHandlers): { close(): void } {
         }
         case 'project.list': {
           writeResponse({ jsonrpc: '2.0', id, result: await handlers.list() });
+          return;
+        }
+        case 'project.recents': {
+          // Params are optional in full — `{}`/absent means "defaults".
+          const p = RecentsParamsSchema.safeParse(req.params ?? {});
+          if (!p.success) return invalidParams(id, p.error.message);
+          writeResponse({ jsonrpc: '2.0', id, result: await handlers.recents(p.data) });
           return;
         }
         case 'project.last_open': {

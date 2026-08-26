@@ -82,6 +82,24 @@ export function projectTools(
       },
     },
     {
+      name: 'project.recents',
+      description:
+        'List previously-opened projects (most recent first), enriched with ' +
+        'archetype_id/cell_count/aspect recorded at open time. Projects whose ' +
+        'path no longer resolves on disk are filtered out (contrast with ' +
+        'project.list, which keeps them and flags exists:false).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          limit: { type: 'number', description: 'Cap on returned entries (default 20).' },
+        },
+        additionalProperties: false,
+      },
+      async handler(args) {
+        return callSidecar(sidecar, 'project.recents', { limit: args.limit });
+      },
+    },
+    {
       name: 'project.create',
       description: 'Scaffold a new project on disk from an archetype id, then open it.',
       inputSchema: {

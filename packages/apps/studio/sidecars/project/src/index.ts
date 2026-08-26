@@ -55,6 +55,7 @@ import type {
   ProjectLastOpenResult,
   ProjectListResult,
   ProjectOpenResult,
+  ProjectRecentsResult,
   ProjectSummary,
   RpcMethod,
 } from './rpc-types.js';
@@ -66,6 +67,7 @@ import {
   recordProjectOpened,
   trustSourceFromEnv,
 } from './session.js';
+import { listRecentProjects, recordProjectMeta as recordRecentMeta } from './recents.js';
 import * as storyboard from './storyboard.js';
 import * as breakdown from './breakdown.js';
 import * as anchors from './anchors.js';
@@ -165,15 +167,19 @@ function findOpenById(projectId: string): OpenProject | undefined {
   return open.get(projectId);
 }
 
+// G-47 — records the recents-registry row on every successful open, deriving
+// the cheap archetype/cell-count/aspect fields from the Project the caller
+// just parsed off disk (no extra I/O). Delegates to recents.ts so the same
+// write path is exercised by recents.test.ts without spawning the sidecar.
 function recordProjectMeta(db: Db, p: OpenProject): void {
-  db.prepare(
-    `INSERT INTO projects (project_id, path, name, last_opened)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(project_id) DO UPDATE
-         SET path = excluded.path,
-             name = excluded.name,
-             last_opened = excluded.last_opened`,
-  ).run(p.projectId, p.path, p.project.title, Date.now());
+  recordRecentMeta(db, {
+    projectId: p.projectId,
+    path: p.path,
+    name: p.project.title,
+    archetypeId: p.project.archetype_id ?? null,
+    cellCount: p.project.cells.length,
+    aspect: p.project.aspect_ratio ?? null,
+  });
 }
 
 function listKnownProjects(db: Db): ProjectSummary[] {
@@ -664,6 +670,10 @@ function buildHandlers(db: Db): BuiltHandlers {
 
     async list(): Promise<ProjectListResult> {
       return { ok: true, projects: listKnownProjects(db) };
+    },
+
+    async recents({ limit }): Promise<ProjectRecentsResult> {
+      return { ok: true, projects: listRecentProjects(db, { limit }) };
     },
 
     async lastOpen({ limit, openOnly }): Promise<ProjectLastOpenResult> {

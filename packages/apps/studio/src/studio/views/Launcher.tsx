@@ -7,12 +7,15 @@
 // dashed Custom card) and L-C (⌘K command palette).
 //
 // THE HONESTY RULE (this rebuild's core): render ONLY data that has a real
-// seam. Recents come from the real project.list() (a ProjectSummary that
-// carries name / path / last-opened but NO archetype / aspect / cell-count /
-// render-coverage / exported-status for an un-opened project), so those
-// decorations are dropped rather than faked. Widgets whose data isn't reachable
-// in Wave 1 are OMITTED (see the report's deferral list): poster thumbnails,
-// "Latest export" card, render-engine stat facts, a user-name greeting.
+// seam. Recents come from the real project.recents() registry (G-47) in real
+// mode — name / path / last-opened PLUS archetype / aspect / cell-count
+// recorded at open time, with dead paths filtered server-side rather than
+// faked — and from project.list() in mock/standalone (no matching mock tool
+// case for recents). Render-coverage / exported-status for an un-opened
+// project still have no seam, so those decorations stay dropped. Widgets
+// whose data isn't reachable in Wave 1 are OMITTED (see the report's
+// deferral list): poster thumbnails, "Latest export" card, render-engine
+// stat facts, a user-name greeting.
 //
 // Every create/open/list call is wrapped in try/catch with a visible surface
 // (toast + inline error). Open-folder consumes the shell's real picker/grant
@@ -117,7 +120,12 @@ export function LauncherView({ resumeError = null, onDismissResumeError }: Launc
     try {
       const client = clientRef.current ?? (clientRef.current = await getMcpClient());
       setMode(client.mode);
-      const { projects } = await projectApi.list(client);
+      // G-47 — real mode gets the enriched registry (archetype/cell-count/
+      // aspect, dead paths filtered server-side); the mock client has no
+      // matching tool case, so standalone keeps reading project.list() as
+      // before (the runtime-detection seam this already relies on).
+      const { projects } =
+        client.mode === 'real' ? await projectApi.recents(client) : await projectApi.list(client);
       const rows = (projects ?? [])
         .map(normalizeRecent)
         .filter((r): r is RecentRow => r !== null);
