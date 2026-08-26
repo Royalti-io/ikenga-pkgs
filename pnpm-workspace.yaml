@@ -4,3 +4,8 @@ packages:
   # deeper than the standard `packages/<group>/<pkg>` layout, so it needs an
   # explicit glob entry to be linked into the workspace.
   - "packages/apps/studio/*"
+  # com.ikenga.git's UI iframe (ui/) is its own vite-built sub-package, same
+  # depth reason as studio/* above (WP-06). sidecar/ and mcp/ are deliberately
+  # NOT workspace members (they hoist deps from the parent @ikenga/pkg-git
+  # package instead — see their package.json descriptions).
+  - "packages/apps/git/ui"

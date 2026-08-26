@@ -1,11 +1,7 @@
 node_modules/
 *.tsbuildinfo
 
-# sidecar/dist and mcp/dist are build outputs (bash sidecar/build.sh,
-# bash mcp/build.sh) — not tracked, same convention as com.ikenga.studio.
-#
-# ui/dist is a thin no-build pkg — dist/ is the source, not a build output
-# (same convention as com.ikenga.tasks) — override the workspace-level
-# `dist/` ignore for it.
-!ui/dist/
-!ui/dist/**
+# sidecar/dist, mcp/dist AND ui/dist are all build outputs now (WP-06 built
+# the UI as a vite bundle, same convention as com.ikenga.studio's dist/, not
+# the hand-authored com.ikenga.tasks dist/ pattern the WP-02 scaffold
+# originally followed) — none are tracked; `npm run build` regenerates them.

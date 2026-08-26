@@ -1,0 +1,468 @@
+// com.ikenga.git · in-memory mocked sidecar (WP-06)
+//
+// Implements `RpcHandlers` (rpc.ts) purely in-memory, against fixture data
+// shaped like this workspace itself (a root meta-repo + nested child repos)
+// so every view has something real-shaped to render before WP-04 lands. This
+// is the mock named in the WP-06 spec ("in-memory sidecar mock against
+// drafts/rpc.ts") — it is what proves the G-RPC DoD's second half ("a UI mock
+// … compiles against it").
+//
+// `MOCK_ROOTS` lets the UI exercise every G-05 no-root state and the
+// not-a-repository-but-has-nested-repos DELTA-3 case from one dev toggle
+// (see app/dev-controls.ts) without a real filesystem.
+
+import {
+  type ArgsOf,
+  type BranchInfo,
+  type CommitSummary,
+  type FileChange,
+  type NestedRepo,
+  type ProjectRollup,
+  type RepoSnapshot,
+  type ResultOf,
+  type RpcClient,
+  type RpcHandlers,
+  type RpcMethod,
+  assertNever,
+} from '../app/rpc';
+
+const NOW = Date.now();
+
+function commit(sha: string, subject: string, minsAgo: number, refs: string[] = []): CommitSummary {
+  const t = Math.floor((NOW - minsAgo * 60_000) / 1000);
+  return {
+    sha: sha.padEnd(40, '0'),
+    shortSha: sha.slice(0, 7),
+    parents: [],
+    authorName: 'Chinedum Okerengwor',
+    authorEmail: 'nedjamez@gmail.com',
+    authorAt: t,
+    committerName: 'Chinedum Okerengwor',
+    committerEmail: 'nedjamez@gmail.com',
+    committedAt: t,
+    subject,
+    refs,
+    coAuthors: minsAgo % 3 === 0 ? [{ name: 'Claude Fable 5', email: 'noreply@anthropic.com' }] : [],
+  };
+}
+
+function fileChange(path: string, staged: 'M' | 'A' | 'D' | '.', unstaged: 'M' | 'A' | 'D' | '.', added: number | null, deleted: number | null): FileChange {
+  return {
+    path,
+    origPath: null,
+    // Untracked entries are built here and then have `kind` overridden to
+    // 'untracked' by the caller — see the `untracked:` fixture below.
+    kind: 'ordinary',
+    staged: staged as FileChange['staged'],
+    unstaged: unstaged as FileChange['unstaged'],
+    score: null,
+    submodule: null,
+    added,
+    deleted,
+    binary: false,
+  };
+}
+
+interface MockRepo {
+  snapshot: RepoSnapshot;
+  staged: FileChange[];
+  unstaged: FileChange[];
+  untracked: FileChange[];
+  log: CommitSummary[];
+  branches: BranchInfo[];
+  nested: NestedRepo[];
+}
+
+function makeRepo(opts: {
+  repo: string;
+  name: string;
+  relPath: string;
+  branch: string | null;
+  upstream: string | null;
+  ahead: number | null;
+  behind: number | null;
+  staged?: FileChange[];
+  unstaged?: FileChange[];
+  untracked?: FileChange[];
+  nested?: NestedRepo[];
+}): MockRepo {
+  const staged = opts.staged ?? [];
+  const unstaged = opts.unstaged ?? [];
+  const untracked = opts.untracked ?? [];
+  const lastCommit = commit('a1b2c3d4e5', 'chore: initial mock history', 42, opts.branch ? [`HEAD -> ${opts.branch}`] : []);
+  const snapshot: RepoSnapshot = {
+    repo: opts.repo,
+    name: opts.name,
+    relPath: opts.relPath,
+    gitDir: `${opts.repo}/.git`,
+    isBare: false,
+    headSha: lastCommit.sha,
+    branch: opts.branch,
+    detached: opts.branch === null,
+    upstream: opts.upstream,
+    ahead: opts.ahead,
+    behind: opts.behind,
+    staged: staged.length,
+    unstaged: unstaged.length,
+    untracked: untracked.length,
+    conflicted: 0,
+    stashCount: 0,
+    operation: 'none',
+    lastCommit,
+    worktrees: [
+      {
+        path: opts.repo,
+        head: lastCommit.sha,
+        branch: opts.branch ? `refs/heads/${opts.branch}` : null,
+        detached: opts.branch === null,
+        bare: false,
+        locked: false,
+        lockReason: null,
+        prunable: false,
+        prunableReason: null,
+        isMain: true,
+        ownerTerminalId: null,
+      },
+    ],
+    nested: opts.nested ?? [],
+    capturedAt: NOW,
+    stale: false,
+  };
+  const branches: BranchInfo[] = [
+    {
+      name: opts.branch ?? 'HEAD',
+      fullRef: `refs/heads/${opts.branch ?? 'HEAD'}`,
+      isHead: true,
+      isRemote: false,
+      upstream: opts.upstream,
+      ahead: opts.ahead,
+      behind: opts.behind,
+      lastCommit,
+      worktreePath: null,
+    },
+    {
+      name: 'main',
+      fullRef: 'refs/heads/main',
+      isHead: opts.branch === 'main',
+      isRemote: false,
+      upstream: opts.upstream ? 'origin/main' : null,
+      ahead: 0,
+      behind: 0,
+      lastCommit: commit('9f8e7d6c5b', 'merge: latest from main', 4320),
+      worktreePath: null,
+    },
+  ];
+  return {
+    snapshot,
+    staged,
+    unstaged,
+    untracked,
+    log: [
+      lastCommit,
+      commit('9f8e7d6c5b', 'merge: latest from main', 4320),
+      commit('1122334455', 'fix: tighten the option-injection unit test', 5800),
+    ],
+    branches,
+    nested: opts.nested ?? [],
+  };
+}
+
+/** One project-root scenario per key. `?mock=<key>` selects it for dev/QA;
+ *  defaults to `'workspace'`. */
+export const MOCK_ROOTS = {
+  /** Happy path: a nested-repo project, matching G-11's dogfood target. */
+  workspace: 'ok' as const,
+  /** G-05(a). */
+  noProject: 'no-project' as const,
+  /** G-05(b). */
+  noProjectRoot: 'no-project-root' as const,
+  /** G-05(c) — zero nested repos. */
+  notARepository: 'not-a-repository' as const,
+  /** DELTA-3 — root is not a repo but nested repos exist. */
+  notARepoButNested: 'not-a-repo-but-nested' as const,
+  /** G-05(d). */
+  unreadable: 'unreadable' as const,
+};
+export type MockRootKey = keyof typeof MOCK_ROOTS;
+
+const childGit = makeRepo({
+  repo: '/home/nedjamez/royalti-co/ikenga/shell',
+  name: 'shell',
+  relPath: 'shell',
+  branch: 'feat/activity-bar-badge',
+  upstream: null,
+  ahead: null,
+  behind: null,
+  unstaged: [
+    fileChange('src/lib/pkg/pkg-menu-store.ts', '.', 'M', 12, 2),
+    fileChange('src-tauri/src/pkg/lifecycle.rs', '.', 'M', 4, 0),
+  ],
+});
+
+const childContract = makeRepo({
+  repo: '/home/nedjamez/royalti-co/ikenga/contract',
+  name: 'contract',
+  relPath: 'contract',
+  branch: 'feat/sidecar-event-envelope',
+  upstream: 'origin/feat/sidecar-event-envelope',
+  ahead: 1,
+  behind: 0,
+});
+
+const rootRepo = makeRepo({
+  repo: '/home/nedjamez/royalti-co/ikenga',
+  name: 'ikenga',
+  relPath: '.',
+  branch: 'git/phase-1',
+  upstream: 'origin/git/phase-1',
+  ahead: 3,
+  behind: 0,
+  staged: [fileChange('plans/git/05-tracking.md', 'M', '.', 18, 3)],
+  untracked: [{ ...fileChange('plans/git/drafts/schema-notes.md', '.', '.', null, null), kind: 'untracked' }],
+  nested: [
+    { repo: childGit.snapshot.repo, relPath: 'shell', name: 'shell', depth: 1, isSubmodule: false, ignoredByParent: true },
+    { repo: childContract.snapshot.repo, relPath: 'contract', name: 'contract', depth: 1, isSubmodule: false, ignoredByParent: true },
+  ],
+});
+
+const REPOS_BY_PATH = new Map<string, MockRepo>([
+  [rootRepo.snapshot.repo, rootRepo],
+  [childGit.snapshot.repo, childGit],
+  [childContract.snapshot.repo, childContract],
+]);
+
+function reposForRoot(rootKey: MockRootKey): { rootIsRepo: boolean; repos: MockRepo[] } {
+  switch (MOCK_ROOTS[rootKey]) {
+    case 'ok':
+      return { rootIsRepo: true, repos: [rootRepo, childGit, childContract] };
+    case 'not-a-repo-but-nested':
+      return { rootIsRepo: false, repos: [childGit, childContract] };
+    default:
+      return { rootIsRepo: true, repos: [] };
+  }
+}
+
+let _activeRootKey: MockRootKey = 'workspace';
+export function setMockRoot(key: MockRootKey): void {
+  _activeRootKey = key;
+}
+export function getMockRoot(): MockRootKey {
+  return _activeRootKey;
+}
+
+function findRepo(repo: string): MockRepo | undefined {
+  return REPOS_BY_PATH.get(repo);
+}
+
+function notOk(reason: string, message: string) {
+  return { ok: false as const, reason: reason as never, message };
+}
+
+const handlers: RpcHandlers = {
+  'system.probe': async () => ({
+    ok: true,
+    version: '0.0.0-mock',
+    gitVersion: '2.43.0',
+    gh: { present: true, authenticated: false, hosts: [], version: '2.60.0' },
+    platform: 'linux',
+    watcherBackend: 'inotify',
+  }),
+
+  'project.scan': async (args: ArgsOf<'project.scan'>): Promise<ResultOf<'project.scan'>> => {
+    if (args.root === undefined) return notOk('no-project', 'No active project.');
+    if (args.root === null) return notOk('no-project-root', 'This project has no folder yet.');
+
+    const key = _activeRootKey;
+    switch (MOCK_ROOTS[key]) {
+      case 'no-project':
+        return notOk('no-project', 'No active project.');
+      case 'no-project-root':
+        return notOk('no-project-root', 'This project has no folder yet.');
+      case 'unreadable':
+        return notOk('unreadable', 'Permission denied reading this folder.');
+      case 'not-a-repository':
+        return notOk('not-a-repository', "This folder isn't a git repository.");
+      case 'not-a-repo-but-nested':
+      case 'ok': {
+        const { rootIsRepo, repos } = reposForRoot(key);
+        const rollup: ProjectRollup = {
+          root: args.root,
+          rootIsRepo,
+          repos: repos.map((r) => r.snapshot),
+          truncated: false,
+          capturedAt: Date.now(),
+        };
+        return { ok: true, project: rollup };
+      }
+    }
+  },
+
+  'repo.snapshot': async (args: ArgsOf<'repo.snapshot'>): Promise<ResultOf<'repo.snapshot'>> => {
+    const r = findRepo(args.repo);
+    if (!r) return notOk('repo-not-known', `${args.repo} is not a known repo root.`);
+    return { ok: true, snapshot: r.snapshot };
+  },
+
+  'repo.aheadBehind': async (args: ArgsOf<'repo.aheadBehind'>): Promise<ResultOf<'repo.aheadBehind'>> => {
+    const r = findRepo(args.repo);
+    if (!r) return notOk('repo-not-known', `${args.repo} is not a known repo root.`);
+    return {
+      ok: true,
+      counts: { base: args.base, head: args.head ?? 'HEAD', ahead: r.snapshot.ahead ?? 0, behind: r.snapshot.behind ?? 0, mergeBase: r.snapshot.headSha },
+    };
+  },
+
+  'repo.fetch': async (args: ArgsOf<'repo.fetch'>): Promise<ResultOf<'repo.fetch'>> => {
+    const r = findRepo(args.repo);
+    if (!r) return notOk('repo-not-known', `${args.repo} is not a known repo root.`);
+    return { ok: true, remote: args.remote ?? 'origin', updated: [], snapshot: r.snapshot };
+  },
+
+  'changes.list': async (args: ArgsOf<'changes.list'>): Promise<ResultOf<'changes.list'>> => {
+    const r = findRepo(args.repo);
+    if (!r) return notOk('repo-not-known', `${args.repo} is not a known repo root.`);
+    return {
+      ok: true,
+      repo: args.repo,
+      staged: r.staged,
+      unstaged: r.unstaged,
+      untracked: r.untracked,
+      conflicted: [],
+      capturedAt: Date.now(),
+    };
+  },
+
+  'changes.diff': async (args: ArgsOf<'changes.diff'>): Promise<ResultOf<'changes.diff'>> => {
+    const r = findRepo(args.repo);
+    if (!r) return notOk('repo-not-known', `${args.repo} is not a known repo root.`);
+    return {
+      ok: true,
+      diff: {
+        repo: args.repo,
+        path: args.path,
+        origPath: null,
+        side: args.side,
+        patch: `--- a/${args.path}\n+++ b/${args.path}\n@@ -1,1 +1,1 @@\n-mock\n+mock (WP-07 renders this for real)\n`,
+        binary: false,
+        isNew: false,
+        isDeleted: false,
+        added: 1,
+        deleted: 1,
+        truncated: false,
+      },
+    };
+  },
+
+  'changes.stage': async (args: ArgsOf<'changes.stage'>): Promise<ResultOf<'changes.stage'>> => {
+    const r = findRepo(args.repo);
+    if (!r) return notOk('repo-not-known', `${args.repo} is not a known repo root.`);
+    for (const p of args.paths) {
+      const outsideOwner = [...REPOS_BY_PATH.values()].find(
+        (other) => other !== r && (other.staged.some((f) => f.path === p) || other.unstaged.some((f) => f.path === p))
+      );
+      if (outsideOwner) {
+        return { ok: false, reason: 'cross-repo-path', message: `${p} belongs to another repo.`, path: p, ownerRepo: outsideOwner.snapshot.repo };
+      }
+    }
+    return { ok: true, repo: args.repo, changed: [...args.paths], snapshot: r.snapshot };
+  },
+
+  'changes.unstage': async (args: ArgsOf<'changes.unstage'>): Promise<ResultOf<'changes.unstage'>> => {
+    const r = findRepo(args.repo);
+    if (!r) return notOk('repo-not-known', `${args.repo} is not a known repo root.`);
+    return { ok: true, repo: args.repo, changed: [...args.paths], snapshot: r.snapshot };
+  },
+
+  'commit.create': async (args: ArgsOf<'commit.create'>): Promise<ResultOf<'commit.create'>> => {
+    const r = findRepo(args.repo);
+    if (!r) return notOk('repo-not-known', `${args.repo} is not a known repo root.`);
+    const sha = 'deadbeef' + Math.random().toString(16).slice(2, 10).padEnd(32, '0');
+    return {
+      ok: true,
+      repo: args.repo,
+      sha,
+      summary: `[${r.snapshot.branch ?? 'HEAD'} ${sha.slice(0, 7)}] ${args.message.split('\n')[0]}`,
+      signed: null,
+      snapshot: r.snapshot,
+    };
+  },
+
+  'history.log': async (args: ArgsOf<'history.log'>): Promise<ResultOf<'history.log'>> => {
+    const r = findRepo(args.repo);
+    if (!r) return notOk('repo-not-known', `${args.repo} is not a known repo root.`);
+    const skip = args.skip ?? 0;
+    const limit = args.limit ?? 500;
+    const page = r.log.slice(skip, skip + limit);
+    return { ok: true, repo: args.repo, commits: page, nextSkip: skip + page.length < r.log.length ? skip + page.length : null };
+  },
+
+  'history.commit': async (args: ArgsOf<'history.commit'>): Promise<ResultOf<'history.commit'>> => {
+    const r = findRepo(args.repo);
+    if (!r) return notOk('repo-not-known', `${args.repo} is not a known repo root.`);
+    const c = r.log.find((c0) => c0.sha === args.sha) ?? r.log[0];
+    if (!c) return notOk('git-failed', 'No commits.');
+    return {
+      ok: true,
+      commit: {
+        ...c,
+        body: `${c.subject}\n`,
+        trailers: c.coAuthors.map((a) => ({ key: 'Co-Authored-By', value: `${a.name} <${a.email}>` })),
+        files: [...r.staged, ...r.unstaged],
+        signature: args.withSignature ? { status: 'N', signer: null } : null,
+      },
+    };
+  },
+
+  'branch.list': async (args: ArgsOf<'branch.list'>): Promise<ResultOf<'branch.list'>> => {
+    const r = findRepo(args.repo);
+    if (!r) return notOk('repo-not-known', `${args.repo} is not a known repo root.`);
+    return { ok: true, repo: args.repo, branches: r.branches };
+  },
+
+  'branch.create': async (args: ArgsOf<'branch.create'>): Promise<ResultOf<'branch.create'>> => {
+    const r = findRepo(args.repo);
+    if (!r) return notOk('repo-not-known', `${args.repo} is not a known repo root.`);
+    const branch: BranchInfo = {
+      name: args.name,
+      fullRef: `refs/heads/${args.name}`,
+      isHead: !!args.checkout,
+      isRemote: false,
+      upstream: null,
+      ahead: 0,
+      behind: 0,
+      lastCommit: r.log[0] ?? null,
+      worktreePath: null,
+    };
+    r.branches = [branch, ...r.branches];
+    return { ok: true, repo: args.repo, branch, snapshot: r.snapshot };
+  },
+
+  'branch.checkout': async (args: ArgsOf<'branch.checkout'>): Promise<ResultOf<'branch.checkout'>> => {
+    const r = findRepo(args.repo);
+    if (!r) return notOk('repo-not-known', `${args.repo} is not a known repo root.`);
+    if ((r.snapshot.staged || r.snapshot.unstaged) && !args.confirm) {
+      return { ok: false, reason: 'confirm-required', message: 'Working tree has changes.' };
+    }
+    const branch = r.branches.find((b) => b.name === args.name) ?? r.branches[0]!;
+    return { ok: true, repo: args.repo, branch, snapshot: r.snapshot };
+  },
+
+  'worktree.list': async (args: ArgsOf<'worktree.list'>): Promise<ResultOf<'worktree.list'>> => {
+    const r = findRepo(args.repo);
+    if (!r) return notOk('repo-not-known', `${args.repo} is not a known repo root.`);
+    return { ok: true, repo: args.repo, worktrees: r.snapshot.worktrees };
+  },
+};
+
+/** `RpcClient` adapter over the handler table above, for view code that wants
+ *  the same call shape the real transport (app/transport.ts) exposes. */
+export const mockRpcClient: RpcClient = (async (method: RpcMethod, args: unknown) => {
+  const handler = handlers[method];
+  if (!handler) {
+    return assertNever(method as never);
+  }
+  return handler(args as never);
+}) as RpcClient;
+
+export const mockRepoRoots = REPOS_BY_PATH;
+export const MOCK_PROJECT_ROOT = '/home/nedjamez/royalti-co/ikenga';
