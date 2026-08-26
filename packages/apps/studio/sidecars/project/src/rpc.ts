@@ -23,6 +23,8 @@ import type {
   ProjectCreateParams,
   ProjectInfoParams,
   ProjectInfoResult,
+  ProjectLastOpenParams,
+  ProjectLastOpenResult,
   ProjectListResult,
   ProjectOpenParams,
   ProjectOpenResult,
@@ -64,6 +66,12 @@ export interface RpcHandlers {
   open(params: ProjectOpenParams): Promise<ProjectOpenResult>;
   close(params: ProjectCloseParams): Promise<{ ok: true } | { ok: false; error: ErrorCode; message?: string }>;
   list(): Promise<ProjectListResult>;
+  /**
+   * G-50 — persisted open-project state, so a respawned sidecar can offer the
+   * reopen. Read-only: it mounts nothing, and the caller's reopen still goes
+   * through `project.open` and the WP-04 trust gate.
+   */
+  lastOpen(params: ProjectLastOpenParams): Promise<ProjectLastOpenResult>;
   create(params: ProjectCreateParams): Promise<ProjectOpenResult>;
   info(params: ProjectInfoParams): Promise<ProjectInfoResult>;
   /**
@@ -87,6 +95,10 @@ const CreateParamsSchema = z.object({
   name: z.string().min(1),
 });
 const InfoParamsSchema = z.object({ projectId: z.string().min(1) });
+const LastOpenParamsSchema = z.object({
+  limit: z.number().int().positive().max(200).optional(),
+  openOnly: z.boolean().optional(),
+});
 
 // ─────────────────────────────────────────────────────────────────────────
 // Project shape validation (used by handlers when hydrating from disk)
@@ -210,6 +222,13 @@ export function startRpcLoop(handlers: RpcHandlers): { close(): void } {
         }
         case 'project.list': {
           writeResponse({ jsonrpc: '2.0', id, result: await handlers.list() });
+          return;
+        }
+        case 'project.last_open': {
+          // Params are optional in full — `{}`/absent means "defaults".
+          const p = LastOpenParamsSchema.safeParse(req.params ?? {});
+          if (!p.success) return invalidParams(id, p.error.message);
+          writeResponse({ jsonrpc: '2.0', id, result: await handlers.lastOpen(p.data) });
           return;
         }
         case 'project.create': {

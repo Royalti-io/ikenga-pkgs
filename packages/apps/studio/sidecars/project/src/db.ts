@@ -15,7 +15,7 @@ import { dirname, join } from 'node:path';
 
 // Imported lazily so typecheck doesn't require the native module to be
 // installed (and so the build script can mark it external).
-type Database = {
+export type Database = {
   exec(sql: string): void;
   prepare(sql: string): {
     run(...params: unknown[]): { changes: number };
@@ -24,6 +24,13 @@ type Database = {
   };
   close(): void;
 };
+
+/**
+ * Constructs a `Database` for a path. Defaults to `better-sqlite3`; tests may
+ * inject an API-compatible driver so the *real* migration + PRAGMA path runs
+ * on machines without a native-module toolchain.
+ */
+export type DbDriver = (dbPath: string) => Database;
 
 export interface RenderQueueRow {
   record_id: string;
@@ -100,6 +107,28 @@ const MIGRATIONS: string[] = [
    );
    CREATE INDEX IF NOT EXISTS export_queue_status_idx  ON export_queue(status);
    CREATE INDEX IF NOT EXISTS export_queue_project_idx ON export_queue(project_id);`,
+  // G-50 / WP-32 DoD 8 — open-project session state.
+  //
+  // Distinct from `projects`, which is a *recents* ledger (every project ever
+  // opened, ordered by `last_opened`). This table answers a narrower question:
+  // "which projects were still open when the sidecar last stopped, and do we
+  // have a recorded trust grant for them?" `closed_at IS NULL` means the row
+  // was never closed via `project.close` — i.e. the sidecar died or was killed
+  // with the project mounted, so it is a reopen candidate.
+  //
+  // `trust_source` is deliberately stored alongside `trust_granted_at`: a grant
+  // minted by `STUDIO_TRUST_STUB=1` must never read as a real user grant on a
+  // later non-stub boot. See session.ts for the disposition rules.
+  `CREATE TABLE IF NOT EXISTS project_session (
+     project_id       TEXT PRIMARY KEY,
+     path             TEXT NOT NULL,
+     opened_at        INTEGER NOT NULL,
+     closed_at        INTEGER,
+     trust_granted_at INTEGER,
+     trust_source     TEXT
+   );
+   CREATE UNIQUE INDEX IF NOT EXISTS project_session_path_idx ON project_session(path);
+   CREATE INDEX IF NOT EXISTS project_session_open_idx ON project_session(closed_at);`,
 ];
 
 export function resolvePkgDataDir(): string {
@@ -113,19 +142,24 @@ export function resolveDbPath(): string {
   return join(resolvePkgDataDir(), 'studio.db');
 }
 
-export async function openDb(dbPath?: string): Promise<Database> {
+export async function openDb(dbPath?: string, driver?: DbDriver): Promise<Database> {
   const target = dbPath ?? resolveDbPath();
   const dir = dirname(target);
   if (!existsSync(dir)) {
     mkdirSync(dir, { recursive: true });
   }
 
-  // Dynamic import so this module is typecheck-safe even before deps are
-  // installed; the bundle externalizes better-sqlite3.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mod: any = await import('better-sqlite3');
-  const Ctor = mod.default ?? mod;
-  const db: Database = new Ctor(target);
+  let db: Database;
+  if (driver) {
+    db = driver(target);
+  } else {
+    // Dynamic import so this module is typecheck-safe even before deps are
+    // installed; the bundle externalizes better-sqlite3.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const mod: any = await import('better-sqlite3');
+    const Ctor = mod.default ?? mod;
+    db = new Ctor(target) as Database;
+  }
   // sane defaults
   db.exec("PRAGMA journal_mode = WAL;");
   db.exec("PRAGMA synchronous = NORMAL;");

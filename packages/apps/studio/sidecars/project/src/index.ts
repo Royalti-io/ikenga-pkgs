@@ -5,6 +5,9 @@
  * --format=esm` (see ./build.sh). Owns:
  *
  *   • Project FS (open/close/list/create/info via JSON-RPC over stdio)
+ *   • Open-project session state (G-50) — persisted to studio.db so a
+ *     respawned sidecar can offer a reopen via `project.last_open`. It never
+ *     auto-reopens; see session.ts for why.
  *   • Render queue (SQLite-backed)
  *   • LRU cell cache
  *   • Per-project FS watcher emitting `pkg://com.ikenga.studio/*` events
@@ -49,6 +52,7 @@ import type {
   ErrorCode,
   GenericResult,
   ProjectInfoResult,
+  ProjectLastOpenResult,
   ProjectListResult,
   ProjectOpenResult,
   ProjectSummary,
@@ -56,6 +60,12 @@ import type {
 } from './rpc-types.js';
 import { startWatcher, type WatcherHandle } from './watcher.js';
 import { requestProjectAccess } from './trust.js';
+import {
+  buildLastOpen,
+  markProjectClosed,
+  recordProjectOpened,
+  trustSourceFromEnv,
+} from './session.js';
 import * as storyboard from './storyboard.js';
 import * as breakdown from './breakdown.js';
 import * as anchors from './anchors.js';
@@ -617,6 +627,17 @@ function buildHandlers(db: Db): BuiltHandlers {
         `[studio-sidecar] hydrate project=${projectId} cells=${hyd.count} elapsedMs=${hyd.elapsedMs}\n`,
       );
       recordProjectMeta(db, open_);
+      // G-50 — durable open-project state, so the next sidecar (after a crash,
+      // a SIGTERM, or a dev-reload) can OFFER this project back via
+      // `project.last_open`. Nothing here reopens anything: the trust gate we
+      // just passed is per-open, and this row is a cache of its answer, not a
+      // substitute for it. `trustSourceFromEnv()` keeps a stub-minted grant
+      // from ever reading as a real one on a later production boot.
+      recordProjectOpened(db, {
+        projectId,
+        path: abs,
+        trustSource: trustSourceFromEnv(),
+      });
       // Resume any renders/exports orphaned by a prior crash now that this
       // project's root resolves again. `recover()` left them `queued` and
       // deferred the drain to avoid failing them at boot; kicking here is the
@@ -633,11 +654,21 @@ function buildHandlers(db: Db): BuiltHandlers {
       await o.watcher.close();
       lru.dropProject(projectId);
       open.delete(projectId);
+      // Deliberate close — stamp `closed_at` so the next boot does NOT offer
+      // this back as "you were working on this". The shutdown path pointedly
+      // does *not* do this: a project still mounted when the sidecar dies is
+      // exactly the one worth surfacing.
+      markProjectClosed(db, projectId);
       return { ok: true };
     },
 
     async list(): Promise<ProjectListResult> {
       return { ok: true, projects: listKnownProjects(db) };
+    },
+
+    async lastOpen({ limit, openOnly }): Promise<ProjectLastOpenResult> {
+      const entries = buildLastOpen(db, { limit });
+      return { ok: true, entries: openOnly ? entries.filter((e) => e.wasOpenAtExit) : entries };
     },
 
     async create({ archetype_id, path, name }): Promise<ProjectOpenResult> {
@@ -738,6 +769,20 @@ async function main(): Promise<number> {
       process.env.STUDIO_TRUST_STUB === '1' ? 'on' : 'off'
     }\n`,
   );
+
+  // G-50 — surface, don't act. Projects still mounted when the previous
+  // sidecar stopped are reopen *candidates*; the trust gate owns the decision
+  // to actually mount one, so we log them and wait for the UI (or MCP) to ask
+  // via `project.last_open` and then call `project.open` itself.
+  const pending = buildLastOpen(db).filter((e) => e.wasOpenAtExit);
+  if (pending.length > 0) {
+    process.stderr.write(
+      `[studio-sidecar] last_open candidates=${pending.length} (not auto-reopened — ` +
+        `project.open re-runs the trust gate): ` +
+        pending.map((e) => `${e.path} [${e.reopen}]`).join(', ') +
+        '\n',
+    );
+  }
 
   const loop = startRpcLoop(handlers);
 

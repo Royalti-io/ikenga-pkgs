@@ -5,6 +5,7 @@
  */
 
 import type { Project } from '@ikenga/studio-schema';
+import type { LastOpenEntry } from './session.js';
 
 export type ErrorCode =
   | 'trust-denied'
@@ -42,6 +43,21 @@ export interface ProjectSummary {
 }
 export type ProjectListResult = { ok: true; projects: ProjectSummary[] };
 
+/**
+ * `project.last_open` (G-50 / WP-32 DoD 8) — the open-project registry as it
+ * stood when the sidecar last stopped, so a respawn can *offer* the reopen.
+ *
+ * Advisory only. Entries are not mounted; the caller reopens by calling
+ * `project.open`, which re-runs the WP-04 trust gate. See session.ts.
+ */
+export interface ProjectLastOpenParams {
+  /** Cap on returned entries (default 20). */
+  limit?: number;
+  /** When true, return only sessions still open at the previous exit. */
+  openOnly?: boolean;
+}
+export type ProjectLastOpenResult = { ok: true; entries: LastOpenEntry[] };
+
 export interface ProjectCreateParams {
   archetype_id: string;
   path: string;
@@ -71,6 +87,7 @@ export type RpcMethod =
   | 'project.open'
   | 'project.close'
   | 'project.list'
+  | 'project.last_open'
   | 'project.create'
   | 'project.info'
   // storyboard.*
