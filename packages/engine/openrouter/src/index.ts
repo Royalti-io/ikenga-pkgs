@@ -1,105 +1,32 @@
 /**
  * OpenRouter Unified LLM Engine Adapter (WP-20).
  *
- * Implements the Engine and AcpEngine interfaces for OpenRouter.
- * Bridges reasoning tokens (`thinking_delta`), function tool calls, and model tier selection.
+ * A real, self-contained HTTP transport for OpenRouter's OpenAI-compatible
+ * `/chat/completions` endpoint: streaming SSE, reasoning-token normalization
+ * (G-54 — both the `delta.reasoning`/`delta.thinking` field form and the
+ * inline `<think>…</think>` form), and OpenAI-shape tool-call delta
+ * accumulation. Model selection is free text end-to-end — no pinned roster
+ * (Plan 24 §5.1).
+ *
+ * See `http-engine.ts` for the API-key binding story (F-9 settings-secret env
+ * today; shell-side Stronghold read once the Rust HTTP-engine adapter lands).
  */
 
-import type {
-  Engine,
-  EngineEvent,
-  HostBridge,
-  Session,
-  SessionOpts,
-} from '@ikenga/contract/engine';
+import type { Engine } from '@ikenga/contract/engine';
+
+import { createHttpEngine, type OpenRouterEngineConfig } from './http-engine.js';
 
 export * from './stream.js';
+export * from './transport.js';
+export * from './http-engine.js';
 export * from './acp-engine.js';
 
-const ID = 'com.ikenga.engine-openrouter';
-const VERSION = '0.1.0';
-
-class OpenRouterSession implements Session {
-  constructor(
-    readonly id: string,
-    private readonly host: HostBridge,
-  ) {}
-
-  async cancel(): Promise<void> {
-    await this.host.kill(this.id);
-  }
-}
-
-export class OpenRouterEngine implements Engine {
-  readonly id = ID;
-  readonly version = VERSION;
-
-  readonly metadata = {
-    agentId: 'openrouter',
-    display: 'OpenRouter Unified LLM',
-    capabilities: {
-      streaming: true,
-      toolUse: true,
-      thinking: true,
-      artifacts: true,
-      fileAttachments: true,
-      imageInput: true,
-      slashCommands: true,
-      modelSwitching: true,
-      promptCaching: true,
-      agenticTools: true,
-      mcp: true,
-      sessionResume: true,
-    },
-    onboarding: {
-      requiredVaultKeys: ['OPENROUTER_API_KEY'],
-      requiredEnvVars: [] as string[],
-      authCommand: 'openrouter login',
-      docsUrl: 'https://openrouter.ai/docs',
-    },
-  };
-
-  constructor(private readonly host: HostBridge) {}
-
-  async startSession(opts: SessionOpts): Promise<Session> {
-    const sessionId = crypto.randomUUID();
-    await this.host.spawn({
-      sessionId,
-      cwd: opts.cwd,
-      systemPrompt: opts.systemPrompt,
-    });
-    return new OpenRouterSession(sessionId, this.host);
-  }
-
-  stream(session: Session, input: string): AsyncIterable<EngineEvent> {
-    const host = this.host;
-    const id = session.id;
-    return {
-      [Symbol.asyncIterator]() {
-        return (async function* () {
-          await host.send(id, input);
-          for await (const ev of host.listen(id)) {
-            yield ev;
-            if (ev.type === 'done') return;
-          }
-        })();
-      },
-    };
-  }
-
-  registerMcpServer(spec: any): Promise<void> {
-    return this.host.registerMcp(spec);
-  }
-
-  unregisterMcpServer(id: string): Promise<void> {
-    return this.host.unregisterMcp(id);
-  }
-
-  async healthCheck(): Promise<{ ok: boolean; reason?: string }> {
-    return { ok: true };
-  }
-}
-
-export function createEngine(host: HostBridge): Engine {
-  return new OpenRouterEngine(host);
+/**
+ * Primary factory. Unlike the CLI-wrapping engine pkgs there is no HostBridge
+ * here — the transport is in-process HTTP, so the factory takes plain config
+ * (all optional; the API key defaults to the F-9-injected
+ * `process.env.OPENROUTER_API_KEY`).
+ */
+export function createEngine(config?: OpenRouterEngineConfig): Engine {
+  return createHttpEngine(config);
 }
