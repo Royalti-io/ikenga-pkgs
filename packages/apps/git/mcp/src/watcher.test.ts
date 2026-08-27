@@ -10,7 +10,7 @@
 
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { isRelevantEvent, RepoWatcher } from './watcher.js';
+import { ignoreGlobsFor, isRelevantEvent, nestedReposOf, RepoWatcher } from './watcher.js';
 import type { RepoChangedParams } from '../../core/src/rpc.js';
 
 // ── isRelevantEvent ──────────────────────────────────────────────────────
@@ -151,6 +151,66 @@ test('RepoWatcher: reconcile adds and removes subscriptions without dropping the
   await sleep(300);
   assert.equal(flushed.length, 1);
   assert.equal(flushed[0]?.repo, '/repo/a');
+
+  await w.stop();
+});
+
+// ── Nested repos: an event belongs to ONE repo, the deepest ───────────────
+//
+// The live-shell sweep caught this: one `touch` in
+// `royalti-co/ikenga/contract/` produced THREE `repo.changed` frames —
+// `royalti-co`, `ikenga` and `contract` — because all three are watched
+// recursively and all three callbacks saw the path.
+
+test('nestedReposOf: only strict descendants, and not a sibling with a shared prefix', () => {
+  const all = ['/w', '/w/a', '/w/a/b', '/w/ab', '/other'];
+  assert.deepEqual(nestedReposOf('/w/a', all).sort(), ['/w/a/b']);
+  assert.deepEqual(nestedReposOf('/w', all).sort(), ['/w/a', '/w/a/b', '/w/ab']);
+  assert.deepEqual(nestedReposOf('/other', all), []);
+});
+
+test('ignoreGlobsFor: nested repo roots are ignored as both dir and subtree', () => {
+  const globs = ignoreGlobsFor('/w/a', ['/w/a/b']);
+  assert.ok(globs.includes('b'));
+  assert.ok(globs.includes('b/**'));
+  // The standing perf globs survive.
+  assert.ok(globs.includes('.git/objects/**'));
+  assert.ok(globs.includes('**/node_modules/**'));
+});
+
+test('RepoWatcher: a write inside a nested repo does NOT fan out to its ancestors', async () => {
+  const { subscribe, fire } = fakeSubscribeFactory();
+  const flushed: RepoChangedParams[] = [];
+  const w = new RepoWatcher((p) => flushed.push(p), subscribe as never);
+
+  // The real shape: royalti-co ⊃ ikenga ⊃ contract, three independent clones.
+  await w.reconcile(['/w', '/w/ikenga', '/w/ikenga/contract']);
+
+  // The OS ignore globs would normally suppress these, but a native backend
+  // can and does still deliver them — so fire on ALL THREE subscriptions, the
+  // worst case, and assert the JS gate alone is enough.
+  fire('/w', ['ikenga/contract/src/rpc.ts']);
+  fire('/w/ikenga', ['contract/src/rpc.ts']);
+  fire('/w/ikenga/contract', ['src/rpc.ts']);
+  await sleep(300);
+
+  assert.equal(flushed.length, 1);
+  assert.equal(flushed[0]?.repo, '/w/ikenga/contract');
+
+  await w.stop();
+});
+
+test('RepoWatcher: a write in the ancestor itself still belongs to the ancestor', async () => {
+  const { subscribe, fire } = fakeSubscribeFactory();
+  const flushed: RepoChangedParams[] = [];
+  const w = new RepoWatcher((p) => flushed.push(p), subscribe as never);
+  await w.reconcile(['/w', '/w/ikenga']);
+
+  fire('/w', ['STATUS.md']);
+  await sleep(300);
+
+  assert.equal(flushed.length, 1);
+  assert.equal(flushed[0]?.repo, '/w');
 
   await w.stop();
 });

@@ -35,14 +35,32 @@
  * `refs/**` — exactly the plan's "`.git/{HEAD,index,refs}` + worktree" scope
  * — so e.g. `.git/logs/HEAD` (reflog) churn does not generate noise the UI
  * has no use for.
+ *
+ * ── Nested-repo ownership (the ancestor fan-out fix) ────────────────────────
+ *
+ * This workspace is nested clones, not submodules: `royalti-co` contains
+ * `royalti-co/ikenga` contains `royalti-co/ikenga/contract`, each an
+ * independent repo, each gitignored by its parent. A recursive watch on all
+ * three means ONE write in `contract/` arrives on all THREE subscriptions —
+ * and the naive reading emitted `repo.changed` for `royalti-co` and `ikenga`
+ * too, telling the UI that repos with nothing to show had changed and driving
+ * three `status` re-reads per keystroke.
+ *
+ * An event belongs to exactly one repo: the DEEPEST known repo containing its
+ * path (`git-core.ownerRepoOf`, the same primitive behind the cross-repo
+ * staging guard). That check is the correctness gate and runs per event, so it
+ * holds even while the known-repo set is mid-change. The nested roots are ALSO
+ * handed to `@parcel/watcher` as ignore globs at subscribe time, which is pure
+ * economy — it stops the OS delivering events we would only drop.
  */
 
-import { relative, sep } from 'node:path';
+import { relative, resolve, sep } from 'node:path';
 // `@parcel/watcher` ships `export = ParcelWatcher` (a CJS namespace holding
 // both the runtime functions and the `Event`/`AsyncSubscription` types) —
 // `import * as` is the correct interop form, not a default/named import.
 import * as watcher from '@parcel/watcher';
 import {
+  ownerRepoOf,
   SCAN_SKIP_DIRS,
   WATCH_DEBOUNCE_MS,
   WATCH_MAX_WAIT_MS,
@@ -52,10 +70,30 @@ import {
 type ParcelEvent = watcher.Event;
 type AsyncSubscription = watcher.AsyncSubscription;
 
-/** OS-level ignore globs, relative to the watched repo root. Trims the
- *  heaviest, least useful subtrees before an event is even constructed. */
-function ignoreGlobsFor(): string[] {
-  return [...SCAN_SKIP_DIRS.map((d) => `**/${d}/**`), '.git/objects/**', '.git/lfs/**'];
+/**
+ * OS-level ignore globs, relative to the watched repo root. Trims the
+ * heaviest, least useful subtrees before an event is even constructed, and —
+ * given `nested`, the repos that live INSIDE `repo` — stops the OS delivering
+ * events that `ownerRepoOf` would only attribute elsewhere.
+ *
+ * Both the bare directory and its `/**` subtree are listed: `@parcel/watcher`
+ * matches these as globs, and a directory glob does not imply its contents.
+ */
+export function ignoreGlobsFor(repo: string, nested: readonly string[] = []): string[] {
+  const globs = [...SCAN_SKIP_DIRS.map((d) => `**/${d}/**`), '.git/objects/**', '.git/lfs/**'];
+  for (const child of nested) {
+    const rel = relative(resolve(repo), resolve(child)).split(sep).join('/');
+    if (rel.length === 0 || rel.startsWith('..')) continue;
+    globs.push(rel, `${rel}/**`);
+  }
+  return globs;
+}
+
+/** The known repos that live strictly inside `repo`. */
+export function nestedReposOf(repo: string, all: readonly string[]): string[] {
+  const parent = resolve(repo);
+  const withSep = parent.endsWith(sep) ? parent : parent + sep;
+  return all.map((r) => resolve(r)).filter((r) => r !== parent && r.startsWith(withSep));
 }
 
 /** Precise relevance gate — see module doc. `relPath` is repo-relative,
@@ -87,6 +125,10 @@ export class RepoWatcher {
   private readonly onChanged: OnRepoChanged;
   /** Injectable for tests; defaults to the real native backend. */
   private readonly subscribe: typeof watcher.subscribe;
+  /** The whole known-repo set, canonicalised — the input to `ownerRepoOf`.
+   *  Kept as a field (not a `watchOne` closure) so an event arriving during a
+   *  reconcile is attributed against the CURRENT set, not a stale snapshot. */
+  private allRepos: readonly string[] = [];
 
   constructor(onChanged: OnRepoChanged, subscribeImpl: typeof watcher.subscribe = watcher.subscribe) {
     this.onChanged = onChanged;
@@ -105,19 +147,23 @@ export class RepoWatcher {
    */
   async reconcile(repos: readonly string[]): Promise<void> {
     const desired = new Set(repos);
+    // Publish the new set BEFORE touching subscriptions: an event that lands
+    // mid-reconcile must be attributed against what we are moving to, and
+    // `ownerRepoOf` over a superset is still correct for repos that stay.
+    this.allRepos = repos.map((r) => resolve(r));
 
     const removals = [...this.subs.keys()].filter((r) => !desired.has(r));
     await Promise.all(removals.map((r) => this.unwatchOne(r)));
 
     const additions = repos.filter((r) => !this.subs.has(r));
-    await Promise.all(additions.map((r) => this.watchOne(r)));
+    await Promise.all(additions.map((r) => this.watchOne(r, repos)));
   }
 
   async stop(): Promise<void> {
     await Promise.all([...this.subs.keys()].map((r) => this.unwatchOne(r)));
   }
 
-  private async watchOne(repo: string): Promise<void> {
+  private async watchOne(repo: string, all: readonly string[]): Promise<void> {
     try {
       const sub = await this.subscribe(
         repo,
@@ -128,7 +174,7 @@ export class RepoWatcher {
           }
           this.onEvents(repo, events);
         },
-        { ignore: ignoreGlobsFor() }
+        { ignore: ignoreGlobsFor(repo, nestedReposOf(repo, all)) }
       );
       this.subs.set(repo, sub);
     } catch (err) {
@@ -163,9 +209,17 @@ export class RepoWatcher {
   private onEvents(repo: string, events: readonly ParcelEvent[]): void {
     let relevant = 0;
     let lastMs = 0;
+    const self = resolve(repo);
     for (const e of events) {
-      const rel = relative(repo, e.path);
+      const rel = relative(self, e.path);
       if (rel.startsWith('..')) continue; // outside the watched root; ignore
+      // Ownership: the event belongs to the DEEPEST known repo containing it.
+      // A write in `ikenga/contract/` reaches this callback for `royalti-co`,
+      // `ikenga` AND `contract`; only `contract` may count it. `null` (no
+      // known repo owns the path) cannot happen for an event inside `repo`,
+      // but is treated as "not ours" rather than assumed.
+      const owner = ownerRepoOf(e.path, this.allRepos.length > 0 ? this.allRepos : [self]);
+      if (owner !== self) continue;
       if (!isRelevantEvent(rel)) continue;
       relevant += 1;
       lastMs = Date.now();
