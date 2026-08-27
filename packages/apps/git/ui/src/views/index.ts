@@ -9,7 +9,7 @@
 // states wired in (states/index.ts) — enough to prove the shell + RPC + menu
 // + theme plumbing end-to-end.
 
-import type { BranchInfo, CommitSummary, FileChange, ProjectRollup, RepoSnapshot, WorktreeInfo } from '../app/rpc';
+import type { BranchInfo, FileChange, ProjectRollup, RepoSnapshot, WorktreeInfo } from '../app/rpc';
 import { VOCAB } from '../vocabulary';
 
 function el(tag: string, className?: string, text?: string): HTMLElement {
@@ -17,16 +17,6 @@ function el(tag: string, className?: string, text?: string): HTMLElement {
   if (className) node.className = className;
   if (text !== undefined) node.textContent = text;
   return node;
-}
-
-function relTime(epochSeconds: number): string {
-  const diffSec = Math.max(0, Math.floor(Date.now() / 1000) - epochSeconds);
-  if (diffSec < 60) return `${diffSec}s ago`;
-  const min = Math.floor(diffSec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  return `${Math.floor(hr / 24)}d ago`;
 }
 
 // ── Changes ─────────────────────────────────────────────────────────────
@@ -107,22 +97,9 @@ function renderFileGroup(title: string, files: FileChange[]): HTMLElement {
 }
 
 // ── History ─────────────────────────────────────────────────────────────
-
-export function renderHistory(commits: CommitSummary[]): HTMLElement {
-  if (commits.length === 0) return el('div', 'git-empty-inline', VOCAB.history.empty);
-  const list = el('ul', 'git-history-list');
-  for (const c of commits) {
-    const li = el('li', 'git-history-row');
-    li.appendChild(el('span', 'git-history-row__sha', c.shortSha));
-    li.appendChild(el('span', 'git-history-row__subject', c.subject));
-    li.appendChild(el('span', 'git-history-row__meta', `${c.authorName} · ${relTime(c.committedAt)}`));
-    if (c.coAuthors.length > 0) {
-      li.appendChild(el('span', 'git-history-row__co-authored', VOCAB.history.coAuthored));
-    }
-    list.appendChild(li);
-  }
-  return list;
-}
+// Superseded by WP-08: `views/history/` owns the real view (paginated log,
+// forbidden-columns graph rail, commit detail, attribution). The skeleton
+// list that lived here is gone rather than left dead.
 
 // ── Branches ────────────────────────────────────────────────────────────
 

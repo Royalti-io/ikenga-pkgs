@@ -5,3 +5,8 @@ node_modules/
 # the UI as a vite bundle, same convention as com.ikenga.studio's dist/, not
 # the hand-authored com.ikenga.tasks dist/ pattern the WP-02 scaffold
 # originally followed) — none are tracked; `npm run build` regenerates them.
+
+# WP-08: `ui/tools/history-cli.ts dump` writes a snapshot of a REAL repo's log
+# here for `?live=1` dev rendering. Deliberately not tracked — a repo's history
+# moves, so a committed snapshot of it is stale by tomorrow. Regenerate it.
+ui/dev/

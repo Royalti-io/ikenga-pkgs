@@ -33,6 +33,41 @@ export const VOCAB = {
     title: 'History',
     empty: 'No commits yet',
     coAuthored: 'Co-authored',
+    // ── Attribution (02-research-external.md [27][28]) ────────────────────
+    // The `Co-Authored-By` trailer is user-configurable and can be suppressed,
+    // so ABSENCE is a real state and not evidence of anything. Both readings
+    // get their own words; the History view never renders one as the other.
+    attribution: 'Attribution',
+    coAuthoredWith: (names: string) => `Co-authored with ${names}`,
+    noCoAuthors: 'No co-author trailer',
+    noCoAuthorsHint:
+      'This commit carries no Co-Authored-By line. That trailer is configurable and can be switched off, so its absence doesn’t prove anyone worked alone.',
+    filterLabel: 'Attribution',
+    filterAll: 'All',
+    filterCoAuthored: 'Co-authored',
+    filterSolo: 'No trailer',
+    // ── Paging (02-research-external.md [13] — GitLens's 500 + 200) ───────
+    loadMore: (n: number) => `Load ${String(n)} more`,
+    loadingMore: 'Loading more…',
+    endOfHistory: 'Beginning of history',
+    loadedCount: (loaded: number) => `${String(loaded)} loaded`,
+    // ── Commit detail ────────────────────────────────────────────────────
+    selectHint: 'Pick a commit to read it.',
+    message: 'Message',
+    trailers: 'Trailers',
+    files: 'Files',
+    parents: 'Parents',
+    signature: 'Signature',
+    signatureNone: 'Not signed',
+    merge: 'Merge',
+    rootCommit: 'Root commit',
+    refs: 'Refs',
+    authored: 'authored',
+    committed: 'committed',
+    detailFailed: 'Couldn’t read that commit',
+    noFiles: 'No files changed',
+    graphClamped: 'Wider than the rail — some lanes share a column below.',
+    railLabel: 'Commit graph',
   },
   branches: {
     title: 'Branches',

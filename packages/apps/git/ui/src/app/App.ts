@@ -13,8 +13,9 @@ import { publishMenu } from '../menu';
 import { watchProjectFreshness } from '../poll';
 import { rpc, usingMock } from './transport';
 import { renderEmptyState, renderRepoPicker, type EmptyStateReason } from '../states';
-import { renderChangesLists, renderChangesTree, renderHistory, renderPrs, renderWorktrees } from '../views';
+import { renderChangesLists, renderChangesTree, renderPrs, renderWorktrees } from '../views';
 import { mountBranchesView } from '../views/branches';
+import { HistoryView } from '../views/history';
 import { VOCAB } from '../vocabulary';
 import type { ProjectRollup } from './rpc';
 
@@ -47,6 +48,12 @@ export class App {
    *  pathname view unless it agrees with it; every push after that is a real
    *  click and applies normally. */
   private appliedInitialView = false;
+  /** WP-08. Held across renders — App rebuilds its whole subtree on every
+   *  state change, and History is stateful in a way the other views aren't:
+   *  loaded pages, the selected commit and the scroll position must survive a
+   *  `repo.changed` push. Created lazily, so a session that never opens
+   *  History never pays for it. */
+  private historyView: HistoryView | null = null;
 
   constructor(root: HTMLElement) {
     this.root = root;
@@ -235,16 +242,14 @@ export class App {
       case 'history': {
         const wrap = document.createElement('div');
         wrap.className = 'git-view git-view--history';
-        wrap.appendChild(this.loadingNode());
-        rpc('history.log', { repo: activeRepo.repo, limit: 500 })
-          .then((res) => {
-            if (this.state.view !== 'history' || this.state.activeRepo !== activeRepo.repo) return;
-            wrap.innerHTML = '';
-            wrap.appendChild(renderHistory(res.ok ? res.commits : []));
-          })
-          .catch(() => {
-            wrap.innerHTML = '';
-          });
+        // WP-08: like Branches, History owns its own render loop (paging,
+        // selection, the graph rail) rather than going through App's
+        // setState — but unlike Branches it is retained, because throwing
+        // away 600 loaded commits on every project re-scan would make the
+        // D7 push feel like a page reload.
+        this.historyView ??= new HistoryView();
+        this.historyView.setRepo(activeRepo.repo);
+        this.historyView.mount(wrap);
         return wrap;
       }
       case 'branches': {

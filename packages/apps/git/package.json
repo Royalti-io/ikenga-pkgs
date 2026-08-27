@@ -29,7 +29,7 @@
     "build:ui": "cd ui && npm run build",
     "dev:ui": "cd ui && npm run dev",
     "build": "npm run build:sidecar && npm run build:mcp && npm run build:ui",
-    "test": "node --test --import=tsx 'core/src/**/*.test.ts' 'mcp/src/**/*.test.ts'",
+    "test": "node --test --import=tsx 'core/src/**/*.test.ts' 'mcp/src/**/*.test.ts' 'ui/src/**/*.test.ts'",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {

@@ -25,6 +25,7 @@ import {
   type RpcMethod,
   assertNever,
 } from '../app/rpc';
+import { makeSyntheticHistory, syntheticBody } from './history-dag';
 
 const NOW = Date.now();
 
@@ -85,11 +86,24 @@ function makeRepo(opts: {
   unstaged?: FileChange[];
   untracked?: FileChange[];
   nested?: NestedRepo[];
+  /** How deep a synthetic history to generate (WP-08). The root repo gets 646
+   *  — the real commit count of this workspace's meta-repo — so the mocked
+   *  History view exercises the real 500 + 200 pagination path and a DAG wide
+   *  enough to have something to lay out. */
+  historyCount?: number;
 }): MockRepo {
   const staged = opts.staged ?? [];
   const unstaged = opts.unstaged ?? [];
   const untracked = opts.untracked ?? [];
-  const lastCommit = commit('a1b2c3d4e5', 'chore: initial mock history', 42, opts.branch ? [`HEAD -> ${opts.branch}`] : []);
+  const log = makeSyntheticHistory({
+    seed: opts.repo,
+    count: opts.historyCount ?? 120,
+    branch: opts.branch,
+    upstream: opts.upstream,
+  });
+  const lastCommit =
+    log[0] ??
+    commit('a1b2c3d4e5', 'chore: initial mock history', 42, opts.branch ? [`HEAD -> ${opts.branch}`] : []);
   const snapshot: RepoSnapshot = {
     repo: opts.repo,
     name: opts.name,
@@ -157,11 +171,7 @@ function makeRepo(opts: {
     staged,
     unstaged,
     untracked,
-    log: [
-      lastCommit,
-      commit('9f8e7d6c5b', 'merge: latest from main', 4320),
-      commit('1122334455', 'fix: tighten the option-injection unit test', 5800),
-    ],
+    log,
     branches,
     nested: opts.nested ?? [],
   };
@@ -193,6 +203,7 @@ const childGit = makeRepo({
   upstream: null,
   ahead: null,
   behind: null,
+  historyCount: 214,
   unstaged: [
     fileChange('src/lib/pkg/pkg-menu-store.ts', '.', 'M', 12, 2),
     fileChange('src-tauri/src/pkg/lifecycle.rs', '.', 'M', 4, 0),
@@ -207,6 +218,7 @@ const childContract = makeRepo({
   upstream: 'origin/feat/sidecar-event-envelope',
   ahead: 1,
   behind: 0,
+  historyCount: 47,
 });
 
 const rootRepo = makeRepo({
@@ -217,6 +229,7 @@ const rootRepo = makeRepo({
   upstream: 'origin/git/phase-1',
   ahead: 3,
   behind: 0,
+  historyCount: 646,
   staged: [fileChange('plans/git/05-tracking.md', 'M', '.', 18, 3)],
   untracked: [{ ...fileChange('plans/git/drafts/schema-notes.md', '.', '.', null, null), kind: 'untracked' }],
   nested: [
@@ -248,6 +261,57 @@ export function setMockRoot(key: MockRootKey): void {
 }
 export function getMockRoot(): MockRootKey {
   return _activeRootKey;
+}
+
+// ── Dev-only: render THIS workspace's real history ──────────────────────────
+//
+// `?live=1` (dev server only) swaps the synthetic DAG for a snapshot of a real
+// repo, produced by `tools/history-cli.ts dump` through the real chain
+// (git → git-core argv/exec → parseLog). That is what lets WP-08's "renders
+// this workspace's root repo history" be a screenshot of the actual view
+// rather than a claim about one.
+//
+// The snapshot lives at `ui/dev/history-fixture.json` and is GITIGNORED on
+// purpose: a repo's history moves, so a committed copy would be stale within a
+// day. `import.meta.env.DEV` is a compile-time constant, so this whole branch
+// — fetch included — is dead-code-eliminated out of `vite build` output; the
+// shipped bundle has no fixture path in it at all.
+
+interface LiveFixture {
+  repo: string;
+  commits: CommitSummary[];
+  details: Record<string, { body: string; trailers: Array<{ key: string; value: string }>; files: FileChange[] }>;
+}
+
+let _liveFixture: LiveFixture | null | undefined;
+
+async function liveFixture(): Promise<LiveFixture | null> {
+  if (!import.meta.env.DEV) return null;
+  if (_liveFixture !== undefined) return _liveFixture;
+  let wanted = false;
+  try {
+    wanted = new URLSearchParams(window.location.search).get('live') === '1';
+  } catch {
+    wanted = false;
+  }
+  if (!wanted) {
+    _liveFixture = null;
+    return null;
+  }
+  try {
+    const res = await fetch('/dev/history-fixture.json');
+    if (!res.ok) throw new Error(`HTTP ${String(res.status)}`);
+    _liveFixture = (await res.json()) as LiveFixture;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      '[git] ?live=1 but ui/dev/history-fixture.json is unreadable — generate it with\n' +
+        '      node --import=tsx ui/tools/history-cli.ts dump <repo>',
+      err
+    );
+    _liveFixture = null;
+  }
+  return _liveFixture;
 }
 
 function findRepo(repo: string): MockRepo | undefined {
@@ -390,25 +454,49 @@ const handlers: RpcHandlers = {
   'history.log': async (args: ArgsOf<'history.log'>): Promise<ResultOf<'history.log'>> => {
     const r = findRepo(args.repo);
     if (!r) return notOk('repo-not-known', `${args.repo} is not a known repo root.`);
+    const fixture = await liveFixture();
+    const source = fixture && fixture.repo === args.repo ? fixture.commits : r.log;
     const skip = args.skip ?? 0;
     const limit = args.limit ?? 500;
-    const page = r.log.slice(skip, skip + limit);
-    return { ok: true, repo: args.repo, commits: page, nextSkip: skip + page.length < r.log.length ? skip + page.length : null };
+    const page = source.slice(skip, skip + limit);
+    return {
+      ok: true,
+      repo: args.repo,
+      commits: page,
+      nextSkip: skip + page.length < source.length ? skip + page.length : null,
+    };
   },
 
   'history.commit': async (args: ArgsOf<'history.commit'>): Promise<ResultOf<'history.commit'>> => {
     const r = findRepo(args.repo);
     if (!r) return notOk('repo-not-known', `${args.repo} is not a known repo root.`);
+    const fixture = await liveFixture();
+    if (fixture && fixture.repo === args.repo) {
+      const summary = fixture.commits.find((c0) => c0.sha === args.sha);
+      const detail = fixture.details[args.sha];
+      if (summary && detail) {
+        return {
+          ok: true,
+          commit: { ...summary, body: detail.body, trailers: detail.trailers, files: detail.files, signature: null },
+        };
+      }
+      return notOk('git-failed', `${args.sha} is not in the dev fixture.`);
+    }
     const c = r.log.find((c0) => c0.sha === args.sha) ?? r.log[0];
     if (!c) return notOk('git-failed', 'No commits.');
     return {
       ok: true,
       commit: {
         ...c,
-        body: `${c.subject}\n`,
+        // The body has to AGREE with `coAuthors` — a detail pane showing a
+        // trailer the row said wasn't there would poison the one thing the
+        // History view is careful about (02-research-external.md [27][28]).
+        body: syntheticBody(c),
         trailers: c.coAuthors.map((a) => ({ key: 'Co-Authored-By', value: `${a.name} <${a.email}>` })),
         files: [...r.staged, ...r.unstaged],
-        signature: args.withSignature ? { status: 'N', signer: null } : null,
+        // `%G?` = N means unsigned, which git-core reports as `null` rather
+        // than a `{status:'N'}` object (core/src/parse/log.ts).
+        signature: null,
       },
     };
   },
