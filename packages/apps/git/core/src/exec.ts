@@ -25,6 +25,7 @@
  */
 
 import { spawn } from 'node:child_process';
+import { stat } from 'node:fs/promises';
 import { buildChildEnv } from './env.js';
 import { fromGitFailure, gitError } from './errors.js';
 import type { GitError } from './rpc.js';
@@ -173,6 +174,36 @@ const MISSING_REASON: Readonly<Record<Binary, 'git-missing' | 'gh-missing'>> = {
 export type ExecResult = { ok: true; outcome: ExecOutcome } | GitError;
 
 /**
+ * Is the failure the CWD's fault rather than the binary's?
+ *
+ * `child_process.spawn` reports a missing/unusable `cwd` with the same
+ * `ENOENT` it reports for a missing binary — the errno belongs to the whole
+ * `posix_spawn`, not to one of its inputs. Mapping that straight to
+ * `git-missing` produced the worst possible diagnosis: "git was not found on
+ * PATH" for a user whose git is fine and whose repo directory has simply been
+ * deleted, moved, or is a stale worktree path. `git-missing` is a
+ * fix-your-machine error; a vanished cwd is a G-05 state-table answer
+ * (`unreadable` — "cannot read", per §Shared state contract (d)), and it names
+ * the path so the UI can say WHICH directory went away.
+ *
+ * Probing costs one `stat`, and only on a spawn failure — never on the hot
+ * path. Returns `null` when the cwd is a perfectly good directory, which is
+ * the only case where a `git-missing` / `gh-missing` verdict is honest.
+ */
+async function cwdFault(cwd: string): Promise<GitError | null> {
+  try {
+    const st = await stat(cwd);
+    if (st.isDirectory()) return null;
+    return gitError('unreadable', `working directory is not a directory: ${cwd}`, { path: cwd });
+  } catch (err) {
+    const e = err as NodeJS.ErrnoException;
+    return gitError('unreadable', `cannot read working directory ${cwd}: ${e.code ?? e.message}`, {
+      path: cwd,
+    });
+  }
+}
+
+/**
  * Run `git` or `gh`, translating spawn failures and deadlines into the frozen
  * error vocabulary. A NON-ZERO EXIT IS STILL `ok: true` — the caller decides
  * whether it is a failure, because several call sites treat a non-zero exit as
@@ -190,6 +221,12 @@ export async function exec(
     outcome = await spawnChild(bin, argv, opts);
   } catch (err) {
     const e = err as NodeJS.ErrnoException;
+    // A spawn-level errno is ambiguous between the binary and the cwd — settle
+    // that before blaming either. See `cwdFault`.
+    if (e.code === 'ENOENT' || e.code === 'EACCES' || e.code === 'ENOTDIR') {
+      const fault = await cwdFault(opts.cwd);
+      if (fault) return fault;
+    }
     if (e.code === 'ENOENT') {
       return gitError(MISSING_REASON[bin], `${bin} was not found on PATH`);
     }
