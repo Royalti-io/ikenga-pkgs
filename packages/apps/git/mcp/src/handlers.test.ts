@@ -28,6 +28,16 @@ function raw(args: string[], cwd: string): void {
 
 before(async () => {
   if (!HAS_GIT) return;
+  // CI runners (and any machine without a global gitconfig) have no
+  // `user.name`/`user.email` — every commit in this suite, whether made by
+  // `raw()` or by the library under test (both default to `process.env`),
+  // would otherwise fail with "Please tell me who you are." Set process-level
+  // identity once, before any commit happens. Mirrors
+  // `core/src/integration.test.ts`'s `raw()`/`parentEnv` pattern one layer up.
+  process.env.GIT_AUTHOR_NAME = 'Ikenga Test';
+  process.env.GIT_AUTHOR_EMAIL = 'test@ikenga.dev';
+  process.env.GIT_COMMITTER_NAME = 'Ikenga Test';
+  process.env.GIT_COMMITTER_EMAIL = 'test@ikenga.dev';
   tmp = await mkdtemp(join(tmpdir(), 'ikenga-git-mcp-handlers-'));
   repo = join(tmp, 'repo');
   await mkdir(repo, { recursive: true });
