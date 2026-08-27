@@ -86,7 +86,7 @@
 
   "sidecars": [
     {
-      "name": "pa-com-ikenga-git-main",
+      "name": "pa-com-ikenga-git-repo",
       "bin": "sidecar/dist/sidecar.js",
       "stdio": "json",
       "restart_when_changed": ["sidecar/dist/sidecar.js"],
