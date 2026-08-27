@@ -53,11 +53,27 @@ rules (G-02), §MCP threat model (G-04), §Destructive operation tiers (G-12).
 pnpm install   # from the ikenga-pkgs workspace root
 npm run build:sidecar
 npm run build:mcp
+npm run build:ui                # required before the pane will mount
 ikenga dev packages/apps/git    # mount into the running shell
 ```
 
 The supervisor watches `sidecar/dist/sidecar.js` and `mcp/dist/index.js`
 (per `restart_when_changed`) and respawns each on rebuild.
+
+### Three `dist/` directories, one of them load-bearing
+
+| Path | Built by | Consumed by |
+|---|---|---|
+| `dist/` (pkg root) | `npm run build:ui` (vite, `outDir: '../dist'`) | the shell's iframe content server |
+| `sidecar/dist/sidecar.js` | `npm run build:sidecar` | `manifest.sidecars[0].bin` |
+| `mcp/dist/index.js` | `npm run build:mcp` | `manifest.mcp[0].args` |
+
+The UI bundle **must** sit at the pkg root's `dist/`. The shell hardcodes an
+iframe pkg's content root to `<pkg>/dist` (`pkg_content/mod.rs:493`,
+`server/pkg_static.rs:211`) and `mint_html` strips only a leading `dist/` from
+the manifest `source` before joining it to that root; `UiBlock` has no
+`dist_root` field to point elsewhere. A bundle under `ui/dist/` is
+unreachable — the pane renders an error page rather than the app.
 
 ## Build for publish
 

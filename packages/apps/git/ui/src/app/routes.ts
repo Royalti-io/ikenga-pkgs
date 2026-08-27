@@ -1,7 +1,7 @@
 // com.ikenga.git · view <-> route mapping (WP-06)
 //
 // manifest.json registers five top-level nav entries, each pointing at this
-// SAME bundle (`ui/dist/index.html`) with a different path. Deep-linking
+// SAME bundle (`dist/index.html`) with a different path. Deep-linking
 // therefore follows the agent-ops sub-route pattern (memory
 // `reference_pkg_subroute_deeplinks`), not the simpler tasks single-route
 // pattern the WP-06 spec's "(tasks pattern)" note refers to for activeFeature

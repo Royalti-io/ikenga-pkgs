@@ -9,10 +9,22 @@ import { defineConfig } from 'vite';
 //                        URL, not the site root, and WebKitGTK/Linux ignores
 //                        <base href> inside a srcdoc iframe — only relative
 //                        URLs get inline_subresources()-rewritten.
-//   - flat `dist/`      — manifest.json's ui.routes source is `ui/dist/
-//                        index.html`; this project's own `dist/` IS that
-//                        root, so no nested `dist/ui/` nesting to trip the
-//                        pkg_content path-canonicalization defect.
+//   - `outDir: '../dist'` — the PKG ROOT's `dist/`, not `ui/dist/`. This is
+//                        not a preference: the shell hardcodes an iframe
+//                        pkg's content root to `<pkg>/dist`
+//                        (`pkg_content/mod.rs:493`, `server/pkg_static.rs:
+//                        211`) and `mint_html` only strips a leading `dist/`
+//                        from the manifest's `source` before joining it to
+//                        that root. `UiBlock` has no `dist_root` field to
+//                        override. A bundle at `ui/dist/` is therefore
+//                        unreachable — the pane mounts an error page, not the
+//                        app. `emptyOutDir` is required because the dir is
+//                        outside vite's root and it refuses to clear it
+//                        otherwise.
+//   - flat output       — `index.html` sits directly in that `dist/`, with
+//                        no nested `dist/ui/` to trip the pkg_content path
+//                        canonicalization. `mcp/dist` and `sidecar/dist` are
+//                        separate directories and are untouched by this.
 //   - single JS chunk   — WebKitGTK drops any HTTP fetch issued from inside a
 //                        srcdoc iframe (Tauri #12767), so a dynamic-import
 //                        chunk (code-splitting's whole point) can never load.
@@ -23,7 +35,8 @@ export default defineConfig({
   build: {
     target: 'es2022',
     sourcemap: true,
-    outDir: 'dist',
+    outDir: '../dist',
+    emptyOutDir: true,
     rollupOptions: {
       output: {
         inlineDynamicImports: true,
