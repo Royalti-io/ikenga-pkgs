@@ -1,7 +1,7 @@
 {
   "name": "@ikenga/pkg-git",
   "version": "0.1.0",
-  "description": "com.ikenga.git — Git mini-app pkg (Bun sidecar + MCP + UI) that tracks every Ikenga project's repo(s), reuses the user's existing git/gh auth by shelling out rather than storing credentials, and makes agent worktrees, attribution and stale-base hazards first-class.",
+  "description": "com.ikenga.git \u2014 Git mini-app pkg (Bun sidecar + MCP + UI) that tracks every Ikenga project's repo(s), reuses the user's existing git/gh auth by shelling out rather than storing credentials, and makes agent worktrees, attribution and stale-base hazards first-class.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -29,7 +29,7 @@
     "build:ui": "cd ui && npm run build",
     "dev:ui": "cd ui && npm run dev",
     "build": "npm run build:sidecar && npm run build:mcp && npm run build:ui",
-    "test": "node --test --import=tsx 'core/src/**/*.test.ts' 'mcp/src/**/*.test.ts' 'ui/src/**/*.test.ts'",
+    "test": "node --test --import=tsx 'core/src/**/*.test.ts' 'sidecar/src/**/*.test.ts' 'mcp/src/**/*.test.ts' 'ui/src/**/*.test.ts'",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
