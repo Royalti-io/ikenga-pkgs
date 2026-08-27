@@ -28,6 +28,17 @@ export const VOCAB = {
     commit: 'Commit',
     noChanges: 'No changes',
     sendToChi: 'Send to your Chi',
+    // ── Diff pane (WP-07, D9) ──────────────────────────────────────────────
+    diffSideBySide: 'Side by side',
+    diffUnified: 'Unified',
+    selectFileHint: 'Select a file to see its diff',
+    binaryFile: 'Binary file — no diff to show',
+    renamedFrom: (from: string) => `Renamed from ${from}`,
+    untrackedNoDiff: 'Untracked file — stage it to start tracking it',
+    noDiffContent: 'No content changes',
+    diffTruncated: 'Diff truncated — this file is larger than the preview limit',
+    diffFailed: 'Couldn’t load this diff',
+    loadingDiff: 'Loading diff…',
   },
   history: {
     title: 'History',

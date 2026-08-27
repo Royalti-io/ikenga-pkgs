@@ -13,8 +13,9 @@ import { publishMenu } from '../menu';
 import { watchProjectFreshness } from '../poll';
 import { rpc, usingMock } from './transport';
 import { renderEmptyState, renderRepoPicker, type EmptyStateReason } from '../states';
-import { renderChangesLists, renderChangesTree, renderPrs, renderWorktrees } from '../views';
+import { renderChangesTree, renderPrs, renderWorktrees } from '../views';
 import { mountBranchesView } from '../views/branches';
+import { mountChangesView } from '../views/changes';
 import { HistoryView } from '../views/history';
 import { VOCAB } from '../vocabulary';
 import type { ProjectRollup } from './rpc';
@@ -221,22 +222,24 @@ export class App {
 
     switch (this.state.view) {
       case 'changes': {
+        // WP-07: the ledger stays views/index.ts's renderChangesTree
+        // (multi-repo dirty overview, out of WP-07's file scope); the pane
+        // to its right — staged/unstaged/untracked lists, stage/unstage, the
+        // diff pane — is views/changes/'s own render loop (same shape as
+        // Branches: not retained across an App rescan, see that module's
+        // header comment for why that's an acceptable trade here).
         const wrap = document.createElement('div');
         wrap.className = 'git-view git-view--changes';
         wrap.appendChild(renderChangesTree(rollup, activeRepo.repo, (repo) => this.setState({ activeRepo: repo })));
-        const listsHost = document.createElement('div');
-        listsHost.className = 'git-view__lists';
-        listsHost.appendChild(this.loadingNode());
-        wrap.appendChild(listsHost);
-        rpc('changes.list', { repo: activeRepo.repo })
-          .then((res) => {
-            if (!res.ok || this.state.view !== 'changes' || this.state.activeRepo !== activeRepo.repo) return;
-            listsHost.innerHTML = '';
-            listsHost.appendChild(renderChangesLists(res.staged, res.unstaged, res.untracked));
-          })
-          .catch(() => {
-            listsHost.innerHTML = '';
-          });
+        const changesHost = document.createElement('div');
+        changesHost.className = 'git-view__changes-host';
+        wrap.appendChild(changesHost);
+        mountChangesView(changesHost, {
+          repo: activeRepo.repo,
+          rpc,
+          onChanged: () => void this.scan(),
+          onJumpToRepo: (repo) => this.setState({ activeRepo: repo }),
+        });
         return wrap;
       }
       case 'history': {
