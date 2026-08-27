@@ -37,17 +37,29 @@ import {
 
 import { TOOLS } from './tools.js';
 import { RepoWatcher } from './watcher.js';
-import { listKnownRepos } from './known-repos.js';
+import { listActiveProjectRepos } from './known-repos.js';
+import { resolveActiveProject } from './iyke-client.js';
 import type { RepoChangedParams } from '../../core/src/rpc.js';
 
 const NAME = 'git';
 const VERSION = '0.1.0';
 
-/** How often the watcher re-polls the known-project-root set and rescans for
- *  new/removed nested repos. Not the fs-change latency (that's the debounce
- *  ceiling in `watcher.ts`, ~1s) — this is "did the USER add a project or a
- *  fresh clone", which changes far less often. */
+/** How often the watcher rescans the ACTIVE project for new/removed nested
+ *  repos. Not the fs-change latency (that's the debounce ceiling in
+ *  `watcher.ts`, ~1s) — this is "did a fresh clone appear", which changes far
+ *  less often. */
 const RECONCILE_INTERVAL_MS = 30_000;
+
+/** How often we ask the shell which project is active.
+ *
+ *  Switching project must re-scope the watcher promptly — the user expects the
+ *  view they just opened to be live, and waiting up to 30s for the full
+ *  rescan reads as a broken pane. The shell announces the switch as a Tauri
+ *  event (`projects:active-changed`), which only webviews can receive; this
+ *  process is not one, so a poll of `GET /iyke/project/active` is the only
+ *  mechanism available. It is one localhost GET against an already-open
+ *  loopback listener, and it only triggers a rescan when the answer changes. */
+const ACTIVE_POLL_INTERVAL_MS = 3_000;
 
 const byName = new Map(TOOLS.map((t) => [t.name, t]));
 
@@ -112,30 +124,84 @@ async function main(): Promise<void> {
       });
   });
 
+  /** The scope the current watch set was built from — see `ActiveRepoSet`. */
+  let scopeKey: string | null = null;
+  /** One reconcile at a time. The 30s rescan and the 3s active-project poll
+   *  can otherwise overlap on a slow scan and race each other's subscriptions. */
+  let inFlight: Promise<void> | null = null;
+
   async function reconcile(): Promise<void> {
+    if (inFlight) return inFlight;
+    inFlight = (async () => {
+      try {
+        const started = Date.now();
+        const set = await listActiveProjectRepos();
+        await watcher.reconcile(set.repos);
+        if (set.scopeKey !== scopeKey) {
+          process.stderr.write(
+            `[git-mcp] watching ${String(set.repos.length)} repo(s) for ${set.scopeKey ?? '(no active project root)'} in ${String(Date.now() - started)}ms\n`
+          );
+          scopeKey = set.scopeKey;
+        }
+      } catch (err) {
+        // A reconcile failure (iyke bridge down, a transient fs error) must
+        // never crash the supervised process — the previous watch set just
+        // stays in place until the next tick.
+        process.stderr.write(`[git-mcp] reconcile failed: ${(err as Error).message}\n`);
+      } finally {
+        inFlight = null;
+      }
+    })();
+    return inFlight;
+  }
+
+  /** Cheap "did the user switch project?" check. Only a CHANGED answer costs a
+   *  rescan; an unreachable bridge is left to the periodic reconcile. */
+  async function pollActiveProject(): Promise<void> {
     try {
-      const repos = await listKnownRepos();
-      await watcher.reconcile(repos);
+      const active = await resolveActiveProject();
+      if (!active.ok) return;
+      const root = active.project.rootPath;
+      const next = root === null || root.length === 0 ? null : `${active.project.id}@`;
+      // Compare on the project identity only — `scopeKey` carries the resolved
+      // root too, and a `realpath` difference must not read as a switch.
+      const current = scopeKey === null ? null : `${scopeKey.slice(0, scopeKey.indexOf('@'))}@`;
+      if (next !== current) await reconcile();
     } catch (err) {
-      // A reconcile failure (iyke bridge down, a transient fs error) must
-      // never crash the supervised process — the previous watch set just
-      // stays in place until the next tick.
-      process.stderr.write(`[git-mcp] reconcile failed: ${(err as Error).message}\n`);
+      process.stderr.write(`[git-mcp] active-project poll failed: ${(err as Error).message}\n`);
     }
   }
 
-  await reconcile();
-  const reconcileTimer = setInterval(() => void reconcile(), RECONCILE_INTERVAL_MS);
-  reconcileTimer.unref();
+  // ── serve first, warm the watcher after ────────────────────────────────
+  //
+  // The kernel's MCP lifecycle gives a long-lived server INIT_TIMEOUT (5s,
+  // `lifecycle.rs:94`) to answer `initialize`, then parks the pkg after three
+  // retries. `reconcile()` is a bounded filesystem walk plus one recursive
+  // watch bind per repo — 44.5s cold on this workspace before the scoping fix,
+  // still not a number to gamble a 5s budget on. So: connect the transport
+  // first, and start the watcher unawaited.
+  //
+  // Nothing in the tool surface depends on the watcher: every tool takes an
+  // explicit `repo` and re-reads git on each call (§Architecture — "the MCP is
+  // stateless and every mutating path re-reads status after mutating"). A tool
+  // called during the warm-up is fully correct; the only thing missing before
+  // the first reconcile lands is `repo.changed` push, whose documented
+  // fallback is the UI's own poll (`WATCH_FALLBACK_POLL_MS`).
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
 
   process.stderr.write(`[git-mcp] ready name=${NAME} pid=${String(process.pid)}\n`);
 
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  void reconcile();
+  const reconcileTimer = setInterval(() => void reconcile(), RECONCILE_INTERVAL_MS);
+  reconcileTimer.unref();
+  const activeTimer = setInterval(() => void pollActiveProject(), ACTIVE_POLL_INTERVAL_MS);
+  activeTimer.unref();
 
   const shutdown = async (sig: string): Promise<void> => {
     process.stderr.write(`[git-mcp] received ${sig}, shutting down\n`);
     clearInterval(reconcileTimer);
+    clearInterval(activeTimer);
     try {
       await watcher.stop();
     } catch {
