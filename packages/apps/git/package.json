@@ -29,11 +29,12 @@
     "build:ui": "cd ui && npm run build",
     "dev:ui": "cd ui && npm run dev",
     "build": "npm run build:sidecar && npm run build:mcp && npm run build:ui",
-    "test": "node --test --import=tsx 'core/src/**/*.test.ts'",
+    "test": "node --test --import=tsx 'core/src/**/*.test.ts' 'mcp/src/**/*.test.ts'",
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.23.0",
+    "@parcel/watcher": "^2.6.0",
     "zod": "^3.23.0"
   },
   "devDependencies": {

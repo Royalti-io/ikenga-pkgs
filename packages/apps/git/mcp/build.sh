@@ -20,14 +20,18 @@ if [[ "${1:-}" == "--watch" ]]; then
 fi
 
 echo "==> bundling $OUTPUT (target: node, format: esm)"
-# @modelcontextprotocol/sdk and zod are kept as RUNTIME imports (--external
-# below) so they resolve from the parent @ikenga/pkg-git pkg's hoisted
-# node_modules — this MCP's own package.json declares no deps.
+# @modelcontextprotocol/sdk, zod and @parcel/watcher are kept as RUNTIME
+# imports (--external below) so they resolve from the parent @ikenga/pkg-git
+# pkg's hoisted node_modules — this MCP's own package.json declares no deps.
+# @parcel/watcher in particular MUST stay external: it is a native C++ addon
+# loaded via a platform-specific `.node` binding, and bundling that into a
+# single JS file breaks the addon's own require() resolution.
 bun build $WATCH_FLAG \
   --target=node \
   --format=esm \
   --external @modelcontextprotocol/sdk \
   --external zod \
+  --external @parcel/watcher \
   src/index.ts \
   --outfile "$TMP"
 
