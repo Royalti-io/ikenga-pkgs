@@ -248,6 +248,35 @@ test('staging a child-repo path from the root repo is refused (G-11)', async (t)
   assert.equal(res.ownerRepo, child, 'the error must name the repo that DOES own the path');
 });
 
+test('the guard catches a repo nested deeper than the scan depth ceiling', async (t) => {
+  if (!HAS_GIT) return t.skip('git not on PATH');
+
+  // `MAX_SCAN_DEPTH` is 4. An ownership check built on `scanForRepos` would
+  // never see this repo and would let the parent stage its file — the exact
+  // failure the guard exists to prevent, silently. The upward walk has no
+  // depth ceiling, so it does.
+  const deep = join(root, 'a', 'b', 'c', 'd', 'e', 'deep-repo');
+  await mkdir(deep, { recursive: true });
+  raw(['init', '-q', '-b', 'main', '.'], deep);
+  await writeFile(join(deep, 'f.txt'), 'deep\n');
+
+  const res = await result('changes.stage', {
+    repo: root,
+    paths: ['a/b/c/d/e/deep-repo/f.txt'],
+  });
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, 'cross-repo-path');
+  assert.equal(res.ownerRepo, deep);
+
+  // And naming the nested repo's own directory is refused too — staging it
+  // from the parent would record a gitlink.
+  const asDir = await result('changes.stage', { repo: root, paths: ['a/b/c/d/e/deep-repo'] });
+  assert.equal(asDir.reason, 'cross-repo-path');
+  assert.equal(asDir.ownerRepo, deep);
+
+  await rm(join(root, 'a'), { recursive: true, force: true });
+});
+
 test('a path outside the repo entirely is refused before git sees it', async (t) => {
   if (!HAS_GIT) return t.skip('git not on PATH');
 
