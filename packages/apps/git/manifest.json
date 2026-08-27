@@ -112,6 +112,6 @@
     "net": [],
     "sqlite.tables": [],
     "vault.keys": [],
-    "engine": []
+    "engine": ["invoke"]
   }
 }

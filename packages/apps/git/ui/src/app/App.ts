@@ -236,6 +236,8 @@ export class App {
         wrap.appendChild(changesHost);
         mountChangesView(changesHost, {
           repo: activeRepo.repo,
+          repoName: activeRepo.name,
+          branch: activeRepo.branch,
           rpc,
           onChanged: () => void this.scan(),
           onJumpToRepo: (repo) => this.setState({ activeRepo: repo }),

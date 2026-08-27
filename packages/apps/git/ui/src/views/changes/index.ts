@@ -36,13 +36,20 @@ import { VOCAB } from '../../vocabulary';
 import { renderCrossRepoCard } from '../../states';
 import { renderDiffEmpty, renderDiffSideBySide, renderDiffUnified } from './diff-render';
 import { parsePatch } from './diff-parse';
+import { createCommitBox } from '../commit';
 import './changes.css';
 
 export interface ChangesViewDeps {
   repo: string;
+  /** Display name for the commit box's "Commit to <repo>" scope line
+   *  (WP-10) — never used to resolve a path. */
+  repoName: string;
+  /** Current branch, for the same scope line. Null on a detached HEAD. */
+  branch: string | null;
   rpc: RpcClient;
   /** Called after a stage/unstage mutation succeeds, so the host can re-scan
-   *  the project (header dirty counts, the ledger, other views). */
+   *  the project (header dirty counts, the ledger, other views). Also the
+   *  commit box's `onCommitted` — a commit re-scans the same way. */
   onChanged?: () => void;
   /** Called when a cross-repo guard's jump action is taken (G-11) — the host
    *  switches the active repo to the file's real owner. */
@@ -102,6 +109,16 @@ export function mountChangesView(container: HTMLElement, deps: ChangesViewDeps):
   let mutateError: string | null = null;
   let crossRepoGuard: { path: string; ownerRepo: string } | null = null;
 
+  // WP-10: created once for the life of this mount so a typed-but-unsent
+  // commit message survives this view's own repaints (file selection,
+  // stage/unstage) — see commit/index.ts's header comment.
+  const commitBox = createCommitBox({
+    repo,
+    repoName: deps.repoName,
+    rpc,
+    onCommitted: () => deps.onChanged?.(),
+  });
+
   function alive(): boolean {
     return container.isConnected;
   }
@@ -137,6 +154,7 @@ export function mountChangesView(container: HTMLElement, deps: ChangesViewDeps):
       unstaged = res.unstaged;
       untracked = res.untracked;
       conflicted = res.conflicted;
+      commitBox.setContext({ branch: deps.branch, staged, conflicted: conflicted.length });
       // Keep the selection if that file is still present in some section;
       // otherwise fall back to the first available file (prefer conflicted,
       // then staged, then unstaged) so the pane isn't blank after a mutation.
@@ -380,10 +398,16 @@ export function mountChangesView(container: HTMLElement, deps: ChangesViewDeps):
   }
 
   function buildInspector(): HTMLElement {
+    // WP-10: the commit box is D-01's `.ip-action-bar` — a persistent bar
+    // pinned to the bottom of THIS column regardless of which file (if any)
+    // is selected, so `.git-changes__insp-scroll` carries the scrolling and
+    // `.git-changes__inspector` itself stays a fixed-height flex column
+    // (changes.css) rather than scrolling the commit box away with content.
     const wrap = el('div', 'git-changes__inspector');
+    const scroll = el('div', 'git-changes__insp-scroll');
 
     if (mutateError) {
-      wrap.appendChild(
+      scroll.appendChild(
         buildRetryBanner(mutateError, () => {
           mutateError = null;
           repaint();
@@ -391,7 +415,7 @@ export function mountChangesView(container: HTMLElement, deps: ChangesViewDeps):
       );
     }
     if (crossRepoGuard) {
-      wrap.appendChild(
+      scroll.appendChild(
         renderCrossRepoCard(crossRepoGuard.path, crossRepoGuard.ownerRepo, () => {
           const owner = crossRepoGuard!.ownerRepo;
           crossRepoGuard = null;
@@ -401,12 +425,14 @@ export function mountChangesView(container: HTMLElement, deps: ChangesViewDeps):
     }
 
     if (!selection) {
-      wrap.appendChild(el('div', 'git-empty-inline', VOCAB.changes.selectFileHint));
-      return wrap;
+      scroll.appendChild(el('div', 'git-empty-inline', VOCAB.changes.selectFileHint));
+    } else {
+      scroll.appendChild(buildInspectorHead(selection));
+      scroll.appendChild(buildDiffPane(selection));
     }
 
-    wrap.appendChild(buildInspectorHead(selection));
-    wrap.appendChild(buildDiffPane(selection));
+    wrap.appendChild(scroll);
+    wrap.appendChild(commitBox.root);
     return wrap;
   }
 

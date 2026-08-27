@@ -21,6 +21,11 @@
   --space-2: 8px;
   --space-3: 12px;
   --space-4: 16px;
+  --space-5: 20px;
+  /* Flat, not per-theme: --primary swings from a mid-brightness warm brown
+   *  (dark mode) to a deep one (light mode) — white text clears AA contrast
+   *  against both, so this doesn't need its own dark/light split (WP-10). */
+  --primary-fg: #fff;
 }
 
 /* Dark (default — matches Theme A Dusk Wood's warm-dark base). */
@@ -31,6 +36,8 @@
   --fg: hsl(30 20% 92%);
   --fg-muted: hsl(30 10% 62%);
   --border: hsl(30 10% 22%);
+  --border-soft: hsl(30 10% 17%);
+  --bg-sunken: hsl(30 12% 7%);
   --primary: hsl(20 50% 46%);
   --live: hsl(140 45% 50%);
   --danger: hsl(6 65% 58%);
@@ -44,6 +51,8 @@
   --fg: hsl(30 25% 14%);
   --fg-muted: hsl(30 10% 42%);
   --border: hsl(30 15% 85%);
+  --border-soft: hsl(30 15% 90%);
+  --bg-sunken: hsl(36 25% 93%);
   --primary: hsl(20 50% 34%);
   --live: hsl(140 45% 32%);
   --danger: hsl(6 65% 42%);
@@ -175,6 +184,17 @@ body {
 
 .git-btn--ghost {
   background: transparent;
+}
+
+.git-btn--primary {
+  background: var(--primary);
+  color: var(--primary-fg);
+  border-color: var(--primary);
+}
+
+.git-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 .git-card {

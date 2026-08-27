@@ -8,8 +8,11 @@
 // `app.callServerTool({ name: 'host.*', ... })`.
 //
 // Per D11 (01-plan.md §Decisions): this pkg's UI uses NO `host.fetch` /
-// `host.invoke`. The only host verbs it reaches are `host.pkg.setMenu` and
-// `host.pkgSidecarCall` (§0 of rpc.ts) — both audited below, nothing else.
+// `host.invoke`. The host verbs it reaches are `host.pkg.setMenu`,
+// `host.pkgSidecarCall` (§0 of rpc.ts), `host.navigate`, and — as of WP-10 —
+// `host.sendToActiveSession` (the studio-precedented "send to your Chi" seam,
+// gated on this pkg's own manifest `permissions.engine: ["invoke"]`, not on
+// D11's elevated-verb story). All audited below, nothing else.
 //
 // Standalone mode (no parent window, e.g. `pnpm dev` in a bare tab) resolves
 // immediately with `mode: 'standalone'`; callers branch off that rather than
@@ -183,6 +186,44 @@ export function setMenu(items: PublishedMenuItem[]): Promise<HostCallResult> {
  *  persisted pane restores on the right view. */
 export function hostNavigate(path: string): Promise<HostCallResult> {
   return callHostTool('host.navigate', { path });
+}
+
+/** Result of {@link sendToChi}. Mirrors the shell's `host.sendToActiveSession`
+ *  structured payload 1:1 (shell/src/components/pkg/pkg-iframe-host.tsx) and
+ *  com.ikenga.studio's identical helper (`studio/src/studio/bridge.ts:410`) —
+ *  `{ ok: true, threadId }` on success, `{ ok: false, reason }` on refusal.
+ *  `reason` is `'scope-denied'` when the manifest lacks `permissions.engine:
+ *  ["invoke"]` (this pkg declares it — manifest.json), `'no-active-session'`
+ *  when a shell IS present but no chat pane is currently focused, `'no-host'`
+ *  when there is no shell at all (standalone dev — {@link isStandalone}), or
+ *  any other string the shell's refusal path grows in future. */
+export type SendToChiResult =
+  | { ok: true; threadId: string }
+  | { ok: false; reason: 'scope-denied' | 'no-active-session' | 'no-host' | string };
+
+/** Dispatch a prompt into the user's Chi — seeds a user turn in the focused
+ *  chat pane's existing thread via `host.sendToActiveSession`. Fire-and-
+ *  forget: this is the ONLY agent-run seam (`pkg-runtime/dispatch.js`
+ *  "SEAM RATIONALE"); it never returns the assistant's reply, only whether
+ *  the turn was seeded. Degrades gracefully in standalone dev — returns
+ *  `{ ok: false, reason: 'no-host' }` rather than throwing, same as every
+ *  other helper in this file when `_app` is unset. Never throws. */
+export async function sendToChi(prompt: string, source?: string): Promise<SendToChiResult> {
+  if (isStandalone() || !_app) {
+    return { ok: false, reason: 'no-host' };
+  }
+  try {
+    const res = await callHostTool('host.sendToActiveSession', { prompt, source });
+    const sc = res.structuredContent as { ok?: boolean; threadId?: string; reason?: string } | undefined;
+    if (sc?.ok === true && typeof sc.threadId === 'string') {
+      return { ok: true, threadId: sc.threadId };
+    }
+    return { ok: false, reason: sc?.reason ?? 'no-active-session' };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[git] sendToChi failed', err);
+    return { ok: false, reason: err instanceof Error ? err.message : 'no-active-session' };
+  }
 }
 
 /**

@@ -1,0 +1,119 @@
+/*
+ * com.ikenga.git · Commit box styles (WP-10).
+ *
+ * Layered on `app/styles.css`, which owns the palette (same convention as
+ * `changes.css`) — `--bg-sunken` / `--border-soft` / `--primary-fg` were
+ * added there for this file. Matches D-01's `.ip-action-bar` /
+ * `.cx-*` classes (`designs/changes-instrument.html`) 1:1, renamed to this
+ * pkg's `git-commit-box__*` convention.
+ */
+
+.git-commit-box {
+  flex-shrink: 0;
+}
+
+.git-commit-box__bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4) var(--space-3);
+  border-top: 1px solid var(--border-soft);
+  background: var(--bg-sunken);
+}
+
+.git-commit-box__scope {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.git-commit-box__repo {
+  color: var(--fg);
+}
+
+.git-commit-box__branch {
+  color: var(--fg-muted);
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-size: 10.5px;
+}
+
+.git-commit-box__rule {
+  flex: 1;
+  height: 1px;
+  background: var(--border-soft);
+}
+
+.git-commit-box__msg {
+  width: 100%;
+  height: 32px;
+  background: var(--bg-base);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 0 var(--space-3);
+  font: var(--text-body) / 1 var(--font-body);
+}
+
+.git-commit-box__msg::placeholder {
+  color: var(--fg-muted);
+}
+
+.git-commit-box__msg:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -1px;
+  border-color: var(--primary);
+}
+
+.git-commit-box__msg:disabled {
+  opacity: 0.6;
+}
+
+.git-commit-box__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.git-commit-box__note {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  letter-spacing: 0.02em;
+}
+
+.git-commit-box__spacer {
+  flex: 1;
+}
+
+.git-commit-box__error {
+  color: var(--danger);
+  font-size: var(--text-caption);
+}
+
+.git-commit-box__ok {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-caption);
+  color: var(--live);
+}
+
+.git-commit-box__ok-summary {
+  color: var(--fg-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.git-commit-box__ok-signed {
+  font-family: var(--font-mono);
+  color: var(--achievement);
+  white-space: nowrap;
+}

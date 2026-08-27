@@ -83,6 +83,17 @@
 .git-changes__inspector {
   flex: 1;
   min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Scrolls independently of the commit box (WP-10), which stays pinned to
+ * the bottom of `.git-changes__inspector` — matches D-01's `.ip-body` /
+ * `.ip-action-bar` split. */
+.git-changes__insp-scroll {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   display: flex;
   flex-direction: column;
