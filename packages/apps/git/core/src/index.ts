@@ -19,7 +19,7 @@
  *   `rpc.ts`      THE FROZEN CONTRACT (G-RPC). A byte-verbatim copy of
  *                 `plans/git/drafts/rpc.ts`. Do not edit it here — edit the
  *                 draft, re-copy, and record the change in `04-discussion.md`.
- *                 Methods, arg/result Zod schemas, the 19-reason error union,
+ *                 Methods, arg/result Zod schemas, the 20-reason error union,
  *                 the G-MCP tool surface, `repo.changed` notification params.
  *
  *   `argv.ts`     THE CONTAINMENT BOUNDARY (G-02). Subcommand allowlist,
@@ -36,6 +36,13 @@
  *
  *   `exec.ts`     The single spawn primitive. `shell: false`, always; a
  *                 deadline, always; `buildChildEnv()`, always.
+ *
+ *   `staged.ts`   G-04. The explicit-path commit ASSERTION. `git commit`
+ *                 records the index; the caller's path list is checked against
+ *                 the staged set and refused on any difference
+ *                 (`staged-set-mismatch`) rather than turned into a pathspec —
+ *                 a pathspec commits the WORKING TREE and would silently
+ *                 record unreviewed edits (rpc.ts DELTA 7).
  *
  *   `discover.ts` G-11 / G-05. Root resolution onto the four no-root states,
  *                 the bounded nested-repo scan, and the ownership primitive
@@ -121,6 +128,15 @@ export {
   type ScanOptions,
   type ScanResult,
 } from './discover.js';
+
+// ── Explicit-path commit assertion (G-04) ───────────────────────────────────
+export {
+  assertStagedSetMatches,
+  compareStagedSet,
+  normalizeRelPath,
+  readStagedPaths,
+  type StagedSetDiff,
+} from './staged.js';
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 export {

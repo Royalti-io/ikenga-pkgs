@@ -107,6 +107,12 @@ export const SUBCOMMAND_VERBS: Readonly<Partial<Record<AllowedSubcommand, readon
  *     the `GIT_DIR` denylist in `env.ts`.
  *   · **Destruction** — `--hard`, `--merge`, `--keep`, `--force`, `-f`, `-D`,
  *     `--delete`, `--prune-empty`, `--no-verify`. Not in v1 (G-12).
+ *   · **Index bypass** — `--only`, `--include`. These are not destructive and
+ *     not injection; they are here because `commit --only <paths>` commits the
+ *     WORKING TREE of those paths and IGNORES the index, which silently
+ *     committed unreviewed edits for any `MM` file (R6, staged.ts, rpc.ts
+ *     DELTA 7). The whole class is gone from this pkg, so make it unreachable
+ *     at the gate rather than merely unwritten in the builders.
  *
  * Prefix-matched, so `-c` also catches `-cfoo` and `--git-dir=` also catches
  * `--git-dir=/x`.
@@ -133,6 +139,8 @@ export const FORBIDDEN_ARG_PREFIXES: readonly string[] = [
   '-D',
   '--delete',
   '--no-verify',
+  '--only',
+  '--include',
 ];
 
 /**
@@ -519,33 +527,61 @@ export function resetPaths(paths: readonly string[]): ArgvResult {
 }
 
 /**
- * `git commit -F - [--only -- <paths>]`, message on stdin.
+ * `git commit -F -`, message on stdin. **Commits the INDEX. No pathspec.**
  *
- * Two things are load-bearing:
- *   · **`-F -`**: the message rides on stdin, never as an argv value. A commit
- *     message is the most attacker-shaped free text in the whole surface (it
- *     is multi-line and can begin with `-`), and this removes it from argv
- *     entirely.
- *   · **`--only`**: with a path list, commit exactly those paths and nothing
- *     else that happens to be staged. That is what makes `git_commit` safe
- *     enough to be the ONE mutating MCP tool: "stages nothing implicitly"
- *     (01-plan.md §MCP threat model) also means "commits nothing implicitly".
+ * ── Why there is no path list here (R6 fix — rpc.ts DELTA 7) ────────────────
+ * This builder used to emit `--only -- <paths>`, reading 01-plan.md's "commits
+ * only the explicit path list" as a pathspec. That form does not mean what it
+ * looks like: **`git commit -- <paths>` (and `--only`, which is that form's
+ * explicit spelling) commits the WORKING TREE content of those paths and
+ * ignores the index for them.** A file staged at B1 and then edited to B2 in
+ * the editor — porcelain `MM` — commits B2. The user commits bytes they never
+ * reviewed, and this pkg's own staged-diff pane, which showed B1, was lying to
+ * them. Reproduced end to end through the real sidecar before this fix.
  *
- * An EMPTY path list means "commit what is already staged" — allowed from the
- * UI, forbidden from the MCP by that tool's own schema (`rpc.ts` Q3).
+ * So the commit records the index, full stop, and "explicit paths" moved to
+ * where it can be honest: `assertStagedSetMatches` (staged.ts) refuses with
+ * `staged-set-mismatch` unless the repo's staged set EQUALS the caller's path
+ * list. Containment is unchanged in strength — "commits nothing implicitly" is
+ * still true — but it is now enforced by REFUSING a surprise rather than by
+ * silently narrowing the commit to a different revision of the same files.
+ *
+ * Still load-bearing: **`-F -`** — the message rides on stdin, never as an
+ * argv value. A commit message is the most attacker-shaped free text in the
+ * whole surface (multi-line, may begin with `-`), and this removes it from
+ * argv entirely.
  *
  * `--no-verify` is never emitted: `CommitCreateArgs.noVerify` exists so a
  * future Phase-4 auto-commit mode does not re-freeze G-RPC, and the sidecar
  * refuses `true` in v1. `assertArgvSafe` forbids the flag outright, so a
  * builder that started emitting it would fail the gate rather than ship.
  */
-export function commit(opts: { paths: readonly string[]; message: string }): ArgvResult {
-  const err = checkPathspecs(opts.paths);
-  if (err) return err;
+export function commit(opts: { message: string }): ArgvResult {
   if (opts.message.length === 0) return unsafeArgument('message', 'commit message is empty');
-  const argv = g('commit', '-F', '-');
-  if (opts.paths.length > 0) argv.push('--only', PATHSPEC_SEPARATOR, ...opts.paths);
-  return finish(argv, opts.message);
+  return finish(g('commit', '-F', '-'), opts.message);
+}
+
+/**
+ * `git diff --cached --name-only -z` — the repo's STAGED SET, as raw
+ * NUL-terminated repo-relative paths.
+ *
+ * The read half of the explicit-path assertion (staged.ts). Two deliberate
+ * choices:
+ *   · **No `--no-renames`.** Rename detection stays at git's default, which is
+ *     the same default `status --porcelain=v2` uses — so a staged rename shows
+ *     up here as its DESTINATION path only, exactly as `FileChange.path`
+ *     reports it (`rpc.ts` §3.1: `origPath` carries the source separately).
+ *     Forcing `--no-renames` would list source AND destination and make every
+ *     staged rename read as a mismatch.
+ *   · **No pathspec.** The whole point is to see everything that is staged,
+ *     including the paths the caller did NOT name — those are the ones that
+ *     would be swept into the commit.
+ *
+ * `--no-optional-locks` comes from `GLOBALS`, so this read never touches
+ * `.git/index.lock` (G-13).
+ */
+export function diffCachedNameOnly(): ArgvResult {
+  return finish(g('diff', ...PATCH_SAFETY, '--cached', '--name-only', '-z'));
 }
 
 /** `git branch <name> [<startPoint>]` — create only. `-D`/`-d`/`-M`/`-m` are

@@ -419,6 +419,126 @@ test('stage, commit and read back — the message never touches argv', async (t)
   );
 });
 
+test(
+  'R6 REGRESSION · an `MM` file commits its INDEX content; the worktree edit survives',
+  async (t) => {
+    if (!HAS_GIT) return t.skip('git not on PATH');
+
+    // THE defect, through the real process boundary — the same path the shell
+    // drives. Before the fix, `argv.commit` emitted `--only -- <paths>`, which
+    // commits the WORKING TREE of those paths and ignores the index: this repo
+    // ended up with B2 in HEAD while the pkg's staged-diff pane showed B1.
+    const B1 = 'staged revision B1\n';
+    const B2 = 'worktree revision B2 — never staged, never reviewed\n';
+
+    const scratch = join(tmp, 'mm-repo');
+    await mkdir(scratch, { recursive: true });
+    raw(['init', '-q', '-b', 'main', '.'], scratch);
+    identify(scratch);
+    await writeFile(join(scratch, 'f.txt'), 'original\n');
+    raw(['add', 'f.txt'], scratch);
+    raw(['commit', '-qm', 'land f.txt'], scratch);
+
+    await writeFile(join(scratch, 'f.txt'), B1);
+    assert.equal((await result('changes.stage', { repo: scratch, paths: ['f.txt'] })).ok, true);
+    await writeFile(join(scratch, 'f.txt'), B2);
+
+    // Porcelain `MM` — staged AND further modified.
+    assert.equal(
+      spawnSync('git', ['status', '--short'], { cwd: scratch, encoding: 'utf8' }).stdout,
+      'MM f.txt\n'
+    );
+
+    const committed = await result('commit.create', {
+      repo: scratch,
+      paths: ['f.txt'],
+      message: 'index, not worktree\n',
+    });
+    assert.equal(committed.ok, true, JSON.stringify(committed));
+
+    const showed = spawnSync('git', ['show', 'HEAD:f.txt'], { cwd: scratch, encoding: 'utf8' });
+    assert.equal(showed.status, 0);
+    assert.equal(showed.stdout, B1, 'HEAD must hold the STAGED content B1, not B2');
+    assert.equal(
+      spawnSync('git', ['status', '--short'], { cwd: scratch, encoding: 'utf8' }).stdout,
+      ' M f.txt\n',
+      'the unstaged edit must still be in the working tree'
+    );
+  }
+);
+
+test(
+  'commit.create: requested paths ≠ staged set → staged-set-mismatch, nothing committed',
+  async (t) => {
+    if (!HAS_GIT) return t.skip('git not on PATH');
+
+    const scratch = join(tmp, 'mismatch-repo');
+    await mkdir(scratch, { recursive: true });
+    raw(['init', '-q', '-b', 'main', '.'], scratch);
+    identify(scratch);
+    await writeFile(join(scratch, 'seed.txt'), 'seed\n');
+    raw(['add', 'seed.txt'], scratch);
+    raw(['commit', '-qm', 'seed'], scratch);
+    const headBefore = spawnSync('git', ['rev-parse', 'HEAD'], {
+      cwd: scratch,
+      encoding: 'utf8',
+    }).stdout.trim();
+
+    await writeFile(join(scratch, 'named.txt'), 'named\n');
+    await writeFile(join(scratch, 'unnamed.txt'), 'never mentioned\n');
+    assert.equal(
+      (await result('changes.stage', { repo: scratch, paths: ['named.txt', 'unnamed.txt'] })).ok,
+      true
+    );
+
+    // (i) a staged path the caller did not name.
+    const extra = await result('commit.create', {
+      repo: scratch,
+      paths: ['named.txt'],
+      message: 'should not happen\n',
+    });
+    assert.equal(extra.ok, false, JSON.stringify(extra));
+    assert.equal(extra.reason, 'staged-set-mismatch');
+    assert.match(extra.message as string, /also staged: unnamed\.txt/);
+
+    // (ii) a named path that is not staged.
+    await writeFile(join(scratch, 'ghost.txt'), 'not staged\n');
+    const missing = await result('commit.create', {
+      repo: scratch,
+      paths: ['named.txt', 'unnamed.txt', 'ghost.txt'],
+      message: 'should not happen either\n',
+    });
+    assert.equal(missing.ok, false, JSON.stringify(missing));
+    assert.equal(missing.reason, 'staged-set-mismatch');
+    assert.match(missing.message as string, /requested but not staged: ghost\.txt/);
+
+    // `git log` is unchanged by BOTH refusals.
+    assert.equal(
+      spawnSync('git', ['rev-parse', 'HEAD'], { cwd: scratch, encoding: 'utf8' }).stdout.trim(),
+      headBefore,
+      'no commit may have been created'
+    );
+    assert.equal(
+      spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: scratch, encoding: 'utf8' })
+        .stdout.trim(),
+      '1'
+    );
+
+    // (iii) the exact staged set is accepted.
+    const okRes = await result('commit.create', {
+      repo: scratch,
+      paths: ['unnamed.txt', 'named.txt'],
+      message: 'both, named explicitly\n',
+    });
+    assert.equal(okRes.ok, true, JSON.stringify(okRes));
+    assert.equal(
+      spawnSync('git', ['rev-list', '--count', 'HEAD'], { cwd: scratch, encoding: 'utf8' })
+        .stdout.trim(),
+      '2'
+    );
+  }
+);
+
 test('commit.create refuses noVerify', async (t) => {
   if (!HAS_GIT) return t.skip('git not on PATH');
   const res = await result('commit.create', {

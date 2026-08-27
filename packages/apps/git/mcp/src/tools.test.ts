@@ -36,3 +36,24 @@ test('git_commit requires a non-empty paths array in its JSON schema', () => {
   const paths = props.paths as { minItems?: number };
   assert.equal(paths.minItems, 1);
 });
+
+test('git_commit HANDLER rejects `paths: []` before it can reach git', async () => {
+  // The declared `minItems: 1` is what a well-behaved MCP client enforces.
+  // This drives the handler directly with the payload a client that ignores
+  // the schema would send, because that is the caller this tool has to
+  // survive (01-plan.md §MCP threat model: the MCP path escapes the shell).
+  // The refusal happens before `resolveRepo`, so no repo and no bridge are
+  // needed — and the deliberately bogus `repo` below proves it: if the guard
+  // ever moved after resolution, this call would fail on `repo-not-known`
+  // instead.
+  const commit = TOOLS.find((t) => t.name === 'git_commit');
+  assert.ok(commit);
+  const res = await commit.handler({
+    repo: '/definitely/not/a/known/root',
+    paths: [],
+    message: 'x',
+  });
+  assert.equal(res.ok, false);
+  assert.equal(res.reason, 'unsafe-argument');
+  assert.match(res.message as string, /at least one explicit path/);
+});

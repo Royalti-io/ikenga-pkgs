@@ -29,6 +29,7 @@ import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import * as argv from './argv.js';
 import { assertPathsOwnedBy, findToplevel, isIgnoredByParent, scanForRepos } from './discover.js';
+import { assertStagedSetMatches, readStagedPaths } from './staged.js';
 import { run, runTolerant, type ExecOutcome } from './exec.js';
 import {
   countChanges,
@@ -219,7 +220,11 @@ test(
     const nasty = '--amend this is a subject, not a flag\n\nBody line\n\nCo-Authored-By: A <a@x>\n';
 
     await writeFile(join(repo, 'a.txt'), 'hello\nmore\nand more\n');
-    const res = await run('git', argv.commit({ paths: ['a.txt'], message: nasty }), opts(repo));
+    // `commit` records the INDEX now (R6) — stage the change first. The
+    // fixture's `bin.dat` is already staged, so the commit legitimately
+    // carries both; this test is about the MESSAGE, not the path set.
+    unwrap(await run('git', argv.add(['a.txt']), opts(repo)));
+    const res = await run('git', argv.commit({ message: nasty }), opts(repo));
     const out = unwrap(res);
     assert.match(out.stdout, /\[main [0-9a-f]+\]/);
 
@@ -233,23 +238,52 @@ test(
   }
 );
 
-test('commit --only commits ONLY the named paths', { skip: !HAS_GIT }, async () => {
-  // `bin.dat` is staged from the fixture. Committing `a.txt` alone must leave
-  // it staged — "stages nothing implicitly" also means "commits nothing
-  // implicitly", which is what makes `git_commit` safe as the one mutating
-  // MCP tool.
-  const before = parseStatus(unwrap(await run('git', argv.status(), opts(repo))).stdout);
-  assert.ok(before.entries.some((e) => e.path === 'bin.dat' && e.staged === 'A'));
+test(
+  'the explicit-path assertion refuses a commit that would sweep in extra staged paths',
+  { skip: !HAS_GIT },
+  async () => {
+    // This replaces the old `commit --only commits ONLY the named paths` test,
+    // which asserted a property `--only` DOES have (it does narrow the path
+    // set) while missing the one that made it unusable: it narrows to the
+    // WORKING TREE, not the index (R6 — argv.ts, staged.ts, rpc.ts DELTA 7).
+    //
+    // The containment promise is unchanged in strength: asking to commit
+    // `a.txt` while `bin.dat` is also staged is REFUSED rather than quietly
+    // narrowed, so nothing the caller did not name can reach a commit.
+    // Two staged paths, one of which the caller will fail to name. (The
+    // fixture's own `bin.dat` is no longer available as the second path: the
+    // preceding test commits the INDEX, which now legitimately includes it.)
+    await writeFile(join(repo, 'a.txt'), 'hello\nmore\nand more\nagain\n');
+    await writeFile(join(repo, 'unnamed.txt'), 'the caller will not mention me\n');
+    unwrap(await run('git', argv.add(['a.txt', 'unnamed.txt']), opts(repo)));
 
-  await writeFile(join(repo, 'a.txt'), 'hello\nmore\nand more\nagain\n');
-  unwrap(await run('git', argv.commit({ paths: ['a.txt'], message: 'only a.txt\n' }), opts(repo)));
+    const staged = await readStagedPaths(repo);
+    assert.ok(staged.ok === true);
+    assert.deepEqual([...staged.paths].sort(), ['a.txt', 'unnamed.txt']);
 
-  const afterStatus = parseStatus(unwrap(await run('git', argv.status(), opts(repo))).stdout);
-  assert.ok(
-    afterStatus.entries.some((e) => e.path === 'bin.dat' && e.staged === 'A'),
-    'bin.dat must still be staged — --only must not sweep it into the commit'
-  );
-});
+    const mismatch = await assertStagedSetMatches(repo, ['a.txt']);
+    assert.ok(mismatch, 'asking for a.txt alone must be refused');
+    assert.equal(mismatch.reason, 'staged-set-mismatch');
+    assert.match(mismatch.message, /unnamed\.txt/);
+
+    // Nothing was committed by the refusal.
+    const stillStaged = await readStagedPaths(repo);
+    assert.ok(stillStaged.ok === true);
+    assert.deepEqual([...stillStaged.paths].sort(), ['a.txt', 'unnamed.txt']);
+
+    // Naming the whole staged set is accepted, and the commit records the
+    // INDEX — which is the whole point.
+    assert.equal(await assertStagedSetMatches(repo, ['unnamed.txt', 'a.txt']), null);
+    unwrap(await run('git', argv.commit({ message: 'only a.txt\n' }), opts(repo)));
+
+    const afterStatus = parseStatus(unwrap(await run('git', argv.status(), opts(repo))).stdout);
+    assert.equal(
+      afterStatus.entries.some((e) => e.path === 'unnamed.txt'),
+      false,
+      'unnamed.txt was named on the second attempt, so it committed'
+    );
+  }
+);
 
 test('commit detail: body, trailers, signature status', { skip: !HAS_GIT }, async () => {
   const headSha = unwrap(await run('git', argv.revParseVerify('HEAD'), opts(repo))).stdout.trim();
@@ -372,3 +406,49 @@ test('a missing binary is `gh-missing`, never a crash', { skip: !HAS_GIT }, asyn
     assert.equal(res.reason, 'gh-missing');
   }
 });
+
+test(
+  'R6 REGRESSION · an `MM` file commits its INDEX content, and the worktree edit survives',
+  { skip: !HAS_GIT },
+  async () => {
+    // THE bug. `git commit -F - --only -- mm.txt` recorded B2 (the editor's
+    // unsaved-to-index content) while the pkg's staged-diff pane showed B1.
+    // Reproduced by the verifier through the real sidecar before the fix.
+    const B1 = 'staged revision B1\n';
+    const B2 = 'worktree revision B2 — never staged, never reviewed\n';
+
+    // Land an original revision first, so the porcelain code really is `MM`
+    // (modified/modified) rather than `A.` (a brand-new file).
+    await writeFile(join(repo, 'mm.txt'), 'original\n');
+    unwrap(await run('git', argv.add(['mm.txt']), opts(repo)));
+    unwrap(await run('git', argv.commit({ message: 'land mm.txt\n' }), opts(repo)));
+
+    await writeFile(join(repo, 'mm.txt'), B1);
+    unwrap(await run('git', argv.add(['mm.txt']), opts(repo)));
+    await writeFile(join(repo, 'mm.txt'), B2);
+
+    // Porcelain `MM`: staged AND further modified in the worktree.
+    const st = parseStatus(unwrap(await run('git', argv.status(), opts(repo))).stdout);
+    const entry = st.entries.find((e) => e.path === 'mm.txt');
+    assert.ok(entry, 'mm.txt must be in status');
+    assert.equal(entry.staged, 'M');
+    assert.equal(entry.unstaged, 'M');
+
+    assert.equal(await assertStagedSetMatches(repo, ['mm.txt']), null);
+    unwrap(await run('git', argv.commit({ message: 'commit the index, not the worktree\n' }), opts(repo)));
+
+    const head = unwrap(
+      await run('git', argv.revParseVerify('HEAD'), opts(repo))
+    ).stdout.trim();
+    const showed = spawnSync('git', ['show', `${head}:mm.txt`], { cwd: repo, encoding: 'utf8' });
+    assert.equal(showed.status, 0);
+    assert.equal(showed.stdout, B1, 'HEAD must hold the STAGED content B1, not B2');
+
+    // …and the user's unstaged edit is still sitting in the worktree.
+    const after = parseStatus(unwrap(await run('git', argv.status(), opts(repo))).stdout);
+    const still = after.entries.find((e) => e.path === 'mm.txt');
+    assert.ok(still, 'mm.txt must still be dirty');
+    assert.equal(still.staged, '.');
+    assert.equal(still.unstaged, 'M');
+  }
+);

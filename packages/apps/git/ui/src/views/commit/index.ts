@@ -17,16 +17,33 @@
 // same operation with the same containment story, not two different ones
 // that happen to agree today.
 //
-// ── "Send to your Chi" ──────────────────────────────────────────────────────
-// `sendToChi` (app/bridge.ts) is `host.sendToActiveSession` — the studio
-// precedent (`ikenga-pkgs/packages/apps/studio/src/studio/bridge.ts:424`).
-// It is fire-and-forget: it seeds a user turn in the active chat pane with
-// the staged diff and asks Chi to draft a message. It does not, and
-// architecturally cannot, hand a reply back into this box —
-// `host.sendToActiveSession` resolves with only `{ok, threadId}`, never the
-// assistant's text (pkg-runtime's `dispatch.js` "SEAM RATIONALE": this is
-// the ONLY agent-run seam, by design). The user reads Chi's answer in the
-// chat pane and types or pastes it into the summary field themselves.
+// ── "Send to your Chi" — what it actually does (R6) ─────────────────────────
+// It COPIES. This was written against `host.sendToActiveSession`, on the
+// strength of com.ikenga.studio calling it. That verb does not exist: the
+// shell's pkg-iframe dispatcher (`shell/src/components/pkg/
+// pkg-iframe-host.tsx`) has no case for it and the call falls through to
+// 'unknown host tool', so studio's helper is stale rather than precedent.
+// Shipping the button as-is would have reported "Sent to your Chi — check the
+// chat pane" for a message that was never delivered, which is the worst
+// available outcome: a confident lie about someone else's inbox.
+//
+// So the button builds the identical bounded diff prompt and puts it on the
+// clipboard, and the note says "Copied — paste it to your Chi". The label
+// keeps its words (the possessive is load-bearing — a Chi is personal); only
+// the promise changes to one the pkg can keep. Even once the verb lands, the
+// user still reads Chi's answer in the chat pane and puts it in the summary
+// field themselves: the seam never hands a reply back.
+// TODO(shell): host.sendToActiveSession — ikenga-hq/ikenga issue <pending>
+//
+// ── Why the Commit button is wired the way it is (R6) ───────────────────────
+// `disabled` depends on the typed message, but the `input` listener must NOT
+// repaint: a repaint replaces the <input> node mid-keystroke and the caret
+// goes with it. The original code resolved that by not repainting AND
+// computing `disabled` only at build time — so the button was computed once,
+// while `message` was still '', and stayed disabled forever. Only the Enter
+// handler worked. The fix is to touch the one property that changed:
+// `syncCommitEnabled()` recomputes `commitDisabled(...)` and assigns it to the
+// live button node. No repaint, no lost caret, no stale button.
 //
 // ── State lifetime ──────────────────────────────────────────────────────────
 // This box is created once per `mountChangesView` call and owns its own
@@ -42,7 +59,7 @@
 // rescan that clears the draft.
 
 import type { FileChange, RpcClient } from '../../app/rpc';
-import { sendToChi, type SendToChiResult } from '../../app/bridge';
+import { copyText } from '../../app/clipboard';
 import { VOCAB } from '../../vocabulary';
 import './commit.css';
 
@@ -77,7 +94,7 @@ export interface CommitBox {
   readonly root: HTMLElement;
 }
 
-type SendState = 'idle' | 'sending' | 'sent' | 'error';
+type SendState = 'idle' | 'preparing' | 'copied' | 'error';
 
 function el(tag: string, className?: string, text?: string): HTMLElement {
   const node = document.createElement(tag);
@@ -101,20 +118,25 @@ function ctxEqual(a: CommitBoxContext, b: CommitBoxContext): boolean {
   return a.staged.every((f, i) => f.path === b.staged[i]?.path);
 }
 
-function chiRefusalCopy(reason: string): string {
-  switch (reason) {
-    case 'no-host':
-      return VOCAB.changes.commitBox.chiNoHost;
-    case 'scope-denied':
-      return VOCAB.changes.commitBox.chiScopeDenied;
-    case 'no-active-session':
-      return VOCAB.changes.commitBox.chiNoActiveSession;
-    default:
-      return `${VOCAB.changes.commitBox.chiFailed}: ${reason}`;
-  }
+/**
+ * When the Commit button is disabled. THE thing the R6 UI defect got wrong:
+ * this depends on `message`, which changes on every keystroke, so it has to be
+ * re-evaluated on `input` — not once at build time.
+ *
+ * Exported so the DOM test can state the four conditions directly as well as
+ * drive them through the real node.
+ */
+export function commitDisabled(
+  ctx: CommitBoxContext,
+  message: string,
+  committing: boolean
+): boolean {
+  return (
+    committing || ctx.staged.length === 0 || ctx.conflicted > 0 || message.trim().length === 0
+  );
 }
 
-/** Builds the prompt sent to Chi: the intro line + one unified patch per
+/** Builds the prompt copied for Chi: the intro line + one unified patch per
  *  staged file, fetched over the same one-shot `rpc` the rest of Changes
  *  uses (no new host verb). Bounded — a huge staged set gets truncated
  *  rather than producing an unbounded prompt. */
@@ -163,6 +185,17 @@ export function createCommitBox(deps: CommitBoxDeps): CommitBox {
 
   const root = el('div', 'git-commit-box');
 
+  /** The LIVE Commit button of the current build. Reassigned by every
+   *  `build()`; read by `syncCommitEnabled` so a keystroke updates the node
+   *  that is actually on screen. */
+  let commitBtn: HTMLButtonElement | null = null;
+
+  /** Recompute just the Commit button's `disabled`. Cheap, caret-safe, and the
+   *  whole fix for the R6 "button never enables" defect. */
+  function syncCommitEnabled(): void {
+    if (commitBtn) commitBtn.disabled = commitDisabled(ctx, message, committing);
+  }
+
   function alive(): boolean {
     return root.isConnected;
   }
@@ -207,16 +240,16 @@ export function createCommitBox(deps: CommitBoxDeps): CommitBox {
     }
   }
 
-  async function onSendToChi(): Promise<void> {
-    if (sendState === 'sending' || ctx.staged.length === 0 || ctx.conflicted > 0) return;
-    sendState = 'sending';
+  async function onCopyForChi(): Promise<void> {
+    if (sendState === 'preparing' || ctx.staged.length === 0 || ctx.conflicted > 0) return;
+    sendState = 'preparing';
     sendError = null;
     repaint();
-    let result: SendToChiResult;
+    let copied = false;
     try {
       const prompt = await buildChiPrompt(deps, ctx);
       if (!alive()) return;
-      result = await sendToChi(prompt, 'git-commit-box');
+      copied = await copyText(prompt);
     } catch (err) {
       if (!alive()) return;
       sendState = 'error';
@@ -225,12 +258,8 @@ export function createCommitBox(deps: CommitBoxDeps): CommitBox {
       return;
     }
     if (!alive()) return;
-    if (result.ok) {
-      sendState = 'sent';
-    } else {
-      sendState = 'error';
-      sendError = chiRefusalCopy(result.reason);
-    }
+    sendState = copied ? 'copied' : 'error';
+    if (!copied) sendError = VOCAB.changes.commitBox.chiCopyFailed;
     repaint();
   }
 
@@ -245,6 +274,10 @@ export function createCommitBox(deps: CommitBoxDeps): CommitBox {
     scope.appendChild(el('span', 'git-commit-box__rule'));
     box.appendChild(scope);
 
+    // `disabled` here is the BOX-level block (no staged files, a conflict, or
+    // a commit in flight) — it gates the input and the Chi button. The Commit
+    // button additionally needs a non-empty message, which is what
+    // `commitDisabled` adds and what `syncCommitEnabled` keeps current.
     const disabled = committing || ctx.staged.length === 0 || ctx.conflicted > 0;
 
     const input = document.createElement('input');
@@ -255,10 +288,15 @@ export function createCommitBox(deps: CommitBoxDeps): CommitBox {
     input.value = message;
     input.disabled = disabled;
     input.addEventListener('input', () => {
-      // Deliberately no repaint() here — this is what lets typing survive
-      // an unrelated repaint (see the file header). The value only needs to
-      // reach `message`; the DOM node already reflects the keystroke.
+      // Still deliberately no repaint(): a repaint would replace this very
+      // <input> mid-keystroke and take the caret with it. The value only needs
+      // to reach `message` — the DOM node already reflects the keystroke — but
+      // the Commit button's `disabled` depends on `message`, so the ONE
+      // property that changed is assigned directly. Forgetting this line is
+      // the R6 defect: the button was computed once, at build time, while
+      // `message` was '' — permanently disabled, Enter the only way to commit.
       message = input.value;
+      syncCommitEnabled();
     });
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !disabled && message.trim().length > 0) void onCommit();
@@ -278,26 +316,26 @@ export function createCommitBox(deps: CommitBoxDeps): CommitBox {
     row.appendChild(note);
     row.appendChild(el('span', 'git-commit-box__spacer'));
 
-    const chiDisabled = sendState === 'sending' || ctx.staged.length === 0 || ctx.conflicted > 0;
-    const chiLabel =
-      sendState === 'sending'
-        ? V.chiSending
-        : sendState === 'sent'
-          ? V.chiSent
-          : VOCAB.changes.sendToChi;
-    row.appendChild(button(chiLabel, 'git-btn git-btn--sm git-btn--ghost', () => void onSendToChi(), chiDisabled));
+    const chiDisabled = sendState === 'preparing' || ctx.staged.length === 0 || ctx.conflicted > 0;
+    // The LABEL never changes away from "Send to your Chi" except while it is
+    // working — the outcome is reported in the note below, where it can be
+    // honest about what happened ("Copied", not "Sent").
+    const chiLabel = sendState === 'preparing' ? V.chiPreparing : VOCAB.changes.sendToChi;
+    row.appendChild(button(chiLabel, 'git-btn git-btn--sm git-btn--ghost', () => void onCopyForChi(), chiDisabled));
 
     const commitLabel = committing ? V.committing : VOCAB.changes.commit;
-    row.appendChild(
-      button(
-        commitLabel,
-        'git-btn git-btn--sm git-btn--primary',
-        () => void onCommit(),
-        disabled || message.trim().length === 0
-      )
+    commitBtn = button(
+      commitLabel,
+      'git-btn git-btn--sm git-btn--primary',
+      () => void onCommit(),
+      commitDisabled(ctx, message, committing)
     );
+    row.appendChild(commitBtn);
     box.appendChild(row);
 
+    if (sendState === 'copied') {
+      box.appendChild(el('div', 'git-commit-box__ok', V.chiCopied));
+    }
     if (sendError) {
       box.appendChild(el('div', 'git-commit-box__error', sendError));
     }

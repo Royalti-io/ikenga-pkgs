@@ -122,26 +122,140 @@ test('repoAheadBehind: main vs a branch cut from current HEAD, both zero, relate
   assert.ok(res.counts.mergeBase);
 });
 
-test('commitCreate: stages nothing implicitly, commits exactly the given paths, and re-reads a fresh snapshot', { skip: !HAS_GIT }, async () => {
-  await writeFile(join(repo, 'a.txt'), 'hello\ncommitted\n');
-  await writeFile(join(repo, 'untouched.txt'), 'should not be committed\n');
+test(
+  'commitCreate: `paths` is an ASSERTION — an unstaged path is refused, nothing committed',
+  { skip: !HAS_GIT },
+  async () => {
+    // This replaces a test that asserted `--only`'s behaviour ("commits
+    // exactly the given paths" by staging them implicitly from the working
+    // tree). That is the data-integrity defect: the pathspec form commits the
+    // WORKING TREE, so an agent could commit bytes nobody staged or reviewed
+    // (rpc.ts DELTA 7). `git_commit` now records the INDEX and refuses unless
+    // the staged set is exactly `paths`.
+    await writeFile(join(repo, 'a.txt'), 'hello\ncommitted\n');
+    await writeFile(join(repo, 'untouched.txt'), 'should not be committed\n');
 
-  const res = await commitCreate({
-    repo,
-    relPath: '.',
-    paths: ['a.txt'],
-    message: 'third: only a.txt',
-  });
-  assert.equal(res.ok, true);
-  if (res.ok !== true) return;
-  assert.match(res.result.sha, /^[0-9a-f]{40}$/);
-  assert.equal(res.result.snapshot.untracked, 1, 'untouched.txt must remain untracked — --only');
-  assert.equal(res.result.snapshot.unstaged, 0);
-  assert.equal(res.result.snapshot.staged, 0);
+    const headBefore = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' })
+      .stdout.trim();
 
-  const log = spawnSync('git', ['log', '-1', '--format=%s'], { cwd: repo, encoding: 'utf8' });
-  assert.equal(log.stdout.trim(), 'third: only a.txt');
-});
+    const refused = await commitCreate({
+      repo,
+      relPath: '.',
+      paths: ['a.txt'],
+      message: 'third: only a.txt',
+    });
+    assert.ok(isGitError(refused));
+    if (isGitError(refused)) {
+      assert.equal(refused.reason, 'staged-set-mismatch');
+      assert.match(refused.message, /requested but not staged: a\.txt/);
+    }
+    assert.equal(
+      spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim(),
+      headBefore,
+      'the refusal must not have committed anything'
+    );
+
+    // Stage it, and the same call succeeds.
+    raw(['add', 'a.txt'], repo);
+    const res = await commitCreate({
+      repo,
+      relPath: '.',
+      paths: ['a.txt'],
+      message: 'third: only a.txt',
+    });
+    assert.equal(res.ok, true);
+    if (res.ok !== true) return;
+    assert.match(res.result.sha, /^[0-9a-f]{40}$/);
+    assert.equal(
+      res.result.snapshot.untracked,
+      1,
+      'untouched.txt stayed untracked — it was never staged, so it could not ride along'
+    );
+    assert.equal(res.result.snapshot.unstaged, 0);
+    assert.equal(res.result.snapshot.staged, 0);
+
+    const log = spawnSync('git', ['log', '-1', '--format=%s'], { cwd: repo, encoding: 'utf8' });
+    assert.equal(log.stdout.trim(), 'third: only a.txt');
+  }
+);
+
+test(
+  'commitCreate: an unnamed staged path is refused rather than swept into the commit',
+  { skip: !HAS_GIT },
+  async () => {
+    await writeFile(join(repo, 'named.txt'), 'named\n');
+    await writeFile(join(repo, 'unnamed.txt'), 'never mentioned by the caller\n');
+    raw(['add', 'named.txt', 'unnamed.txt'], repo);
+
+    const headBefore = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' })
+      .stdout.trim();
+    const refused = await commitCreate({
+      repo,
+      relPath: '.',
+      paths: ['named.txt'],
+      message: 'should not happen',
+    });
+    assert.ok(isGitError(refused));
+    if (isGitError(refused)) {
+      assert.equal(refused.reason, 'staged-set-mismatch');
+      assert.match(refused.message, /also staged: unnamed\.txt/);
+    }
+    assert.equal(
+      spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim(),
+      headBefore
+    );
+
+    // Naming both is accepted.
+    const ok = await commitCreate({
+      repo,
+      relPath: '.',
+      paths: ['unnamed.txt', 'named.txt'],
+      message: 'both, named explicitly',
+    });
+    assert.equal(ok.ok, true);
+  }
+);
+
+test(
+  'R6 REGRESSION · git_commit on an `MM` file records the INDEX content',
+  { skip: !HAS_GIT },
+  async () => {
+    // The defect, at the MCP boundary — worse here than in the UI, because the
+    // caller is an agent that never looked at the file.
+    const B1 = 'staged revision B1\n';
+    const B2 = 'worktree revision B2 — never staged, never reviewed\n';
+
+    await writeFile(join(repo, 'mm.txt'), 'original\n');
+    raw(['add', 'mm.txt'], repo);
+    raw(['commit', '-q', '-m', 'land mm.txt'], repo);
+
+    await writeFile(join(repo, 'mm.txt'), B1);
+    raw(['add', 'mm.txt'], repo);
+    await writeFile(join(repo, 'mm.txt'), B2);
+
+    const res = await commitCreate({
+      repo,
+      relPath: '.',
+      paths: ['mm.txt'],
+      message: 'index, not worktree',
+    });
+    assert.equal(res.ok, true);
+    if (res.ok !== true) return;
+
+    const showed = spawnSync('git', ['show', `${res.result.sha}:mm.txt`], {
+      cwd: repo,
+      encoding: 'utf8',
+    });
+    assert.equal(showed.status, 0);
+    assert.equal(showed.stdout, B1, 'HEAD must hold B1 (the staged content), not B2');
+
+    const short = spawnSync('git', ['status', '--short', '--', 'mm.txt'], {
+      cwd: repo,
+      encoding: 'utf8',
+    });
+    assert.equal(short.stdout, ' M mm.txt\n', 'the unstaged edit must survive the commit');
+  }
+);
 
 test('commitCreate: an empty path list is refused (MCP never commits "whatever is staged")', { skip: !HAS_GIT }, async () => {
   const res = await commitCreate({ repo, relPath: '.', paths: [], message: 'x' });

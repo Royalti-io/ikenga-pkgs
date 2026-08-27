@@ -37,6 +37,7 @@ import { tmpdir } from 'node:os';
 import { readFile } from 'node:fs/promises';
 import {
   argv,
+  assertStagedSetMatches,
   DEFAULT_DIFF_MAX_BYTES,
   GH_AUTH_STATUS_ARGV,
   GH_VERSION_ARGV,
@@ -546,11 +547,26 @@ export const handlers = {
         );
       }
 
-      // `-F -` keeps the message off argv entirely; `--only <paths>` commits
-      // exactly the listed paths and nothing else that happens to be staged.
-      // Both are what make this safe enough to be the ONE mutating MCP tool.
+      // THE EXPLICIT-PATH ASSERTION (G-04, rpc.ts DELTA 7). `git commit`
+      // records the INDEX; `args.paths` is the caller's claim about what the
+      // index holds, and a claim that is wrong means the user is about to
+      // commit something they did not review. Refuse, do not narrow: the
+      // narrowing form (`--only -- <paths>`) commits the WORKING TREE of those
+      // paths, which is exactly how an `MM` file used to commit its unstaged
+      // edit. Read fresh here rather than reusing `before.snapshot` — the
+      // snapshot is a moment old and another agent stages into these repos.
+      if (args.paths.length > 0) {
+        const mismatch = await assertStagedSetMatches(repo, args.paths);
+        if (mismatch) return mismatch;
+      }
+      // `paths: []` is the UI-only "commit whatever is staged" affordance
+      // (rpc.ts `CommitCreateArgs`); there is no claim to check. The MCP tool's
+      // own schema forbids the empty list, so `git_commit` always asserts.
+
+      // `-F -` keeps the message off argv entirely — a commit message is
+      // multi-line free text that may begin with `-`.
       const committed = await withIndexLockRetry(() =>
-        run('git', argv.commit({ paths: args.paths, message: args.message }), { cwd: repo })
+        run('git', argv.commit({ message: args.message }), { cwd: repo })
       );
       if (committed.ok !== true) return committed;
 

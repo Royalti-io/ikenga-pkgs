@@ -52,12 +52,16 @@ export const VOCAB = {
       signed: 'Signed',
       unsigned: 'Not signed',
       commitFailed: 'Couldn’t commit',
-      chiSending: 'Sending…',
-      chiSent: 'Sent to your Chi — check the chat pane',
-      chiFailed: 'Couldn’t reach your Chi',
-      chiNoHost: 'Open this pkg inside Ikenga to use your Chi',
-      chiScopeDenied: 'This pkg needs the engine permission to reach your Chi',
-      chiNoActiveSession: 'Open a chat pane first, then try again',
+      // ── "Send to your Chi" (R6) ─────────────────────────────────────────
+      // The button label stays "Send to your Chi" (the possessive is
+      // load-bearing — a Chi is personal), but the shell has no
+      // `host.sendToActiveSession` dispatcher case, so the pkg cannot seed a
+      // turn in the chat pane. It builds the same prompt and puts it on the
+      // clipboard; the copy says so plainly rather than implying a delivery
+      // that did not happen. See views/commit/index.ts §"Send to your Chi".
+      chiPreparing: 'Preparing…',
+      chiCopied: 'Copied — paste it to your Chi',
+      chiCopyFailed: 'Couldn’t copy — select the prompt below and copy it yourself',
       chiPromptIntro: (repo: string, branch: string) =>
         `Draft a one-line commit message (Conventional Commits style, no trailing period) for the staged changes below in ${repo} (${branch}).`,
       chiPromptTruncated: '[diff truncated for length]',

@@ -19,7 +19,9 @@ builders that emit `string[]` and take no caller-supplied flags, `--` before
 every pathspec, `^-` / NUL / absolute / `..` rejection, and a forbidden-flag
 rescan of every finished argv. `--no-optional-locks` and `--literal-pathspecs`
 ride on every invocation; commit messages go on stdin via `-F -` so no message
-ever reaches argv; `commit --only` commits exactly the named paths.
+ever reaches argv; `commit` records the INDEX (`git commit -F -`, no
+pathspec — a pathspec would commit the working tree instead) and the explicit
+path list is enforced as an assertion in `core/src/staged.ts`.
 
 `core/src/env.ts` builds each child env clear-first — `IKENGA_*` and git's
 repo-targeting/config-injection variables dropped, `GIT_TERMINAL_PROMPT=0`

@@ -67,7 +67,9 @@ test('verification 6 · pathspec `--upload-pack=touch /tmp/pwn` is rejected', ()
   // `add` would leave `commit`, `reset` and `diff` open.
   assert.equal(err(argv.add([payload])).reason, 'unsafe-argument');
   assert.equal(err(argv.resetPaths([payload])).reason, 'unsafe-argument');
-  assert.equal(err(argv.commit({ paths: [payload], message: 'm' })).reason, 'unsafe-argument');
+  // NOT `commit`: as of the R6 index-semantics fix it takes no pathspec at
+  // all (`git commit -F -` records the index — argv.ts). Its containment moved
+  // to `assertStagedSetMatches`, tested in staged.test.ts.
   assert.equal(
     err(argv.diffPatch({ side: 'unstaged', path: payload })).reason,
     'unsafe-argument'
@@ -147,11 +149,6 @@ test('rule 3 · every builder that takes a pathspec emits `--` before it', () =>
   const cases: { name: string; res: ArgvResult; paths: string[] }[] = [
     { name: 'add', res: argv.add(['a.txt', 'b/c.txt']), paths: ['a.txt', 'b/c.txt'] },
     { name: 'resetPaths', res: argv.resetPaths(['a.txt']), paths: ['a.txt'] },
-    {
-      name: 'commit',
-      res: argv.commit({ paths: ['a.txt'], message: 'm' }),
-      paths: ['a.txt'],
-    },
     {
       name: 'diffPatch',
       res: argv.diffPatch({ side: 'staged', path: 'a.txt' }),
@@ -275,6 +272,7 @@ function allBuilders(): { name: string; res: ArgvResult }[] {
     { name: 'status(ignored)', res: argv.status({ includeIgnored: true }) },
     { name: 'statusOfPath', res: argv.statusOfPath('shell') },
     { name: 'diffNumstat', res: argv.diffNumstat({ cached: true }) },
+    { name: 'diffCachedNameOnly', res: argv.diffCachedNameOnly() },
     { name: 'diffPatch', res: argv.diffPatch({ side: 'unstaged', path: 'a.txt' }) },
     { name: 'commitPatch', res: argv.commitPatch({ sha, path: 'a.txt' }) },
     { name: 'log', res: argv.log({ ref: 'main', limit: 500, skip: 200 }) },
@@ -290,8 +288,7 @@ function allBuilders(): { name: string; res: ArgvResult }[] {
     { name: 'revParseVerify', res: argv.revParseVerify('main') },
     { name: 'add', res: argv.add(['a.txt']) },
     { name: 'resetPaths', res: argv.resetPaths(['a.txt']) },
-    { name: 'commit', res: argv.commit({ paths: ['a.txt'], message: 'm' }) },
-    { name: 'commit(staged)', res: argv.commit({ paths: [], message: 'm' }) },
+    { name: 'commit', res: argv.commit({ message: 'm' }) },
     { name: 'branchCreate', res: argv.branchCreate({ name: 'feat/x', startPoint: 'main' }) },
     { name: 'checkout', res: argv.checkout({ name: 'main' }) },
     { name: 'checkoutNewBranch', res: argv.checkoutNewBranch({ name: 'feat/x' }) },
@@ -358,7 +355,7 @@ test('commit puts the message on stdin, never in argv', () => {
   // A commit message is multi-line free text that can begin with `-`. Passing
   // it via `-F -` removes it from argv entirely.
   const nasty = '--amend\n\nnot really a flag\n';
-  const res = argv.commit({ paths: ['a.txt'], message: nasty });
+  const res = argv.commit({ message: nasty });
   assert.ok(res.ok === true);
   assert.equal(res.stdin, nasty);
   assert.equal(res.argv.includes(nasty), false);
@@ -367,18 +364,26 @@ test('commit puts the message on stdin, never in argv', () => {
     false,
     'no fragment of the message reached argv'
   );
-  assert.deepEqual(res.argv.slice(-5), ['-F', '-', '--only', '--', 'a.txt']);
-  assert.ok(res.argv.includes('--only'), 'commit with paths must use --only');
+  assert.deepEqual(res.argv.slice(-3), ['commit', '-F', '-']);
 });
 
-test('commit with no paths omits --only (commit what is staged)', () => {
-  const built = ok(argv.commit({ paths: [], message: 'm' }));
-  assert.equal(built.includes('--only'), false);
-  assert.equal(built.includes(PATHSPEC_SEPARATOR), false);
+test('commit NEVER emits a pathspec — it records the index (R6, DELTA 7)', () => {
+  // The regression guard for the data-integrity bug. `git commit -- <paths>`
+  // and its explicit spelling `--only` commit the WORKING TREE content of
+  // those paths and ignore the index, so an `MM` file committed the edit the
+  // user had NOT staged and had never seen in the staged-diff pane. There is
+  // no argument that can put a path in this argv any more; "explicit paths"
+  // is `assertStagedSetMatches` (staged.test.ts).
+  const built = ok(argv.commit({ message: 'm' }));
+  assert.deepEqual(built.slice(-3), ['commit', '-F', '-']);
+  assert.equal(built.includes('--only'), false, 'no --only');
+  assert.equal(built.includes('--include'), false, 'no --include either');
+  assert.equal(built.includes(PATHSPEC_SEPARATOR), false, 'no pathspec separator');
+  assert.equal(built.includes('a.txt'), false);
 });
 
 test('an empty commit message is refused', () => {
-  assert.equal(err(argv.commit({ paths: ['a.txt'], message: '' })).reason, 'unsafe-argument');
+  assert.equal(err(argv.commit({ message: '' })).reason, 'unsafe-argument');
 });
 
 test('stage/unstage refuse an empty path list — there is no "stage all"', () => {

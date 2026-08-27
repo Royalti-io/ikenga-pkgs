@@ -23,6 +23,13 @@
 // Round-by-round changes:
 //   - Round 3: built fresh (WP-01). Divergences from the studio precedent and
 //     refinements beyond 01-plan.md are listed under "DELTAS" below.
+//   - Round 6: MINIMAL G-RPC REOPEN (WP-10 fix). ONE added error reason —
+//     `staged-set-mismatch` (DELTA 7). Nothing else changed: no method name,
+//     no arg shape, no result shape, no notification. Adding a member to the
+//     reason union is additive for producers and forces no consumer change
+//     (every consumer already renders `GitError.message` for reasons it does
+//     not special-case), so the re-sync is: git-core (produces it), sidecar +
+//     MCP (call the assertion), UI (renders the message it already renders).
 //
 // DELTAS vs 01-plan.md / the studio precedent — read before landing:
 //   1. Error key is `reason`, NOT studio's `error` (`sidecars/project/src/
@@ -57,6 +64,18 @@
 //   6. `stash.*`, `gh.*` PR verbs, and every entry in `NEVER_EXPOSE` are absent
 //      by construction — absence IS the enforcement (01-plan.md §MCP threat
 //      model).
+//   7. `staged-set-mismatch` (R6). 01-plan.md §MCP threat model says
+//      `git_commit` "commits only the explicit path list", and the first
+//      implementation read that as `git commit --only -- <paths>`. That is
+//      WRONG in a way that loses data: with a pathspec, `commit` records the
+//      WORKING TREE content of those paths and ignores the index, so a file
+//      staged at revision B1 and then edited to B2 in the editor commits B2 —
+//      the user commits something they never reviewed, and the pkg's own
+//      staged-diff view was a lie. The contract is now: `commit` records the
+//      INDEX (`git commit -F -`, no pathspec), and "explicit paths" is an
+//      ASSERTION — the staged set must EQUAL the requested set, or this reason
+//      comes back with nothing committed. Same containment promise ("commits
+//      nothing implicitly"), enforced by refusing rather than by narrowing.
 
 import { z } from 'zod';
 
@@ -141,6 +160,16 @@ export const GIT_ERROR_REASONS = [
   /** Path belongs to a different toplevel than the target repo. Carries
    *  `path` + `ownerRepo` so the UI can offer "stage it there" as a jump. */
   'cross-repo-path',
+
+  // ── G-04 explicit-path commit (DELTA 7).
+  /** The repo's staged set is not exactly the requested path set, so
+   *  committing would record content the caller did not name — either extra
+   *  staged paths that would be swept in, or requested paths that are not
+   *  staged at all. `message` lists both sides. NOTHING was committed: this
+   *  is asserted BEFORE `git commit` runs, never repaired by narrowing the
+   *  commit, because narrowing is what `--only` did and `--only` commits the
+   *  WORKING TREE of the named paths rather than their index content. */
+  'staged-set-mismatch',
 
   // ── G-02 command construction.
   /** Arg failed Zod parse. */
@@ -797,11 +826,16 @@ const ChangesUnstageArgs = z
 const CommitCreateArgs = z
   .object({
     repo: RepoPathSchema,
-    /** Explicit path list. `commit.create` stages NOTHING implicitly: it commits
-     *  exactly these paths (`git commit -- <paths>`), which is what makes it
-     *  safe enough to be the ONE mutating MCP tool (01-plan.md §MCP threat
-     *  model). Empty array = commit what is already staged, and is allowed ONLY
-     *  from the UI — the MCP tool schema requires a non-empty list. */
+    /** Explicit path list — an ASSERTION, not a pathspec (DELTA 7). The commit
+     *  itself is always `git commit -F -`, which records the INDEX; this list
+     *  is the caller's statement of what it believes is staged, and git-core
+     *  refuses with `staged-set-mismatch` (nothing committed) unless the repo's
+     *  staged set EQUALS it. That is how `commit.create` stages nothing and
+     *  commits nothing implicitly (01-plan.md §MCP threat model) without the
+     *  `--only` pathspec form, which would silently commit the WORKING TREE of
+     *  these paths instead of their staged content. Empty array = commit what
+     *  is already staged (assertion skipped), and is allowed ONLY from the UI —
+     *  the MCP tool schema requires a non-empty list. */
     paths: z.array(PathspecSchema),
     message: CommitMessageSchema,
     /** Never set by this pkg. Present so a future Phase-4 "snapshot" mode can
