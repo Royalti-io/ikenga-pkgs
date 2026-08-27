@@ -12,7 +12,7 @@
 // TODO(shell): when `host.sendToActiveSession` lands in the dispatcher, this
 // becomes the fallback for the refusal paths ('no-active-session',
 // 'scope-denied', standalone dev) rather than the whole story —
-// ikenga-hq/ikenga issue <pending>.
+// ikenga-hq/ikenga#127.
 
 /**
  * Copy `text`, returning whether it landed. Never throws and never rejects —

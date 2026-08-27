@@ -22,7 +22,7 @@
 // clipboard.ts) and says so, and this pkg's manifest declares
 // `permissions.engine: []` — a permission that buys nothing is a permission
 // that should not be asked for.
-// TODO(shell): host.sendToActiveSession — ikenga-hq/ikenga issue <pending>
+// TODO(shell): host.sendToActiveSession — ikenga-hq/ikenga#127
 //
 // Standalone mode (no parent window, e.g. `pnpm dev` in a bare tab) resolves
 // immediately with `mode: 'standalone'`; callers branch off that rather than

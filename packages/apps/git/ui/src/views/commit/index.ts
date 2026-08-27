@@ -33,7 +33,7 @@
 // the promise changes to one the pkg can keep. Even once the verb lands, the
 // user still reads Chi's answer in the chat pane and puts it in the summary
 // field themselves: the seam never hands a reply back.
-// TODO(shell): host.sendToActiveSession — ikenga-hq/ikenga issue <pending>
+// TODO(shell): host.sendToActiveSession — ikenga-hq/ikenga#127
 //
 // ── Why the Commit button is wired the way it is (R6) ───────────────────────
 // `disabled` depends on the typed message, but the `input` listener must NOT
