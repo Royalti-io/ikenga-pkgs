@@ -362,7 +362,16 @@ execSync(`git -C ${registryDir} commit -F -`, {
   input: commitMsg,
   stdio: ['pipe', 'inherit', 'inherit'],
 });
-execSync(`git -C ${registryDir} push origin main`, { stdio: ['ignore', 'inherit', 'inherit'] });
+try {
+  execSync(`git -C ${registryDir} push origin main`, { stdio: ['ignore', 'inherit', 'inherit'] });
+} catch (err) {
+  console.error(
+    `::error title=Frozen Registry Index Hazard::Failed to push registry index updates to ${REGISTRY_REPO}. ` +
+      `Package(s) were published to npm, but ikenga-registry index update failed! ` +
+      `Check that REGISTRY_REPO_PAT secret has contents:write permissions on ${REGISTRY_REPO}.`,
+  );
+  process.exit(1);
+}
 
 console.log(`✓ registry updated: ${pkgList}`);
 

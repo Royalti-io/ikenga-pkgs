@@ -88,3 +88,7 @@ jobs:
           # index. The private key signed the manifests in the step above.
           PUBLISHER_SIGNING_PUBLIC_KEY: ${{ secrets.PUBLISHER_SIGNING_PUBLIC_KEY }}
         run: node scripts/update-registry-index.mjs
+
+      - name: Verify registry index health
+        if: steps.changesets.outputs.published == 'true'
+        run: node scripts/check-registry-stale.mjs

@@ -13,6 +13,7 @@
 		"changeset": "changeset",
 		"sync:versions": "node scripts/sync-manifest-versions.mjs",
 		"sync:versions:check": "node scripts/sync-manifest-versions.mjs --check",
+		"check:registry-stale": "node scripts/check-registry-stale.mjs",
 		"version-packages": "changeset version && node scripts/sync-manifest-versions.mjs",
 		"release": "changeset publish"
 	},
