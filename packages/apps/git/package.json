@@ -1,0 +1,45 @@
+{
+  "name": "@ikenga/pkg-git",
+  "version": "0.1.0",
+  "description": "com.ikenga.git \u2014 Git mini-app pkg (Bun sidecar + MCP + UI) that tracks every Ikenga project's repo(s), reuses the user's existing git/gh auth by shelling out rather than storing credentials, and makes agent worktrees, attribution and stale-base hazards first-class.",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ikenga-hq/ikenga-pkgs.git",
+    "directory": "packages/apps/git"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "files": [
+    "manifest.json",
+    "dist",
+    "mcp/dist",
+    "sidecar/dist",
+    "README.md"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit && npm run typecheck:ui",
+    "typecheck:ui": "cd ui && npm run typecheck",
+    "build:sidecar": "bash sidecar/build.sh",
+    "dev:sidecar": "bash sidecar/build.sh --watch",
+    "build:mcp": "bash mcp/build.sh",
+    "dev:mcp": "bash mcp/build.sh --watch",
+    "build:ui": "cd ui && npm run build",
+    "dev:ui": "cd ui && npm run dev",
+    "build": "npm run build:sidecar && npm run build:mcp && npm run build:ui",
+    "test": "node --test --import=tsx --import=./ui/src/test/register.mjs 'core/src/**/*.test.ts' 'sidecar/src/**/*.test.ts' 'mcp/src/**/*.test.ts' 'ui/src/**/*.test.ts'",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.23.0",
+    "@parcel/watcher": "^2.6.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0"
+  }
+}

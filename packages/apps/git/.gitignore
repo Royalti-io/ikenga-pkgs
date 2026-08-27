@@ -1,0 +1,22 @@
+node_modules/
+*.tsbuildinfo
+
+# Build outputs — none are tracked; `npm run build` regenerates all three.
+#
+#   dist/           the UI vite bundle (WP-06). It lives at the PKG ROOT, not
+#                   ui/dist, because the shell hardcodes an iframe pkg's
+#                   content root to `<pkg>/dist` (`pkg_content/mod.rs:493`,
+#                   `server/pkg_static.rs:211`) — a bundle anywhere else never
+#                   mounts. Same convention as com.ikenga.studio's dist/, not
+#                   the hand-authored com.ikenga.tasks dist/ pattern the WP-02
+#                   scaffold originally followed.
+#   sidecar/dist/   the bun-bundled sidecar
+#   mcp/dist/       the bun-bundled MCP server
+/dist/
+sidecar/dist/
+mcp/dist/
+
+# WP-08: `ui/tools/history-cli.ts dump` writes a snapshot of a REAL repo's log
+# here for `?live=1` dev rendering. Deliberately not tracked — a repo's history
+# moves, so a committed snapshot of it is stale by tomorrow. Regenerate it.
+ui/dev/

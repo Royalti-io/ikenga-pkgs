@@ -1,0 +1,426 @@
+/*
+ * com.ikenga.git · iframe-local styles (WP-06 skeleton)
+ *
+ * A curated subset of @ikenga/tokens' Theme A "Dusk Wood" palette, hand-kept
+ * here rather than depending on the published package — this view is a
+ * skeleton (WP-07/08/09/10 build the real designed surfaces per D-01) and
+ * pulling the full token + Tailwind chain in for it isn't worth the dep
+ * weight yet. Keys are the SAME attribute names theme.ts mirrors from the
+ * parent <html> (data-theme / data-mode), so swapping in the real package
+ * later is a drop-in — only the selectors below change, not the call sites.
+ */
+
+:root {
+  --font-body: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --text-body: 13px;
+  --text-caption: 11.5px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  /* Flat, not per-theme: --primary swings from a mid-brightness warm brown
+   *  (dark mode) to a deep one (light mode) — white text clears AA contrast
+   *  against both, so this doesn't need its own dark/light split (WP-10). */
+  --primary-fg: #fff;
+}
+
+/* Dark (default — matches Theme A Dusk Wood's warm-dark base). */
+:root,
+:root[data-mode='dark'] {
+  --bg-base: hsl(30 12% 10%);
+  --bg-raised: hsl(30 12% 13%);
+  --fg: hsl(30 20% 92%);
+  --fg-muted: hsl(30 10% 62%);
+  --border: hsl(30 10% 22%);
+  --border-soft: hsl(30 10% 17%);
+  --bg-sunken: hsl(30 12% 7%);
+  --primary: hsl(20 50% 46%);
+  --live: hsl(140 45% 50%);
+  --danger: hsl(6 65% 58%);
+  --achievement: hsl(45 70% 55%);
+  --systemic: hsl(255 45% 65%);
+}
+
+:root[data-mode='light'] {
+  --bg-base: hsl(36 30% 97%);
+  --bg-raised: #fff;
+  --fg: hsl(30 25% 14%);
+  --fg-muted: hsl(30 10% 42%);
+  --border: hsl(30 15% 85%);
+  --border-soft: hsl(30 15% 90%);
+  --bg-sunken: hsl(36 25% 93%);
+  --primary: hsl(20 50% 34%);
+  --live: hsl(140 45% 32%);
+  --danger: hsl(6 65% 42%);
+  --achievement: hsl(38 70% 38%);
+  --systemic: hsl(255 40% 48%);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--fg);
+  font: var(--text-body) / 1.45 var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+.git-app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.git-dev-banner {
+  flex: none;
+  padding: 2px var(--space-3);
+  background: var(--achievement);
+  color: var(--bg-base);
+  font: 10px/1.4 var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.git-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.git-header__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.git-repo-picker {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+}
+
+.git-repo-picker__select {
+  background: var(--bg-raised);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-2);
+  font: inherit;
+}
+
+.git-loading,
+.git-empty-inline {
+  padding: var(--space-4);
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+}
+
+.git-empty-state {
+  margin: auto;
+  max-width: 360px;
+  text-align: center;
+  padding: var(--space-4);
+}
+
+.git-empty-state__title {
+  font-size: 15px;
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+}
+
+.git-empty-state__hint {
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  margin-bottom: var(--space-3);
+}
+
+.git-empty-state__cmd-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+}
+
+.git-empty-state__cmd {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 2px var(--space-2);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+
+.git-btn {
+  background: var(--bg-raised);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 3px var(--space-3);
+  font: inherit;
+  font-size: var(--text-caption);
+  cursor: pointer;
+}
+
+.git-btn--ghost {
+  background: transparent;
+}
+
+.git-btn--primary {
+  background: var(--primary);
+  color: var(--primary-fg);
+  border-color: var(--primary);
+}
+
+.git-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.git-card {
+  margin: var(--space-3);
+  padding: var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+}
+
+.git-card--warn {
+  border-color: var(--achievement);
+}
+
+.git-card__title {
+  font-weight: 600;
+  margin-bottom: var(--space-1);
+}
+
+.git-card__hint {
+  color: var(--fg-muted);
+  font-size: var(--text-caption);
+  margin-bottom: var(--space-2);
+}
+
+.git-view {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+}
+
+.git-view--changes {
+  flex-direction: row;
+}
+
+.git-view--history,
+.git-view--branches,
+.git-view--worktrees,
+.git-view--prs {
+  flex-direction: column;
+  width: 100%;
+}
+
+.git-tree {
+  width: 260px;
+  flex: none;
+  border-right: 1px solid var(--border);
+  overflow: auto;
+  padding: var(--space-2) 0;
+}
+
+.git-tree__truncated {
+  padding: var(--space-2) var(--space-3);
+  color: var(--achievement);
+  font-size: var(--text-caption);
+}
+
+.git-tree__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 5px var(--space-3);
+  cursor: pointer;
+  font-size: var(--text-caption);
+}
+
+.git-tree__row:hover {
+  background: var(--bg-raised);
+}
+
+.git-tree__row--active {
+  background: var(--bg-raised);
+  border-left: 2px solid var(--primary);
+}
+
+.git-tree__name {
+  font-weight: 600;
+}
+
+.git-tree__branch {
+  color: var(--fg-muted);
+  font-family: var(--font-mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.git-tree__dirty {
+  color: var(--achievement);
+  font-family: var(--font-mono);
+}
+
+.git-tree__ahead-behind {
+  display: flex;
+  gap: var(--space-1);
+  font-family: var(--font-mono);
+}
+
+.git-tree__ahead {
+  color: var(--live);
+}
+
+.git-tree__behind {
+  color: var(--danger);
+}
+
+.git-view__lists {
+  flex: 1;
+  overflow: auto;
+  padding: var(--space-3);
+}
+
+.git-file-group__title {
+  font-weight: 600;
+  font-size: var(--text-caption);
+  color: var(--fg-muted);
+  margin: var(--space-3) 0 var(--space-1);
+}
+
+.git-file-group__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.git-file-row {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: 3px 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+
+.git-file-row__path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-file-row__added {
+  color: var(--live);
+  margin-right: var(--space-1);
+}
+
+.git-file-row__deleted {
+  color: var(--danger);
+}
+
+.git-history-list,
+.git-branch-list,
+.git-worktree-list {
+  list-style: none;
+  margin: 0;
+  padding: var(--space-2) var(--space-3);
+  overflow: auto;
+}
+
+.git-history-row,
+.git-branch-row,
+.git-worktree-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-caption);
+}
+
+.git-history-row__sha {
+  font-family: var(--font-mono);
+  color: var(--fg-muted);
+}
+
+.git-history-row__subject {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-history-row__meta {
+  color: var(--fg-muted);
+}
+
+.git-history-row__co-authored {
+  color: var(--systemic);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.git-branch-row--current {
+  font-weight: 600;
+}
+
+.git-branch-row__tag,
+.git-worktree-row__tag {
+  color: var(--fg-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 1px 4px;
+}
+
+.git-branch-row__ahead {
+  color: var(--live);
+}
+
+.git-branch-row__behind {
+  color: var(--danger);
+}
+
+.git-branch-row__no-upstream {
+  color: var(--fg-muted);
+  font-size: 10px;
+}
+
+.git-worktree-row__path {
+  font-family: var(--font-mono);
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.git-worktree-row__branch {
+  color: var(--fg-muted);
+}
