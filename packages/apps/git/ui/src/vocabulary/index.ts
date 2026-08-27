@@ -44,6 +44,16 @@ export const VOCAB = {
     create: 'New branch',
     checkout: 'Switch',
     inWorktree: 'checked out elsewhere',
+    inWorktreeHint: 'Already checked out in another worktree',
+    empty: 'No branches',
+    name: 'Name',
+    namePlaceholder: 'feature/…',
+    startPoint: 'Start point (defaults to HEAD)',
+    switchAfterCreate: 'Switch to it',
+    confirmSwitchHint: (name: string) =>
+      `Switching to ${name} would change files in your working tree.`,
+    confirmCreateHint: (name: string) =>
+      `Creating and switching to ${name} would change files in your working tree.`,
   },
   worktrees: {
     title: 'Worktrees',
@@ -83,5 +93,7 @@ export const VOCAB = {
     loading: 'Loading…',
     retry: 'Retry',
     stale: 'Refreshing…',
+    confirm: 'Confirm',
+    cancel: 'Cancel',
   },
 } as const;

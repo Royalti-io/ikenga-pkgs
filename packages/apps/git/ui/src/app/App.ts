@@ -13,7 +13,8 @@ import { publishMenu } from '../menu';
 import { watchProjectFreshness } from '../poll';
 import { rpc, usingMock } from './transport';
 import { renderEmptyState, renderRepoPicker, type EmptyStateReason } from '../states';
-import { renderBranches, renderChangesLists, renderChangesTree, renderHistory, renderPrs, renderWorktrees } from '../views';
+import { renderChangesLists, renderChangesTree, renderHistory, renderPrs, renderWorktrees } from '../views';
+import { mountBranchesView } from '../views/branches';
 import { VOCAB } from '../vocabulary';
 import type { ProjectRollup } from './rpc';
 
@@ -249,16 +250,13 @@ export class App {
       case 'branches': {
         const wrap = document.createElement('div');
         wrap.className = 'git-view git-view--branches';
-        wrap.appendChild(this.loadingNode());
-        rpc('branch.list', { repo: activeRepo.repo, includeRemote: false })
-          .then((res) => {
-            if (this.state.view !== 'branches' || this.state.activeRepo !== activeRepo.repo) return;
-            wrap.innerHTML = '';
-            wrap.appendChild(renderBranches(res.ok ? res.branches : []));
-          })
-          .catch(() => {
-            wrap.innerHTML = '';
-          });
+        // WP-09: the Branches view is stateful (form open, a pending G-12
+        // confirm, an in-flight submit) and owns its own render loop rather
+        // than going through App's setState — see views/branches/index.ts's
+        // header comment. `onChanged` re-scans the project after any
+        // successful mutation so the header / dirty counts / other views
+        // pick up the new branch state.
+        mountBranchesView(wrap, { repo: activeRepo.repo, rpc, onChanged: () => void this.scan() });
         return wrap;
       }
       case 'worktrees': {
