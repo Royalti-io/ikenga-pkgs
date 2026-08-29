@@ -177,6 +177,15 @@ export interface ScanResult {
  * than an arbitrary subtree — a partial view that keeps the top-level children
  * is far more useful than one that keeps a random branch of the tree.
  */
+async function pathExists(p: string): Promise<boolean> {
+  try {
+    await stat(p);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function scanForRepos(root: string, opts: ScanOptions = {}): Promise<ScanResult> {
   const maxDepth = opts.maxDepth ?? MAX_SCAN_DEPTH;
   const maxRepos = opts.maxRepos ?? MAX_REPOS;
@@ -185,12 +194,14 @@ export async function scanForRepos(root: string, opts: ScanOptions = {}): Promis
   const repos: string[] = [];
   let truncated = false;
 
-  let frontier: { dir: string; depth: number }[] = [{ dir: resolve(root), depth: 0 }];
+  let frontier: { dir: string; depth: number; insideRepo: boolean }[] = [
+    { dir: resolve(root), depth: 0, insideRepo: false },
+  ];
 
   while (frontier.length > 0) {
-    const next: { dir: string; depth: number }[] = [];
+    const next: { dir: string; depth: number; insideRepo: boolean }[] = [];
 
-    for (const { dir, depth } of frontier) {
+    for (const { dir, depth, insideRepo } of frontier) {
       if (repos.length >= maxRepos) {
         truncated = true;
         return { repos, truncated };
@@ -209,7 +220,8 @@ export async function scanForRepos(root: string, opts: ScanOptions = {}): Promis
         continue;
       }
 
-      if (entries.some((e) => e.name === '.git')) {
+      const isRepo = entries.some((e) => e.name === '.git');
+      if (isRepo) {
         repos.push(dir);
         if (repos.length >= maxRepos) {
           truncated = true;
@@ -217,10 +229,17 @@ export async function scanForRepos(root: string, opts: ScanOptions = {}): Promis
         }
       }
 
+      const nowInsideRepo = insideRepo || isRepo;
+
       if (depth >= maxDepth) {
-        // Only mark truncated if there was somewhere left to go.
-        if (entries.some((e) => e.isDir && e.name !== '.git' && !skip.has(e.name))) {
-          truncated = true;
+        // Only mark truncated if an unvisited subdirectory actually contains a .git entry
+        for (const e of entries) {
+          if (e.isDir && e.name !== '.git' && !skip.has(e.name)) {
+            if (await pathExists(join(dir, e.name, '.git'))) {
+              truncated = true;
+              break;
+            }
+          }
         }
         continue;
       }
@@ -228,7 +247,35 @@ export async function scanForRepos(root: string, opts: ScanOptions = {}): Promis
       for (const e of entries) {
         if (!e.isDir) continue;
         if (e.name === '.git' || skip.has(e.name)) continue;
-        next.push({ dir: join(dir, e.name), depth: depth + 1 });
+
+        // When inside a repo, prune deep recursion into standard code/docs trees
+        // (src, docs, tests, etc.) that are not nested Git repositories.
+        if (nowInsideRepo) {
+          const lower = e.name.toLowerCase();
+          if (
+            lower === 'src' ||
+            lower === 'docs' ||
+            lower === 'tests' ||
+            lower === 'test' ||
+            lower === 'config' ||
+            lower === 'fixtures' ||
+            lower === 'scripts' ||
+            lower === 'artifacts' ||
+            lower === 'plans' ||
+            lower === 'tasks' ||
+            lower === 'temp' ||
+            lower === 'swagger'
+          ) {
+            // Quick check if this folder itself contains a .git file/dir
+            const hasGit = await pathExists(join(dir, e.name, '.git'));
+            if (hasGit) {
+              next.push({ dir: join(dir, e.name), depth: depth + 1, insideRepo: true });
+            }
+            continue;
+          }
+        }
+
+        next.push({ dir: join(dir, e.name), depth: depth + 1, insideRepo: nowInsideRepo });
       }
     }
 

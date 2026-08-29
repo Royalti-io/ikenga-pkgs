@@ -728,6 +728,14 @@ export const RPC_METHODS = [
   'branch.checkout',
   // worktrees
   'worktree.list',
+  'worktree.add',
+  'worktree.remove',
+  // repo
+  'repo.staleBase',
+  // prs
+  'pr.list',
+  'pr.checkout',
+  'pr.create',
 ] as const;
 
 export type RpcMethod = (typeof RPC_METHODS)[number];
@@ -909,6 +917,97 @@ const BranchCheckoutArgs = z
 
 const WorktreeListArgs = z.object({ repo: RepoPathSchema }).strict();
 
+const WorktreeAddArgs = z
+  .object({
+    repo: RepoPathSchema,
+    path: PathspecSchema,
+    branch: BranchNameSchema.optional(),
+    commitish: RefSchema.optional(),
+  })
+  .strict();
+
+const WorktreeRemoveArgs = z
+  .object({
+    repo: RepoPathSchema,
+    path: PathspecSchema,
+    force: z.boolean().optional(),
+  })
+  .strict();
+
+const RepoStaleBaseArgs = z
+  .object({
+    repo: RepoPathSchema,
+    base: RefSchema.optional(),
+  })
+  .strict();
+
+export const PrCommentSchema = z.object({
+  id: z.string().optional(),
+  author: z.object({
+    login: z.string(),
+    avatarUrl: z.string().optional(),
+  }),
+  body: z.string(),
+  createdAt: z.string(),
+});
+export type PrComment = z.infer<typeof PrCommentSchema>;
+
+export const PrLabelSchema = z.object({
+  name: z.string(),
+  color: z.string().optional(),
+  description: z.string().optional(),
+});
+export type PrLabel = z.infer<typeof PrLabelSchema>;
+
+export const PrSummarySchema = z.object({
+  number: z.number().int().positive(),
+  title: z.string(),
+  author: z.object({
+    login: z.string(),
+    name: z.string().optional(),
+    avatarUrl: z.string().optional(),
+  }),
+  state: z.enum(['OPEN', 'CLOSED', 'MERGED']),
+  headRefName: z.string(),
+  baseRefName: z.string(),
+  isDraft: z.boolean(),
+  url: z.string(),
+  updatedAt: z.string(),
+  reviewDecision: z.string().nullable().optional(),
+  body: z.string().optional(),
+  comments: z.array(PrCommentSchema).optional(),
+  labels: z.array(PrLabelSchema).optional(),
+  additions: z.number().optional(),
+  deletions: z.number().optional(),
+  changedFiles: z.number().optional(),
+});
+export type PrSummary = z.infer<typeof PrSummarySchema>;
+
+const PrListArgs = z
+  .object({
+    repo: RepoPathSchema,
+    state: z.enum(['open', 'closed', 'merged', 'all']).optional(),
+    limit: z.number().int().positive().optional(),
+  })
+  .strict();
+
+const PrCheckoutArgs = z
+  .object({
+    repo: RepoPathSchema,
+    number: z.number().int().positive(),
+  })
+  .strict();
+
+const PrCreateArgs = z
+  .object({
+    repo: RepoPathSchema,
+    title: z.string().min(1),
+    body: z.string(),
+    base: RefSchema.optional(),
+    draft: z.boolean().optional(),
+  })
+  .strict();
+
 // ── 4.2 Per-method result schemas ───────────────────────────────────────────
 
 const SystemProbeResult = rpcResult({
@@ -992,6 +1091,41 @@ const BranchMutateResult = rpcResult({
 const WorktreeListResult = rpcResult({
   repo: RepoPathSchema,
   worktrees: z.array(WorktreeInfoSchema),
+});
+
+const WorktreeAddResult = rpcResult({
+  repo: RepoPathSchema,
+  path: z.string(),
+  branch: z.string().nullable(),
+});
+
+const WorktreeRemoveResult = rpcResult({
+  repo: RepoPathSchema,
+  path: z.string(),
+});
+
+const RepoStaleBaseResult = rpcResult({
+  repo: RepoPathSchema,
+  base: z.string(),
+  ahead: z.number(),
+  behind: z.number(),
+  isStale: z.boolean(),
+});
+
+const PrListResult = rpcResult({
+  repo: RepoPathSchema,
+  prs: z.array(PrSummarySchema),
+});
+
+const PrCheckoutResult = rpcResult({
+  repo: RepoPathSchema,
+  branch: z.string(),
+});
+
+const PrCreateResult = rpcResult({
+  repo: RepoPathSchema,
+  url: z.string(),
+  number: z.number().int().positive(),
 });
 
 // ── 4.3 The registry — ONE place, exhaustiveness-checked ────────────────────
@@ -1185,6 +1319,54 @@ export const RpcSpec = {
     tier: 'safe',
     mcp: 'git_worktree_list',
     summary: 'Linked worktrees with lock/prunable state.',
+  },
+  'worktree.add': {
+    args: WorktreeAddArgs,
+    result: WorktreeAddResult,
+    mutating: true,
+    tier: 'safe',
+    mcp: null,
+    summary: 'Add a new linked worktree.',
+  },
+  'worktree.remove': {
+    args: WorktreeRemoveArgs,
+    result: WorktreeRemoveResult,
+    mutating: true,
+    tier: 'confirm',
+    mcp: null,
+    summary: 'Remove a linked worktree.',
+  },
+  'repo.staleBase': {
+    args: RepoStaleBaseArgs,
+    result: RepoStaleBaseResult,
+    mutating: false,
+    tier: 'safe',
+    mcp: null,
+    summary: 'Calculate ahead/behind distance relative to base branch.',
+  },
+  'pr.list': {
+    args: PrListArgs,
+    result: PrListResult,
+    mutating: false,
+    tier: 'safe',
+    mcp: null,
+    summary: 'List GitHub Pull Requests via gh CLI.',
+  },
+  'pr.checkout': {
+    args: PrCheckoutArgs,
+    result: PrCheckoutResult,
+    mutating: true,
+    tier: 'safe',
+    mcp: null,
+    summary: 'Checkout a GitHub Pull Request branch locally via gh CLI.',
+  },
+  'pr.create': {
+    args: PrCreateArgs,
+    result: PrCreateResult,
+    mutating: true,
+    tier: 'safe',
+    mcp: null,
+    summary: 'Create a new GitHub Pull Request via gh CLI.',
   },
 } satisfies Record<RpcMethod, MethodSpec>;
 

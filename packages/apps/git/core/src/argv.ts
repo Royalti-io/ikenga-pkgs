@@ -80,6 +80,8 @@ export const ALLOWED_SUBCOMMANDS = [
   'merge-base',
   'stash',
   'fetch',
+  'pr',
+  'auth',
 ] as const;
 export type AllowedSubcommand = (typeof ALLOWED_SUBCOMMANDS)[number];
 
@@ -89,7 +91,7 @@ export type AllowedSubcommand = (typeof ALLOWED_SUBCOMMANDS)[number];
  * `worktree remove` and `stash drop` are both on the never-in-v1 list.
  */
 export const SUBCOMMAND_VERBS: Readonly<Partial<Record<AllowedSubcommand, readonly string[]>>> = {
-  worktree: ['list'],
+  worktree: ['list', 'add', 'remove'],
   stash: ['create'],
 };
 
@@ -267,14 +269,14 @@ export function assertArgvSafe(argv: readonly string[]): GitError | null {
 }
 
 /** Run the final gate, then hand back the argv. Every builder ends with this. */
-function finish(argv: string[], stdin?: string): ArgvResult {
+export function finish(argv: string[], stdin?: string): ArgvResult {
   const err = assertArgvSafe(argv);
   if (err) return err;
   return stdin === undefined ? { ok: true, argv } : { ok: true, argv, stdin };
 }
 
 /** `[...GLOBALS, ...rest]`. */
-function g(...rest: (string | number)[]): string[] {
+export function g(...rest: (string | number)[]): string[] {
   return [...GLOBALS, ...rest.map(String)];
 }
 
@@ -441,6 +443,35 @@ export function branchList(opts: { includeRemote?: boolean } = {}): ArgvResult {
 /** `git worktree list --porcelain -z` (02-research-external.md [18]). */
 export function worktreeList(): ArgvResult {
   return finish(g('worktree', 'list', '--porcelain', '-z'));
+}
+
+/** `git worktree add <path> [commitish]`. */
+export function worktreeAdd(opts: { path: string; commitish?: string; branch?: string }): ArgvResult {
+  const pathErr = check(PathspecSchema, opts.path, 'path');
+  if (pathErr) return pathErr;
+  const argv = g('worktree', 'add');
+  if (opts.branch) {
+    const branchErr = checkRef(opts.branch, 'branch');
+    if (branchErr) return branchErr;
+    argv.push('-b', opts.branch);
+  }
+  argv.push(opts.path);
+  if (opts.commitish) {
+    const commitErr = checkRef(opts.commitish, 'commitish');
+    if (commitErr) return commitErr;
+    argv.push(opts.commitish);
+  }
+  return finish(argv);
+}
+
+/** `git worktree remove [--force] <path>`. */
+export function worktreeRemove(opts: { path: string; force?: boolean }): ArgvResult {
+  const pathErr = check(PathspecSchema, opts.path, 'path');
+  if (pathErr) return pathErr;
+  const argv = g('worktree', 'remove');
+  if (opts.force) argv.push('--force');
+  argv.push(opts.path);
+  return finish(argv);
 }
 
 /** `git rev-list --left-right --count <base>...<head>` → `<behind>\t<ahead>`. */

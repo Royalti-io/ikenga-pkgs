@@ -32,11 +32,13 @@
 // Every async continuation guards with `alive()` before touching the DOM.
 
 import type { FileChange, FileDiff, RpcClient } from '../../app/rpc';
+import { createResizer } from '../../components/resizer.js';
 import { VOCAB } from '../../vocabulary';
 import { renderCrossRepoCard } from '../../states';
 import { renderDiffEmpty, renderDiffSideBySide, renderDiffUnified } from './diff-render';
 import { parsePatch } from './diff-parse';
 import { createCommitBox } from '../commit';
+import { buildFileTree, countTreeFiles, type FileTreeNode } from './file-tree.js';
 import './changes.css';
 
 export interface ChangesViewDeps {
@@ -108,6 +110,10 @@ export function mountChangesView(container: HTMLElement, deps: ChangesViewDeps):
   let mutating = false;
   let mutateError: string | null = null;
   let crossRepoGuard: { path: string; ownerRepo: string } | null = null;
+  let staleInfo: { base: string; behind: number; ahead: number } | null = null;
+
+  let viewMode: 'tree' | 'flat' = (localStorage.getItem('ikenga.git.fileViewMode') as 'tree' | 'flat') || 'tree';
+  const collapsedNodes = new Set<string>();
 
   // WP-10: created once for the life of this mount so a typed-but-unsent
   // commit message survives this view's own repaints (file selection,
@@ -138,9 +144,15 @@ export function mountChangesView(container: HTMLElement, deps: ChangesViewDeps):
     loadError = null;
     repaint();
     try {
-      const res = await rpc('changes.list', { repo });
+      const [res, staleRes] = await Promise.all([
+        rpc('changes.list', { repo }),
+        rpc('repo.staleBase', { repo }).catch(() => null),
+      ]);
       if (!alive()) return;
       loading = false;
+      if (staleRes && staleRes.ok) {
+        staleInfo = { base: staleRes.base, behind: staleRes.behind, ahead: staleRes.ahead };
+      }
       if (!res.ok) {
         loadError = res.message;
         staged = [];
@@ -261,13 +273,32 @@ export function mountChangesView(container: HTMLElement, deps: ChangesViewDeps):
 
   function build(): HTMLElement {
     const root = el('div', 'git-changes');
-    root.appendChild(buildLists());
-    root.appendChild(buildInspector());
+    const lists = buildLists();
+    const inspector = buildInspector();
+    const resizer = createResizer(lists, 'changes', { minWidth: 180, maxWidth: 600, defaultWidth: 300 });
+    root.appendChild(lists);
+    root.appendChild(resizer);
+    root.appendChild(inspector);
     return root;
   }
 
   function buildLists(): HTMLElement {
     const wrap = el('div', 'git-changes__lists');
+
+    if (staleInfo && staleInfo.behind > 0) {
+      const banner = el('div', 'git-prs-stub');
+      banner.style.marginBottom = 'var(--space-3)';
+      banner.style.borderColor = '#e6a100';
+      banner.style.background = 'rgba(255, 180, 0, 0.1)';
+      banner.appendChild(
+        el(
+          'div',
+          'git-empty-inline',
+          `⚠️ Branch is ${staleInfo.behind} commit${staleInfo.behind === 1 ? '' : 's'} behind ${staleInfo.base}. Fetch or rebase to prevent conflicts.`
+        )
+      );
+      wrap.appendChild(banner);
+    }
 
     if (loading && allFiles().length === 0) {
       wrap.appendChild(el('div', 'git-empty-inline', VOCAB.common.loading));
@@ -280,6 +311,28 @@ export function mountChangesView(container: HTMLElement, deps: ChangesViewDeps):
       wrap.appendChild(el('div', 'git-empty-inline', VOCAB.changes.noChanges));
       return wrap;
     }
+
+    const toolbar = el('div', 'git-file-group__title');
+    toolbar.style.marginBottom = 'var(--space-2)';
+    toolbar.style.display = 'flex';
+    toolbar.style.alignItems = 'center';
+    toolbar.style.justifyContent = 'space-between';
+
+    const titleSpan = el('span', 'git-file-group__title-text', 'Files');
+    toolbar.appendChild(titleSpan);
+
+    const toggleBtn = button(
+      viewMode === 'tree' ? 'Tree View' : 'Flat View',
+      'git-btn git-btn--ghost git-btn--sm',
+      () => {
+        viewMode = viewMode === 'tree' ? 'flat' : 'tree';
+        localStorage.setItem('ikenga.git.fileViewMode', viewMode);
+        repaint();
+      }
+    );
+    toggleBtn.title = 'Toggle Tree View / Flat List View';
+    toolbar.appendChild(toggleBtn);
+    wrap.appendChild(toolbar);
 
     if (conflicted.length > 0) {
       wrap.appendChild(buildSection('conflicted', '', conflicted, null, VOCAB.changes.conflicted));
@@ -339,10 +392,110 @@ export function mountChangesView(container: HTMLElement, deps: ChangesViewDeps):
     }
     group.appendChild(head);
 
-    const list = el('ul', 'git-file-group__list');
-    for (const f of files) list.appendChild(buildFileRow(section, f, actionLabel));
+    const list = el('div', 'git-file-group__list');
+
+    if (viewMode === 'tree') {
+      const treeNodes = buildFileTree(files, section);
+      for (const node of treeNodes) {
+        list.appendChild(buildTreeNode(node, 0, actionLabel));
+      }
+    } else {
+      const ul = el('ul');
+      for (const f of files) ul.appendChild(buildFileRow(section, f, actionLabel));
+      list.appendChild(ul);
+    }
+
     group.appendChild(list);
     return group;
+  }
+
+  function buildTreeNode(node: FileTreeNode, depth: number, actionLabel: string): HTMLElement {
+    if (node.isDir) {
+      const isCollapsed = collapsedNodes.has(node.id);
+      const row = el('div', 'git-file-tree__node');
+      row.style.paddingLeft = `${depth * 12 + 4}px`;
+
+      const chevron = el('span', 'git-file-tree__chevron', isCollapsed ? '▶' : '▼');
+      row.appendChild(chevron);
+
+      const icon = el('span', 'git-file-tree__icon', '📁');
+      row.appendChild(icon);
+
+      const name = el('span', 'git-file-tree__folder', node.name);
+      row.appendChild(name);
+
+      const count = countTreeFiles(node.children);
+      const countBadge = el('span', 'git-file-tree__stat', String(count));
+      row.appendChild(countBadge);
+
+      row.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (isCollapsed) {
+          collapsedNodes.delete(node.id);
+        } else {
+          collapsedNodes.add(node.id);
+        }
+        repaint();
+      });
+
+      const wrap = el('div', 'git-file-tree__group');
+      wrap.appendChild(row);
+
+      if (!isCollapsed) {
+        const childrenBox = el('div', 'git-file-tree__children');
+        for (const child of node.children) {
+          childrenBox.appendChild(buildTreeNode(child, depth + 1, actionLabel));
+        }
+        wrap.appendChild(childrenBox);
+      }
+      return wrap;
+    }
+
+    // File Node
+    const f = node.file!;
+    const isSel = selection?.section === node.section && fileKey(selection.file) === fileKey(f);
+    const row = el('div', `git-file-tree__node git-file-row--clickable${isSel ? ' git-file-tree__node--active' : ''}`);
+    row.style.paddingLeft = `${depth * 12 + 16}px`;
+    row.setAttribute('role', 'button');
+    row.tabIndex = 0;
+
+    const icon = el('span', 'git-file-tree__icon', '📄');
+    row.appendChild(icon);
+
+    const name = el('span', 'git-file-row__path', node.name);
+    row.appendChild(name);
+
+    if (f.kind === 'renamed' || f.kind === 'copied') {
+      name.appendChild(el('span', 'git-file-row__rename-tag', f.kind === 'renamed' ? 'R' : 'C'));
+    }
+
+    const isMod = f.unstaged === 'M' || f.staged === 'M';
+    const isAdd = f.staged === 'A';
+    const isUntracked = f.kind === 'untracked' || node.section === 'untracked';
+    const statType = isMod ? 'modified' : isAdd ? 'added' : isUntracked ? 'untracked' : 'modified';
+    const statText = isMod ? 'M' : isAdd ? 'A' : isUntracked ? 'U' : 'M';
+    const statBadge = el('span', `git-file-tree__stat git-file-tree__stat--${statType}`, statText);
+    row.appendChild(statBadge);
+
+    if (actionLabel) {
+      const btn = button(
+        actionLabel,
+        'git-btn git-btn--ghost git-file-row__action',
+        () => {
+          void mutate(actionLabel === VOCAB.changes.stage ? 'stage' : 'unstage', [f.path]);
+        },
+        mutating
+      );
+      row.appendChild(btn);
+    }
+
+    row.addEventListener('click', () => {
+      selection = { section: node.section, file: f };
+      repaint();
+      void loadDiff(selection);
+    });
+
+    return row;
   }
 
   function buildFileRow(section: Section, f: FileChange, actionLabel: string): HTMLElement {

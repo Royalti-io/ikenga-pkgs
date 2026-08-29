@@ -43,6 +43,74 @@
   gap: var(--space-2);
 }
 
+.git-file-group__head-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.git-file-tree__node {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 3px var(--space-1);
+  margin: 0 calc(var(--space-1) * -1);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--text-caption);
+}
+
+.git-file-tree__node:hover {
+  background: var(--bg-raised);
+}
+
+.git-file-tree__node--active {
+  background: var(--bg-raised);
+  outline: 1px solid var(--primary);
+}
+
+.git-file-tree__chevron {
+  width: 12px;
+  height: 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 8px;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.git-file-tree__icon {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: var(--fg-muted);
+  flex-shrink: 0;
+}
+
+.git-file-tree__folder {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.git-file-tree__stat {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  margin-left: auto;
+  padding: 0 3px;
+}
+
+.git-file-tree__stat--modified { color: var(--achievement); }
+.git-file-tree__stat--added { color: var(--live); }
+.git-file-tree__stat--untracked { color: var(--fg-muted); }
+.git-file-tree__stat--conflicted { color: var(--danger); }
+
 .git-file-row--clickable {
   cursor: pointer;
   border-radius: var(--radius-sm);

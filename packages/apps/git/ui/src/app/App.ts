@@ -13,11 +13,14 @@ import { publishMenu } from '../menu';
 import { watchProjectFreshness } from '../poll';
 import { rpc, usingMock } from './transport';
 import { renderEmptyState, renderRepoPicker, type EmptyStateReason } from '../states';
+import { createResizer } from '../components/resizer';
 import { renderChangesTree, renderPrs, renderWorktrees } from '../views';
 import { mountBranchesView } from '../views/branches';
 import { mountChangesView } from '../views/changes';
+import { mountPrsView } from '../views/prs';
+import { mountWorktreesView } from '../views/worktrees';
 import { HistoryView } from '../views/history';
-import { VOCAB } from '../vocabulary';
+import { VOCAB, getVocab } from '../vocabulary';
 import type { ProjectRollup } from './rpc';
 
 const NO_ROOT_REASONS: readonly EmptyStateReason[] = [
@@ -38,22 +41,15 @@ interface AppState {
   emptyReason: EmptyStateReason | null;
   loading: boolean;
   ghProbe: { present: boolean; authenticated: boolean } | null;
+  mode: 'technical' | 'simplified';
 }
 
 export class App {
   private root: HTMLElement;
   private state: AppState;
-  /** Gotcha (memory `reference_pkg_subroute_deeplinks`): the shell pushes the
-   *  LAST STORED activeFeature immediately on mount, which can beat the
-   *  pathname-derived initial view. The first hostContext push loses to the
-   *  pathname view unless it agrees with it; every push after that is a real
-   *  click and applies normally. */
   private appliedInitialView = false;
-  /** WP-08. Held across renders — App rebuilds its whole subtree on every
-   *  state change, and History is stateful in a way the other views aren't:
-   *  loaded pages, the selected commit and the scroll position must survive a
-   *  `repo.changed` push. Created lazily, so a session that never opens
-   *  History never pays for it. */
+  private currentProjectId: string | null | undefined = undefined;
+  private currentProjectRoot: string | null | undefined = undefined;
   private historyView: HistoryView | null = null;
 
   constructor(root: HTMLElement) {
@@ -65,6 +61,7 @@ export class App {
       emptyReason: null,
       loading: true,
       ghProbe: null,
+      mode: 'technical',
     };
   }
 
@@ -92,6 +89,26 @@ export class App {
    *  the shell handles the click itself (host.pkg.setMenu, menu/index.ts) and
    *  re-emits the new feature id; the pkg never fires its own view change. */
   private onHostContext(ctx: GitHostContext): void {
+    const project = ctx.royaltiSuite?.activeProject;
+    const projectId = project?.id ?? null;
+    const projectRoot = project?.root ?? null;
+
+    const projectChanged =
+      this.currentProjectId !== undefined &&
+      (projectId !== this.currentProjectId || projectRoot !== this.currentProjectRoot);
+
+    this.currentProjectId = projectId;
+    this.currentProjectRoot = projectRoot;
+
+    if (projectChanged) {
+      if (this.historyView) {
+        this.historyView.dispose();
+        this.historyView = null;
+      }
+      this.setState({ activeRepo: null, rollup: null });
+      void this.scan(projectRoot);
+    }
+
     const feature = ctx.royaltiSuite?.activeFeature;
     if (!feature || !isViewId(feature)) {
       this.appliedInitialView = true;
@@ -111,7 +128,7 @@ export class App {
       }
       return;
     }
-    if (feature === this.state.view) return;
+    if (feature === this.state.view && !projectChanged) return;
     this.setState({ view: feature });
     persistView(feature);
     publishMenu(feature, this.state.rollup);
@@ -123,18 +140,19 @@ export class App {
     this.render();
   }
 
-  async scan(): Promise<void> {
+  async scan(overrideRoot?: string | null): Promise<void> {
     const ctx = getHostContext();
     const project = ctx?.royaltiSuite?.activeProject;
-    // The three input cases map 1:1 onto project.scan's args (rpc.ts):
-    //   field absent  -> undefined -> no-project
-    //   root is null  -> null      -> no-project-root
-    //   root is a path-> string    -> scan
-    const root = project === undefined ? undefined : project === null ? null : project.root;
+    const root =
+      overrideRoot !== undefined
+        ? overrideRoot
+        : (project === undefined ? undefined : project === null ? null : project.root);
 
-    this.setState({ loading: true });
+    if (!this.state.rollup) {
+      this.setState({ loading: true });
+    }
     try {
-      const res = await rpc('project.scan', { root, fresh: false });
+      const res = await rpc('project.scan', { root, fresh: true });
       if (!res.ok) {
         const reason = isEmptyStateReason(res.reason) ? res.reason : 'unreadable';
         this.setState({ loading: false, emptyReason: reason, rollup: null });
@@ -145,7 +163,25 @@ export class App {
         this.state.activeRepo && rollup.repos.some((r) => r.repo === this.state.activeRepo)
           ? this.state.activeRepo
           : (rollup.repos[0]?.repo ?? null);
-      this.setState({ loading: false, emptyReason: null, rollup, activeRepo });
+
+      const dirty = (r: { untracked: number; staged: number; unstaged: number }) =>
+        r.untracked + r.staged + r.unstaged;
+
+      const changed =
+        this.state.loading ||
+        this.state.emptyReason !== null ||
+        this.state.activeRepo !== activeRepo ||
+        !this.state.rollup ||
+        this.state.rollup.repos.length !== rollup.repos.length ||
+        this.state.rollup.repos.some(
+          (r, i) =>
+            r.repo !== rollup.repos[i]?.repo ||
+            dirty(r) !== (rollup.repos[i] ? dirty(rollup.repos[i]!) : 0)
+        );
+
+      if (changed) {
+        this.setState({ loading: false, emptyReason: null, rollup, activeRepo });
+      }
       publishMenu(this.state.view, rollup);
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -199,10 +235,26 @@ export class App {
     const header = document.createElement('div');
     header.className = 'git-header';
 
+    const vocab = getVocab(this.state.mode);
     const title = document.createElement('h1');
     title.className = 'git-header__title';
-    title.textContent = VOCAB.nav[this.state.view];
+    title.textContent = vocab.nav[this.state.view];
     header.appendChild(title);
+
+    const rightControls = document.createElement('div');
+    rightControls.style.display = 'flex';
+    rightControls.style.alignItems = 'center';
+    rightControls.style.gap = 'var(--space-2)';
+
+    const modeBtn = document.createElement('button');
+    modeBtn.type = 'button';
+    modeBtn.className = 'git-btn git-btn--ghost git-btn--sm';
+    modeBtn.textContent = this.state.mode === 'technical' ? 'Technical Mode' : 'Simplified Mode';
+    modeBtn.title = 'Switch between Technical Git terms and Simplified Versioned History mode';
+    modeBtn.addEventListener('click', () => {
+      this.setState({ mode: this.state.mode === 'technical' ? 'simplified' : 'technical' });
+    });
+    rightControls.appendChild(modeBtn);
 
     const entries = rollup.repos.map((r) => ({
       repo: r.repo,
@@ -210,9 +262,11 @@ export class App {
       relPath: r.relPath,
       dirty: r.staged + r.unstaged + r.untracked,
     }));
-    header.appendChild(
+    rightControls.appendChild(
       renderRepoPicker(entries, this.state.activeRepo, (repo) => this.setState({ activeRepo: repo }))
     );
+
+    header.appendChild(rightControls);
 
     return header;
   }
@@ -222,15 +276,12 @@ export class App {
 
     switch (this.state.view) {
       case 'changes': {
-        // WP-07: the ledger stays views/index.ts's renderChangesTree
-        // (multi-repo dirty overview, out of WP-07's file scope); the pane
-        // to its right — staged/unstaged/untracked lists, stage/unstage, the
-        // diff pane — is views/changes/'s own render loop (same shape as
-        // Branches: not retained across an App rescan, see that module's
-        // header comment for why that's an acceptable trade here).
         const wrap = document.createElement('div');
         wrap.className = 'git-view git-view--changes';
-        wrap.appendChild(renderChangesTree(rollup, activeRepo.repo, (repo) => this.setState({ activeRepo: repo })));
+        const tree = renderChangesTree(rollup, activeRepo.repo, (repo) => this.setState({ activeRepo: repo }));
+        const resizer = createResizer(tree, 'repoTree', { minWidth: 160, maxWidth: 450, defaultWidth: 240 });
+        wrap.appendChild(tree);
+        wrap.appendChild(resizer);
         const changesHost = document.createElement('div');
         changesHost.className = 'git-view__changes-host';
         wrap.appendChild(changesHost);
@@ -247,11 +298,6 @@ export class App {
       case 'history': {
         const wrap = document.createElement('div');
         wrap.className = 'git-view git-view--history';
-        // WP-08: like Branches, History owns its own render loop (paging,
-        // selection, the graph rail) rather than going through App's
-        // setState — but unlike Branches it is retained, because throwing
-        // away 600 loaded commits on every project re-scan would make the
-        // D7 push feel like a page reload.
         this.historyView ??= new HistoryView();
         this.historyView.setRepo(activeRepo.repo);
         this.historyView.mount(wrap);
@@ -260,25 +306,19 @@ export class App {
       case 'branches': {
         const wrap = document.createElement('div');
         wrap.className = 'git-view git-view--branches';
-        // WP-09: the Branches view is stateful (form open, a pending G-12
-        // confirm, an in-flight submit) and owns its own render loop rather
-        // than going through App's setState — see views/branches/index.ts's
-        // header comment. `onChanged` re-scans the project after any
-        // successful mutation so the header / dirty counts / other views
-        // pick up the new branch state.
         mountBranchesView(wrap, { repo: activeRepo.repo, rpc, onChanged: () => void this.scan() });
         return wrap;
       }
       case 'worktrees': {
         const wrap = document.createElement('div');
         wrap.className = 'git-view git-view--worktrees';
-        wrap.appendChild(renderWorktrees(activeRepo.worktrees));
+        mountWorktreesView(wrap, { repo: activeRepo.repo, rpc, onChanged: () => void this.scan() });
         return wrap;
       }
       case 'prs': {
         const wrap = document.createElement('div');
         wrap.className = 'git-view git-view--prs';
-        wrap.appendChild(renderPrs(this.state.ghProbe));
+        mountPrsView(wrap, { repo: activeRepo.repo, rpc, onChanged: () => void this.scan() });
         return wrap;
       }
     }

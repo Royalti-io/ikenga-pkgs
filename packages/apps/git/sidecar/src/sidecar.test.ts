@@ -184,6 +184,12 @@ test('every method in RPC_METHODS is dispatched, none reports methodNotFound', a
     'branch.create': { repo: root, name: 'probe/created' },
     'branch.checkout': { repo: root, name: 'main', confirm: true },
     'worktree.list': { repo: root },
+    'worktree.add': { repo: root, path: 'test-wt' },
+    'worktree.remove': { repo: root, path: 'test-wt' },
+    'repo.staleBase': { repo: root, base: 'main' },
+    'pr.list': { repo: root },
+    'pr.checkout': { repo: root, number: 1 },
+    'pr.create': { repo: root, title: 'test pr', body: 'test body' },
   };
 
   assert.equal(Object.keys(args).length, RPC_METHODS.length, 'coverage table drifted from RPC_METHODS');
