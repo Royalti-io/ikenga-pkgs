@@ -1,0 +1,19 @@
+{
+  "name": "@ikenga/pkg-sentry",
+  "version": "0.2.2",
+  "description": "Sentry webview package",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ikenga-hq/ikenga-pkgs.git",
+    "directory": "packages/apps/sentry"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "files": [
+    "manifest.json",
+    "README.md"
+  ]
+}

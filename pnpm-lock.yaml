@@ -85,6 +85,8 @@ importers:
         specifier: ^0.3.0
         version: 0.3.0
 
+  packages/apps/notion: {}
+
   packages/apps/outbound:
     devDependencies:
       '@ikenga/tokens':
@@ -102,6 +104,10 @@ importers:
       '@ikenga/tokens':
         specifier: ^0.3.0
         version: 0.3.0
+
+  packages/apps/sentry: {}
+
+  packages/apps/spotify: {}
 
   packages/apps/strategy:
     devDependencies:

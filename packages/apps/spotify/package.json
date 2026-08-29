@@ -1,0 +1,19 @@
+{
+  "name": "@ikenga/pkg-spotify",
+  "version": "0.2.2",
+  "description": "Spotify for Artists webview package",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ikenga-hq/ikenga-pkgs.git",
+    "directory": "packages/apps/spotify"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "files": [
+    "manifest.json",
+    "README.md"
+  ]
+}
