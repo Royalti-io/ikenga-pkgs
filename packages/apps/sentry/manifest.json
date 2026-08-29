@@ -4,9 +4,14 @@
   "version": "0.2.2",
   "ikenga_api": "1",
   "kind": "embedded",
-  "author": { "name": "Royalti", "key": "royalti" },
+  "author": {
+    "name": "Royalti",
+    "key": "royalti"
+  },
   "ui": {
-    "session": { "persistence": "keep" },
+    "session": {
+      "persistence": "keep"
+    },
     "nav": [
       {
         "id": "sentry.index",
@@ -28,12 +33,21 @@
   "capabilities": {
     "webview": {
       "child_webviews": true,
-      "partitions": ["persist:sentry"],
-      "allowed_origins": ["https://*.sentry.io"],
-      "engines": ["chrome"]
+      "partitions": [
+        "persist:sentry"
+      ],
+      "allowed_origins": [
+        "https://sentry.io",
+        "https://*.sentry.io"
+      ],
+      "engines": [
+        "chrome"
+      ]
     }
   },
   "permissions": {
-    "net": ["https://*.sentry.io"]
+    "net": [
+      "https://*.sentry.io"
+    ]
   }
 }
