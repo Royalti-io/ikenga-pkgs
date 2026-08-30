@@ -170,3 +170,30 @@ export const VOCAB = {
     cancel: 'Cancel',
   },
 } as const;
+
+export const SIMPLIFIED_VOCAB = {
+  ...VOCAB,
+  nav: {
+    changes: 'Drafts',
+    history: 'Version Log',
+    branches: 'Version Tracks',
+    worktrees: 'Agent Workspaces',
+    prs: 'Publish Requests',
+  },
+  changes: {
+    ...VOCAB.changes,
+    staged: 'Ready to Save',
+    unstaged: 'Working Edits',
+    untracked: 'New Files',
+    conflicted: 'Conflicting Changes',
+    stage: 'Add to Save Set',
+    unstage: 'Remove from Save Set',
+    stageAll: 'Add All to Save Set',
+    commit: 'Save Version Snapshot',
+    noChanges: 'No pending edits',
+  },
+} as const;
+
+export function getVocab(mode: 'technical' | 'simplified' = 'technical') {
+  return mode === 'simplified' ? SIMPLIFIED_VOCAB : VOCAB;
+}

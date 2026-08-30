@@ -540,6 +540,65 @@ const handlers: RpcHandlers = {
     if (!r) return notOk('repo-not-known', `${args.repo} is not a known repo root.`);
     return { ok: true, repo: args.repo, worktrees: r.snapshot.worktrees };
   },
+
+  'worktree.add': async (args: ArgsOf<'worktree.add'>): Promise<ResultOf<'worktree.add'>> => {
+    return { ok: true, repo: args.repo, path: args.path, branch: args.branch ?? null };
+  },
+
+  'worktree.remove': async (args: ArgsOf<'worktree.remove'>): Promise<ResultOf<'worktree.remove'>> => {
+    return { ok: true, repo: args.repo, path: args.path };
+  },
+
+  'repo.staleBase': async (args: ArgsOf<'repo.staleBase'>): Promise<ResultOf<'repo.staleBase'>> => {
+    return { ok: true, repo: args.repo, base: args.base ?? 'main', ahead: 0, behind: 0, isStale: false };
+  },
+
+  'pr.list': async (args: ArgsOf<'pr.list'>): Promise<ResultOf<'pr.list'>> => {
+    return {
+      ok: true,
+      repo: args.repo,
+      prs: [
+        {
+          number: 158,
+          title: 'Live Content PR Integration',
+          author: { login: 'nedjamez' },
+          state: 'OPEN',
+          headRefName: 'feat/live-content',
+          baseRefName: 'main',
+          isDraft: false,
+          url: 'https://github.com/ikenga-hq/ikenga/pull/158',
+          updatedAt: new Date().toISOString(),
+          reviewDecision: 'APPROVED',
+          body: 'This PR adds support for fetching live content directly within Ikenga workspace sessions.\n\n### Changes:\n- Added LiveContent provider\n- Integrated RPC transport',
+          comments: [
+            {
+              id: 'c1',
+              author: { login: 'reviewer' },
+              body: 'Looks great! Approved.',
+              createdAt: new Date().toISOString(),
+            },
+          ],
+          labels: [{ name: 'enhancement', color: '0e8a16' }],
+          additions: 142,
+          deletions: 38,
+          changedFiles: 8,
+        },
+      ],
+    };
+  },
+
+  'pr.checkout': async (args: ArgsOf<'pr.checkout'>): Promise<ResultOf<'pr.checkout'>> => {
+    return { ok: true, repo: args.repo, branch: `PR-${String(args.number)}` };
+  },
+
+  'pr.create': async (args: ArgsOf<'pr.create'>): Promise<ResultOf<'pr.create'>> => {
+    return {
+      ok: true,
+      repo: args.repo,
+      url: `https://github.com/ikenga-hq/ikenga/pull/199`,
+      number: 199,
+    };
+  },
 };
 
 /** `RpcClient` adapter over the handler table above, for view code that wants

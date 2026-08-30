@@ -125,6 +125,24 @@ export async function dispatch(method: RpcMethod, params: unknown): Promise<unkn
     case 'worktree.list':
       result = await handlers['worktree.list'](a as ArgsOf<'worktree.list'>);
       break;
+    case 'worktree.add':
+      result = await handlers['worktree.add'](a as ArgsOf<'worktree.add'>);
+      break;
+    case 'worktree.remove':
+      result = await handlers['worktree.remove'](a as ArgsOf<'worktree.remove'>);
+      break;
+    case 'repo.staleBase':
+      result = await handlers['repo.staleBase'](a as ArgsOf<'repo.staleBase'>);
+      break;
+    case 'pr.list':
+      result = await handlers['pr.list'](a as ArgsOf<'pr.list'>);
+      break;
+    case 'pr.checkout':
+      result = await handlers['pr.checkout'](a as ArgsOf<'pr.checkout'>);
+      break;
+    case 'pr.create':
+      result = await handlers['pr.create'](a as ArgsOf<'pr.create'>);
+      break;
     default:
       // Unreachable while every literal in `RPC_METHODS` has a case above; the
       // compiler proves it, and this line is what makes it prove it.

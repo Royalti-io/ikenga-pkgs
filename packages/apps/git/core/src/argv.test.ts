@@ -202,9 +202,7 @@ test('rule 1 · restricted subcommands are pinned to one verb', () => {
   // `worktree remove` and `stash drop` are both on the never-in-v1 list; the
   // allowlist naming only `worktree` / `stash` would let them through.
   for (const bad of [
-    ['worktree', 'remove'],
     ['worktree', 'prune'],
-    ['worktree', 'add'],
     ['stash', 'drop'],
     ['stash', 'push'],
     ['stash', 'pop'],
@@ -214,6 +212,8 @@ test('rule 1 · restricted subcommands are pinned to one verb', () => {
     assert.equal(res.reason, 'not-allowed');
   }
   assert.equal(assertArgvSafe([...GLOBALS, 'worktree', 'list', '--porcelain']), null);
+  assert.equal(assertArgvSafe([...GLOBALS, 'worktree', 'add', '/tmp/wt-test']), null);
+  assert.equal(assertArgvSafe([...GLOBALS, 'worktree', 'remove', '/tmp/wt-test']), null);
   assert.equal(assertArgvSafe([...GLOBALS, 'stash', 'create']), null);
 });
 

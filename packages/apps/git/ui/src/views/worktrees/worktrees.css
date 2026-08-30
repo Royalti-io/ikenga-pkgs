@@ -1,0 +1,101 @@
+.git-worktrees {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+  overflow: hidden;
+  background: var(--bg-base);
+  color: var(--fg-default);
+}
+
+.git-worktrees__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+}
+
+.git-worktrees__content {
+  display: flex;
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.git-worktrees__list-pane {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.git-worktree-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: 6px;
+  transition: border-color 0.15s ease;
+}
+
+.git-worktree-card:hover {
+  border-color: var(--border-strong);
+}
+
+.git-worktree-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.git-worktree-card__path {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+  font-weight: 600;
+  color: var(--fg-default);
+  word-break: break-all;
+}
+
+.git-worktree-card__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  font-size: 0.82em;
+  color: var(--fg-muted);
+}
+
+.git-worktree-badge {
+  font-size: 0.75em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-weight: 500;
+}
+
+.git-worktree-badge--main {
+  background: var(--accent-subtle);
+  color: var(--accent-fg);
+}
+
+.git-worktree-badge--locked {
+  background: rgba(255, 180, 0, 0.15);
+  color: #e6a100;
+}
+
+.git-worktree-badge--terminal {
+  background: rgba(0, 180, 255, 0.15);
+  color: #00b4ff;
+}
+
+.git-worktree-card__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-1);
+}

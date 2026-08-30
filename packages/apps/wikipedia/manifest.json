@@ -1,0 +1,43 @@
+{
+  "id": "com.ikenga.wikipedia",
+  "name": "Wikipedia",
+  "version": "0.1.0",
+  "ikenga_api": "4",
+  "kind": "embedded",
+  "author": { "name": "Royalti", "key": "royalti" },
+  "ui": {
+    "session": { "persistence": "clear-on-exit" },
+    "nav": [
+      {
+        "id": "wikipedia.index",
+        "label": "Wikipedia",
+        "icon": "book-open",
+        "section": "apps",
+        "route": "/pkg/com.ikenga.wikipedia/"
+      }
+    ],
+    "routes": [
+      {
+        "path": "/",
+        "kind": "webview",
+        "source": "https://en.wikipedia.org/",
+        "partition": "persist:wikipedia"
+      }
+    ]
+  },
+  "capabilities": {
+    "webview": {
+      "child_webviews": true,
+      "partitions": ["persist:wikipedia"],
+      "allowed_origins": [
+        "https://en.wikipedia.org",
+        "https://*.wikipedia.org",
+        "https://*.wikimedia.org"
+      ],
+      "engines": ["webkit"]
+    }
+  },
+  "permissions": {
+    "net": ["https://*.wikipedia.org", "https://*.wikimedia.org"]
+  }
+}

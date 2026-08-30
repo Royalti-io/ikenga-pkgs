@@ -33,6 +33,7 @@ import { onRepoChanged } from '../../app/bridge';
 import type { CommitSummary } from '../../app/rpc';
 import { rpc } from '../../app/transport';
 import { VOCAB } from '../../vocabulary';
+import { createResizer } from '../../components/resizer.js';
 import { renderCommitDetail } from './commit-detail';
 import { computeGraphLayout, type GraphLayout } from './graph-layout';
 import { railWidth, renderRail, ROW_HEIGHT } from './graph-rail';
@@ -137,6 +138,8 @@ export class HistoryView {
     body.appendChild(this.scrollNode);
 
     this.detailNode = el('aside', 'git-hist__detail');
+    const resizer = createResizer(this.scrollNode, 'history', { minWidth: 200, maxWidth: 800, defaultWidth: 450 });
+    body.appendChild(resizer);
     body.appendChild(this.detailNode);
     this.element.appendChild(body);
 

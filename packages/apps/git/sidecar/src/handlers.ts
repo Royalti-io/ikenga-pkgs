@@ -66,6 +66,7 @@ import {
   type RepoSnapshot,
   type RpcHandlers,
 } from '../../core/src/index.js';
+import { ghPrList, ghPrCheckout, ghPrCreate } from '../../core/src/argv-gh.js';
 import { assertPathsOwned } from './guard.js';
 import { withIndexLockRetry } from './lock.js';
 import {
@@ -763,9 +764,158 @@ export const handlers = {
     inRepo(args.repo, async (repo) => {
       const res = await run('git', argv.worktreeList(), { cwd: repo });
       if (res.ok !== true) return res;
-      // `ownerTerminalId` is always null in Phase 1 — the terminal join is
-      // G-14 / Phase 2. The field exists now so P2 does not re-freeze G-RPC.
       return { ok: true as const, repo, worktrees: parseWorktreeList(res.outcome.stdout) };
+    }),
+
+  'worktree.add': async (args) =>
+    inRepo(args.repo, async (repo) => {
+      const res = await withIndexLockRetry(() =>
+        run('git', argv.worktreeAdd({ path: args.path, commitish: args.commitish, branch: args.branch }), { cwd: repo })
+      );
+      if (res.ok !== true) return res;
+      return { ok: true as const, repo, path: args.path, branch: args.branch ?? null };
+    }),
+
+  'worktree.remove': async (args) =>
+    inRepo(args.repo, async (repo) => {
+      const res = await withIndexLockRetry(() =>
+        run('git', argv.worktreeRemove({ path: args.path, force: args.force }), { cwd: repo })
+      );
+      if (res.ok !== true) return res;
+      return { ok: true as const, repo, path: args.path };
+    }),
+
+  'repo.staleBase': async (args) =>
+    inRepo(args.repo, async (repo) => {
+      const base = args.base ?? 'main';
+      const res = await run('git', argv.revListLeftRightCount({ base }), { cwd: repo });
+      if (res.ok !== true || res.outcome.code !== 0) {
+        if (base === 'main') {
+          const fallback = await run('git', argv.revListLeftRightCount({ base: 'master' }), { cwd: repo });
+          if (fallback.ok === true && fallback.outcome.code === 0) {
+            const parts = fallback.outcome.stdout.trim().split(/\s+/);
+            const behind = Number(parts[0]) || 0;
+            const ahead = Number(parts[1]) || 0;
+            return { ok: true as const, repo, base: 'master', ahead, behind, isStale: behind > 0 };
+          }
+        }
+        return { ok: true as const, repo, base, ahead: 0, behind: 0, isStale: false };
+      }
+      const parts = res.outcome.stdout.trim().split(/\s+/);
+      const behind = Number(parts[0]) || 0;
+      const ahead = Number(parts[1]) || 0;
+      return { ok: true as const, repo, base, ahead, behind, isStale: behind > 0 };
+    }),
+
+  // ── prs ───────────────────────────────────────────────────────────────────
+
+  'pr.list': async (args) =>
+    inRepo(args.repo, async (repo) => {
+      const a = ghPrList({ state: args.state, limit: args.limit });
+      if (a.ok !== true) return a;
+      const res = await runTolerant('gh', a, { cwd: repo, timeoutMs: NETWORK_TIMEOUT_MS });
+      if (res.ok !== true) return res;
+      if (res.outcome.code !== 0) {
+        const stderr = res.outcome.stderr.trim();
+        const stdout = res.outcome.stdout.trim();
+        const errText = stderr || (stdout !== '[]' ? stdout : '');
+        return gitError('internal', `gh pr list failed: ${errText || `exit code ${res.outcome.code}`}`, {
+          exitCode: res.outcome.code,
+          stderr: errText,
+        });
+      }
+      try {
+        const raw = JSON.parse(res.outcome.stdout);
+        const prs = Array.isArray(raw)
+          ? raw.map((p: any) => ({
+              number: Number(p.number) || 1,
+              title: String(p.title ?? ''),
+              author: {
+                login: String(p.author?.login ?? 'ghost'),
+                ...(p.author?.name ? { name: String(p.author.name) } : {}),
+                ...(p.author?.avatarUrl ? { avatarUrl: String(p.author.avatarUrl) } : {}),
+              },
+              state: (p.state ? String(p.state).toUpperCase() : 'OPEN') as 'OPEN' | 'CLOSED' | 'MERGED',
+              headRefName: String(p.headRefName ?? ''),
+              baseRefName: String(p.baseRefName ?? 'main'),
+              isDraft: Boolean(p.isDraft),
+              url: String(p.url ?? ''),
+              updatedAt: String(p.updatedAt ?? new Date().toISOString()),
+              reviewDecision: p.reviewDecision && String(p.reviewDecision).trim() ? String(p.reviewDecision) : null,
+              body: String(p.body ?? ''),
+              comments: Array.isArray(p.comments)
+                ? p.comments.map((c: any) => ({
+                    id: c.id ? String(c.id) : undefined,
+                    author: {
+                      login: String(c.author?.login ?? 'ghost'),
+                      ...(c.author?.avatarUrl ? { avatarUrl: String(c.author.avatarUrl) } : {}),
+                    },
+                    body: String(c.body ?? ''),
+                    createdAt: String(c.createdAt ?? new Date().toISOString()),
+                  }))
+                : [],
+              labels: Array.isArray(p.labels)
+                ? p.labels.map((l: any) => ({
+                    name: String(l.name ?? ''),
+                    ...(l.color ? { color: String(l.color) } : {}),
+                    ...(l.description ? { description: String(l.description) } : {}),
+                  }))
+                : [],
+              additions: typeof p.additions === 'number' ? p.additions : 0,
+              deletions: typeof p.deletions === 'number' ? p.deletions : 0,
+              changedFiles: typeof p.changedFiles === 'number' ? p.changedFiles : 0,
+            }))
+          : [];
+        return { ok: true as const, repo, prs };
+      } catch (err) {
+        return gitError('internal', `Failed to parse gh pr list output: ${String(err)}`);
+      }
+    }),
+
+  'pr.checkout': async (args) =>
+    inRepo(args.repo, async (repo) => {
+      const a = ghPrCheckout({ number: args.number });
+      if (a.ok !== true) return a;
+      const res = await runTolerant('gh', a, { cwd: repo, timeoutMs: NETWORK_TIMEOUT_MS });
+      if (res.ok !== true) return res;
+      if (res.outcome.code !== 0) {
+        const stderr = res.outcome.stderr.trim();
+        const stdout = res.outcome.stdout.trim();
+        const errText = stderr || (stdout !== '[]' ? stdout : '');
+        return gitError('internal', `gh pr checkout failed: ${errText || `exit code ${res.outcome.code}`}`, {
+          exitCode: res.outcome.code,
+          stderr: errText,
+        });
+      }
+      const branchRes = await run('git', argv.branchList({}), { cwd: repo });
+      let branchName = `PR-${String(args.number)}`;
+      if (branchRes.ok === true && branchRes.outcome.code === 0) {
+        const parsed = parseBranchList(branchRes.outcome.stdout);
+        const head = parsed.find((b) => b.isHead);
+        if (head) branchName = head.name;
+      }
+      return { ok: true as const, repo, branch: branchName };
+    }),
+
+  'pr.create': async (args) =>
+    inRepo(args.repo, async (repo) => {
+      const a = ghPrCreate({ title: args.title, body: args.body, base: args.base, draft: args.draft });
+      if (a.ok !== true) return a;
+      const res = await runTolerant('gh', a, { cwd: repo, timeoutMs: NETWORK_TIMEOUT_MS });
+      if (res.ok !== true) return res;
+      if (res.outcome.code !== 0) {
+        const stderr = res.outcome.stderr.trim();
+        const stdout = res.outcome.stdout.trim();
+        const errText = stderr || (stdout !== '[]' ? stdout : '');
+        return gitError('internal', `gh pr create failed: ${errText || `exit code ${res.outcome.code}`}`, {
+          exitCode: res.outcome.code,
+          stderr: errText,
+        });
+      }
+      const url = res.outcome.stdout.trim();
+      const match = /\/pull\/(\d+)/.exec(url);
+      const number = match ? parseInt(match[1]!, 10) : 1;
+      return { ok: true as const, repo, url, number };
     }),
 } satisfies RpcHandlers;
 

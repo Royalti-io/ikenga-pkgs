@@ -1,0 +1,19 @@
+{
+  "name": "@ikenga/pkg-wikipedia",
+  "version": "0.1.0",
+  "description": "Wikipedia webview package — the native child-webview proof for Phase 1",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ikenga-hq/ikenga-pkgs.git",
+    "directory": "packages/apps/wikipedia"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "type": "module",
+  "files": [
+    "manifest.json",
+    "README.md"
+  ]
+}
