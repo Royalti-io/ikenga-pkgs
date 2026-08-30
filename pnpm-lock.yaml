@@ -227,6 +227,8 @@ importers:
         specifier: ^0.3.0
         version: 0.3.0
 
+  packages/apps/wikipedia: {}
+
   packages/engine/antigravity:
     dependencies:
       '@ikenga/contract':
