@@ -19,9 +19,29 @@
  * Implementation note: chokidar is `require`-ed dynamically and marked
  * external in the bundle. That avoids a hard typecheck dep and lets us
  * keep the node_modules resolution at runtime.
+ *
+ * Windows note (found while adding G-48's headless watcher test): chokidar
+ * glob-suffixed targets (`cells/**`) matched ZERO fs events on win32 in
+ * manual testing — chokidar's own docs call glob-based watching unreliable
+ * on Windows, and here it silently dropped every event rather than
+ * erroring. Worse: once switched to plain directory paths, handing
+ * `chokidar.watch()` an array that includes even ONE path that doesn't yet
+ * exist (e.g. a fresh project with no `anchors/` or `script.fountain`) was
+ * enough to silently kill event delivery for every OTHER target in that
+ * same call too — not just the missing one. Below we resolve `WATCH_GLOBS`
+ * to plain paths (directories watch recursively by default, so the `/**`
+ * suffix is redundant) and pass chokidar only the ones that exist at watch
+ * start; the rest are skipped with a stderr note rather than poisoning the
+ * whole group. Known trade-off: a target that doesn't exist yet (e.g. no
+ * `.studio/` until the first Chi note) won't start emitting the moment it's
+ * first created — only `storyboard.json` and `cells/` are load-bearing
+ * enough to matter for the common case (G-48; any project that opens at all
+ * already has both), and a full fix (re-`watcher.add()` a target lazily
+ * once its parent shows up) is bigger than this closer's scope.
  */
 
-import { sep } from 'node:path';
+import { existsSync } from 'node:fs';
+import { join, sep } from 'node:path';
 
 import {
   emitCellsChanged,
@@ -65,6 +85,11 @@ const WATCH_GLOBS = [
   'anchors/**',
   'blocks/**',
   'archetypes/**',
+  // Plan 25 asks for `canvas.json`; we watch the whole `.studio/` directory
+  // instead because chokidar is watching plain paths (see the header) and a
+  // directory target also survives the file being created for the first time.
+  // The canvas writer keeps its scratch file OUT of `.studio/` precisely so
+  // this stays one emit per save — see canvas.ts.
   '.studio/**',
 ];
 
@@ -132,9 +157,24 @@ export async function startWatcher(
   const chokMod: any = await import('chokidar');
   const chokidar = chokMod.default ?? chokMod;
 
-  // Resolve globs against projectRoot — chokidar accepts absolute paths
-  // directly, so we just prefix them.
-  const targets = WATCH_GLOBS.map((g) => `${projectRoot}/${g}`);
+  // Resolve WATCH_GLOBS against projectRoot as plain paths, NOT chokidar
+  // globs (see the Windows note in the file header) — directories already
+  // watch recursively by default, which is exactly what the trailing `/**`
+  // was asking for, so we strip it and hand chokidar a plain path via
+  // `join` (OS-native separators throughout, matching what `deriveCellId`
+  // expects back). Then drop any target that doesn't exist yet: one missing
+  // path in the array is enough to silently kill delivery for every OTHER
+  // target too (see file header) — pruning is strictly safer than passing
+  // it through and losing the whole watcher.
+  const candidates = WATCH_GLOBS.map((g) => join(projectRoot, g.replace(/\/\*\*$/, '')));
+  const targets = candidates.filter((t) => existsSync(t));
+  const skipped = candidates.filter((t) => !existsSync(t));
+  if (skipped.length > 0) {
+    process.stderr.write(
+      `[studio-sidecar][watcher] skipping ${skipped.length} not-yet-existing target(s) ` +
+        `(will not be live until the project is reopened): ${skipped.join(', ')}\n`,
+    );
+  }
 
   // Note on `awaitWriteFinish`: useful for noisy editors that write in
   // chunks, but it adds at least one `stabilityThreshold` worth of latency

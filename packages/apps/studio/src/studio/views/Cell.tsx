@@ -59,6 +59,7 @@ import {
   renderApi,
 } from '../mcp-client';
 import { useAsyncAction } from '../lib/use-async-action';
+import { buildDraftDoc } from '../lib/draft-doc';
 import { useShotGenerate, type RenderOpts } from '../lib/use-shot-generate';
 import { recordByUid, fmtRelative, base64ToBlob, copyText, engineLabel } from './composition/format';
 import type { CellVideoAvailability } from './composition/CellVideo';
@@ -336,55 +337,10 @@ function RenderedCellVideo({
 // not drift past it. The rendered mp4 stays authoritative wherever one exists;
 // this augments it.
 
-// All three attribute quotings, because the placeholder below only earns its
-// keep if it catches every anchor: a miss paints the broken-image glyph the
-// placeholder exists to prevent. insertAnchor emits double quotes, but the
-// editor is a plain HTML buffer a human (or a Chi) can hand-author.
-const DRAFT_ANCHOR_IMG = /<img\b[^>]*\bdata-anchor=(?:"([^"]*)"|'([^']*)'|([^\s>]*))[^>]*>/gi;
-
-// The same reasoning one step out. A plain <img src="./plate.png"> resolves
-// against nothing here, so left alone it paints the very broken-image glyph the
-// anchor placeholder exists to prevent — the frame draws it, the draft cannot.
-// A data: URI is carried BY the buffer, so it does load and must be left be.
-const DRAFT_IMG = /<img\b[^>]*>/gi;
-const DRAFT_IMG_SRC = /\bsrc=(?:"([^"]*)"|'([^']*)'|([^\s>]*))/i;
-
-function draftPlaceholder(label: string): string {
-  return `<span class="ikenga-draft-ph">&#9251; ${label}</span>`;
-}
-
-function buildDraftDoc(html: string): string {
-  // An anchor <img> carries no src until the render runner resolves it, so
-  // leaving it be paints a broken-image glyph that exists in no real frame. A
-  // labelled placeholder names what will land there instead of miming it.
-  const body = html
-    .replace(
-      DRAFT_ANCHOR_IMG,
-      (_m, dq: string | undefined, sq: string | undefined, uq: string | undefined) =>
-        draftPlaceholder(dq || sq || uq || 'anchor'),
-    )
-    // Anchors are already spans by now, so this only sees the rest.
-    .replace(DRAFT_IMG, (m) => {
-      const s = DRAFT_IMG_SRC.exec(m);
-      const src = (s?.[1] ?? s?.[2] ?? s?.[3] ?? '').trim();
-      return /^data:/i.test(src) ? m : draftPlaceholder(src || 'image');
-    });
-  // No background/colour of our own: a cell styles its own full frame, so
-  // inventing one here would paint a look the render does not produce. An
-  // unstyled cell reading as browser-default is the truthful answer.
-  return (
-    '<!doctype html><html><head><meta charset="utf-8">' +
-    '<style>' +
-    'html,body{margin:0;height:100%;background:transparent;}' +
-    'body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;}' +
-    '.ikenga-draft-ph{display:inline-flex;align-items:center;gap:6px;padding:4px 9px;' +
-    'font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;' +
-    'color:#b08340;border:1px dashed #7a5a2c;border-radius:6px;}' +
-    '</style></head><body>' +
-    body +
-    '</body></html>'
-  );
-}
+// The builder itself lives in `../lib/draft-doc` — the node canvas's live-HTML
+// node (Plan 25 ladder row 3) renders through the SAME path rather than a
+// second, weaker one of its own. `sandbox=""` below is the only sandbox value
+// that may be paired with it.
 
 function DraftPreview({ html, ready, aspect }: { html: string; ready: boolean; aspect: AspectRatio }) {
   const { w: compW, h: compH } = DEFAULT_RESOLUTION[aspect];

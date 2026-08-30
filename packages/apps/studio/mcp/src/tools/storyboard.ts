@@ -93,7 +93,7 @@ export function storyboardTools(sidecar: SidecarClient): ToolDef[] {
     {
       name: 'storyboard.write_cell_content',
       description:
-        "Persist a cell's authored source file (the FULL edited html) to its content_path and bump last_edited (the project FS watcher surfaces the change). This is the durable save seam for the cell editor.",
+        "Persist a cell's authored source file (the FULL edited html) to its content_path, atomically (tmp+rename). Does not touch storyboard.json — the project FS watcher observes the content file directly and emits a single cells/changed. This is the durable save seam for the cell editor.",
       inputSchema: {
         type: 'object',
         properties: {
@@ -212,6 +212,25 @@ export function storyboardTools(sidecar: SidecarClient): ToolDef[] {
           cellId: args.cellId,
           rung: args.rung,
           rungKey: args.rungKey,
+        }),
+    },
+    {
+      name: 'storyboard.reorder_cells',
+      description:
+        "Reassign Cell.index across the named cells, in the order given. `order` is the FULL sequence, front to back — each named cell's index becomes its position; cells not named are left untouched. One atomic write, so the watcher emits once however many ordinals moved. This is the node canvas's sequence-lane gesture (Plan 25 D-25-5); free 2D placement on the canvas is non-semantic and never calls this. Note: the exporter sorts by time.start first and index second, so this moves the board's ordinals without rewriting composition-absolute times.",
+      inputSchema: {
+        type: 'object',
+        properties: {
+          projectId: { type: 'string' },
+          order: { type: 'array', items: { type: 'string' } },
+        },
+        required: ['projectId', 'order'],
+        additionalProperties: false,
+      },
+      handler: (args) =>
+        callSidecar(sidecar, 'storyboard.reorder_cells', {
+          projectId: args.projectId,
+          order: args.order,
         }),
     },
     {

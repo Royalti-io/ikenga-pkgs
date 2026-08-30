@@ -5,21 +5,47 @@
  * beat-detect transients into a multi-track DaVinci Resolve timeline
  * or an interchangeable FCPXML/OTIO file.
  *
- * ─── Health Check (G-52) ──────────────────────────────────────────────────
- * 5-second socket health-check timeout via DaVinciResolveScript.scriptapp("Resolve").
- * Returns `RESOLVE_NOT_RUNNING` error if unreachable.
+ * ─── RPC Reachability (G-75 #1) ───────────────────────────────────────────
+ * `export.davinci_timeline` is registered in rpc.ts's EXTENDED_METHODS —
+ * the handler here existed since WP-23 but was unreachable over stdio
+ * (method-not-found) until that registration landed alongside this fix.
  *
- * ─── Frame Quantization (G-53) ───────────────────────────────────────────
- * Uses absolute position running-total quantization via `msToFrames` to
- * eliminate cumulative rounding drift.
+ * ─── Health Check (G-52 / G-75 #4) ───────────────────────────────────────
+ * 5-second async health-check via DaVinciResolveScript.scriptapp("Resolve").
+ * The spawned interpreter is given the documented Blackmagic env vars
+ * (RESOLVE_SCRIPT_API / RESOLVE_SCRIPT_LIB / PYTHONPATH) per-platform so the
+ * check can actually succeed on a default Resolve Studio install, not just
+ * on a machine where a developer hand-exported them. Returns
+ * `RESOLVE_NOT_RUNNING` error if unreachable — that failure stays fast: an
+ * absent/unreachable Resolve exits the scripting call in well under 5s.
  *
- * ─── Beat Sync Markers (G-56 / WP-24) ────────────────────────────────────
- * Ingests `downbeats` (Blue) and `onsets` (Yellow) from `audio_analysis`.
+ * ─── Frame Quantization (G-53 / G-75 #6) ─────────────────────────────────
+ * Every clip's duration is the DIFFERENCE of two absolute running-total
+ * frame boundaries (`msToFrames(end) - msToFrames(start)`), never
+ * `msToFrames(duration)` computed per cell in isolation — the latter drifts
+ * a frame in/out of alignment with the next clip's offset whenever a cell's
+ * duration doesn't itself land on a frame boundary.
+ *
+ * ─── Beat Sync Markers (G-56 / G-75 #8) ──────────────────────────────────
+ * Ingests `downbeats` (Blue "Downbeat"), `beats` (Purple "Beat"), and
+ * `onsets` (Yellow "Transient") from `audio_analysis`. Injection is gated by
+ * `enableBeatSync` (default true — matches the historical always-on
+ * behavior when the flag isn't passed).
+ *
+ * ─── FCPXML Validity (G-75 #2) ────────────────────────────────────────────
+ * Per the FCPXML DTD, `<asset-clip>` cannot carry a bare `src=` — it must
+ * `ref=` an `<asset>` declared under `<resources>` (with a `<media-rep>`).
+ * `<marker>` elements are only valid as children of a clip-like element
+ * (timed relative to that clip's local timeline), never as direct children
+ * of `<spine>`. Both are honored here: one deduped `<asset>` per source
+ * file, and markers attached to whichever asset-clip covers their absolute
+ * time (dropped, not mis-nested, if no clip covers that instant — e.g. a
+ * still-unrendered gap).
  */
 
-import { execSync, spawn } from 'node:child_process';
+import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { isAbsolute, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 import type { Project, Cell, RenderRecord } from '@ikenga/studio-schema';
@@ -38,7 +64,6 @@ export interface DaVinciExportOptions {
   cellIds?: string[];
   outputPath?: string;
   fps?: number;
-  includeAudioStems?: boolean;
   enableBeatSync?: boolean;
 }
 
@@ -53,8 +78,189 @@ export interface DaVinciExportResult extends Record<string, unknown> {
   message?: string;
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// Escaping helpers (G-75 #9)
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Escape text for use inside an XML double-quoted attribute value. */
+export function escapeXmlAttr(s: string): string {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/** Escape text for use as XML element content. */
+export function escapeXmlText(s: string): string {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 /**
- * Health check: verify DaVinci Resolve Studio is open and scripting socket is responsive (G-52).
+ * Embed a string as a Python source string literal. JSON string syntax
+ * (backslash/quote/control-char escaping) is a valid subset of Python's
+ * double-quoted string literal syntax, so `JSON.stringify` is a safe,
+ * dependency-free way to interpolate untrusted text (project titles, etc.)
+ * into generated Python source without it breaking out of the literal.
+ */
+export function pyStringLiteral(s: string): string {
+  return JSON.stringify(String(s));
+}
+
+/** Strip path separators and other filesystem-hostile characters from a
+ *  string destined for use as a single filename component. */
+export function sanitizeFilenameComponent(s: string): string {
+  return String(s)
+    .replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_')
+    .trim()
+    .replace(/\.+$/, '')
+    .slice(0, 180) || 'untitled';
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Interpreter / environment resolution (G-75 #4)
+// ─────────────────────────────────────────────────────────────────────────
+
+/** Resolve the python interpreter to spawn. Overridable via
+ *  `RESOLVE_PYTHON_BIN`; otherwise `py` on Windows (this toolchain's
+ *  convention — plain `python` is frequently absent on PATH) and `python3`
+ *  elsewhere. */
+export function resolvePythonBin(): string {
+  if (process.env.RESOLVE_PYTHON_BIN && process.env.RESOLVE_PYTHON_BIN.trim().length > 0) {
+    return process.env.RESOLVE_PYTHON_BIN;
+  }
+  return process.platform === 'win32' ? 'py' : 'python3';
+}
+
+/**
+ * Build the DaVinci Resolve scripting env vars per Blackmagic's documented
+ * defaults for each platform, layered under whatever the process env
+ * already has set (an operator's explicit `RESOLVE_SCRIPT_API` etc. always
+ * wins). Without these, `import DaVinciResolveScript` fails even when
+ * Resolve Studio is running, on a completely default install.
+ */
+export function resolveDaVinciEnv(
+  platform: NodeJS.Platform = process.platform,
+  base: NodeJS.ProcessEnv = process.env,
+): NodeJS.ProcessEnv {
+  let apiDefault: string;
+  let libDefault: string;
+  let modulesSep: string;
+
+  if (platform === 'win32') {
+    const programData = base.PROGRAMDATA || 'C:\\ProgramData';
+    const programFiles = base.ProgramFiles || 'C:\\Program Files';
+    apiDefault = join(programData, 'Blackmagic Design', 'DaVinci Resolve', 'Support', 'Developer', 'Scripting');
+    libDefault = join(programFiles, 'Blackmagic Design', 'DaVinci Resolve', 'fusionscript.dll');
+    modulesSep = ';';
+  } else if (platform === 'darwin') {
+    apiDefault = '/Library/Application Support/Blackmagic Design/DaVinci Resolve/Developer/Scripting';
+    libDefault = '/Applications/DaVinci Resolve/DaVinci Resolve.app/Contents/Libraries/Fusion/fusionscript.so';
+    modulesSep = ':';
+  } else {
+    apiDefault = '/opt/resolve/Developer/Scripting';
+    libDefault = '/opt/resolve/libs/Fusion/fusionscript.so';
+    modulesSep = ':';
+  }
+
+  const api = base.RESOLVE_SCRIPT_API && base.RESOLVE_SCRIPT_API.trim().length > 0 ? base.RESOLVE_SCRIPT_API : apiDefault;
+  const lib = base.RESOLVE_SCRIPT_LIB && base.RESOLVE_SCRIPT_LIB.trim().length > 0 ? base.RESOLVE_SCRIPT_LIB : libDefault;
+  const modulesDir = join(api, 'Modules');
+  const existingPythonPath = base.PYTHONPATH && base.PYTHONPATH.trim().length > 0 ? base.PYTHONPATH : '';
+  const pythonPath = existingPythonPath
+    ? `${existingPythonPath}${modulesSep}${modulesDir}`
+    : modulesDir;
+
+  return {
+    ...base,
+    RESOLVE_SCRIPT_API: api,
+    RESOLVE_SCRIPT_LIB: lib,
+    PYTHONPATH: pythonPath,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Async python execution (G-75 #3 — never execSync on the sidecar's single
+// event loop; RPC polls / progress notifications must never stall behind it)
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface PythonRunResult {
+  stdout: string;
+  stderr: string;
+  code: number | null;
+  timedOut: boolean;
+}
+
+/** Run a python script's SOURCE via stdin (never a temp file, matching the
+ *  prior execSync({input}) contract) with an async spawn, a hard timeout,
+ *  and a SIGTERM→SIGKILL kill escalation so a wedged/hung interpreter can
+ *  never stall the sidecar's stdio event loop. */
+export function runPythonScript(
+  pyScript: string,
+  opts: { timeoutMs: number; env: NodeJS.ProcessEnv; pythonBin?: string },
+): Promise<PythonRunResult> {
+  return new Promise((resolvePromise) => {
+    const pythonBin = opts.pythonBin ?? resolvePythonBin();
+    let child: ChildProcess;
+    try {
+      child = spawn(pythonBin, [], { stdio: ['pipe', 'pipe', 'pipe'], env: opts.env });
+    } catch {
+      resolvePromise({ stdout: '', stderr: '', code: null, timedOut: false });
+      return;
+    }
+
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    let timedOut = false;
+
+    const finish = (code: number | null) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolvePromise({ stdout, stderr, code, timedOut });
+    };
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      try {
+        child.kill('SIGTERM');
+      } catch {
+        // already exited
+      }
+      setTimeout(() => {
+        try {
+          child.kill('SIGKILL');
+        } catch {
+          // already exited
+        }
+      }, 1500);
+    }, opts.timeoutMs);
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf8');
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8');
+      if (stderr.length > 8000) stderr = stderr.slice(-8000);
+    });
+
+    child.on('error', () => finish(null));
+    child.on('close', (code) => finish(code));
+
+    try {
+      child.stdin?.write(pyScript);
+      child.stdin?.end();
+    } catch {
+      // stdin already closed / process gone — 'close'/'error' will settle us
+    }
+  });
+}
+
+/**
+ * Health check: verify DaVinci Resolve Studio is open and scripting socket
+ * is responsive (G-52). Async end-to-end — never blocks the event loop.
  */
 export async function checkResolveHealth(): Promise<boolean> {
   const pythonCheck = `
@@ -69,22 +275,82 @@ try:
 except Exception:
     sys.exit(1)
 `;
-  return new Promise((resResolve) => {
-    try {
-      const child = spawn('python', ['-c', pythonCheck], {
-        timeout: 5000,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      child.on('close', (code) => resResolve(code === 0));
-      child.on('error', () => resResolve(false));
-    } catch {
-      resResolve(false);
-    }
-  });
+  try {
+    const result = await runPythonScript(pythonCheck, {
+      timeoutMs: 5000,
+      env: resolveDaVinciEnv(),
+    });
+    return result.code === 0;
+  } catch {
+    return false;
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// FCPXML generation (G-75 #2 — valid resources/ref linkage)
+// ─────────────────────────────────────────────────────────────────────────
+
+interface QuantizedClip {
+  cell: Cell;
+  clipUri: string; // '' when no usable render (renders as a <gap>)
+  startFrame: number;
+  durationFrames: number;
+}
+
+/** G-53 quantization: every duration is the difference of two absolute
+ *  running-total frame boundaries, never a per-cell independent rounding —
+ *  the latter drifts a clip's duration out of alignment with the next
+ *  clip's offset whenever `duration_ms` doesn't land on a frame boundary. */
+function quantizeClips(
+  cells: Cell[],
+  renders: Map<string, RenderRecord>,
+  projectRoot: string,
+  fps: number,
+): { clips: QuantizedClip[]; totalFrames: number } {
+  let currentTimeMs = 0;
+  const clips: QuantizedClip[] = [];
+
+  for (const cell of cells) {
+    const record = renders.get(cell.uid);
+    const rawUri = record?.output?.uri ? resolve(projectRoot, record.output.uri) : '';
+    const clipUri = rawUri && existsSync(rawUri) ? rawUri : '';
+    const durationMs = cell.duration_ms || 3000;
+
+    const startFrame = msToFrames(currentTimeMs, fps);
+    const endFrame = msToFrames(currentTimeMs + durationMs, fps);
+    const durationFrames = Math.max(0, endFrame - startFrame);
+
+    clips.push({ cell, clipUri, startFrame, durationFrames });
+    currentTimeMs += durationMs;
+  }
+
+  return { clips, totalFrames: msToFrames(currentTimeMs, fps) };
+}
+
+interface BeatMarker {
+  frame: number;
+  label: string;
+  color: string;
+}
+
+function collectMarkers(project: Project, fps: number, enableBeatSync: boolean): BeatMarker[] {
+  if (!enableBeatSync || !project.audio_analysis) return [];
+  const { downbeats = [], beats = [], onsets = [] } = project.audio_analysis;
+  const markers: BeatMarker[] = [];
+  for (const ms of downbeats) markers.push({ frame: msToFrames(ms, fps), label: 'Downbeat', color: 'Blue' });
+  for (const ms of beats) markers.push({ frame: msToFrames(ms, fps), label: 'Beat', color: 'Purple' });
+  for (const ms of onsets) markers.push({ frame: msToFrames(ms, fps), label: 'Transient', color: 'Yellow' });
+  markers.sort((a, b) => a.frame - b.frame);
+  return markers;
 }
 
 /**
- * Generate FCPXML 1.10 representation for DaVinci Resolve import (OTIO fallback).
+ * Generate FCPXML 1.10 representation for DaVinci Resolve import (OTIO
+ * fallback). Structurally valid per the FCPXML DTD: one deduped `<asset>`
+ * (+ `<media-rep>`) per source file under `<resources>`, every
+ * `<asset-clip>` references one via `ref=`, and markers are nested inside
+ * the clip whose span covers their absolute time (never bare children of
+ * `<spine>`).
  */
 export function generateFcpxml(
   cells: Cell[],
@@ -92,58 +358,70 @@ export function generateFcpxml(
   project: Project,
   projectRoot: string,
   fps: number = DEFAULT_FPS,
+  enableBeatSync: boolean = true,
 ): string {
-  let currentTimeMs = 0;
+  const { clips, totalFrames } = quantizeClips(cells, renders, projectRoot, fps);
+  const markers = collectMarkers(project, fps, enableBeatSync);
+
+  // ── resources: one <asset> per unique source file ──
+  const assetIdByUri = new Map<string, string>();
+  let nextAssetId = 2; // r1 is the <format>
+  for (const clip of clips) {
+    if (clip.clipUri && !assetIdByUri.has(clip.clipUri)) {
+      assetIdByUri.set(clip.clipUri, `r${nextAssetId++}`);
+    }
+  }
+
+  let resourceElements = `
+    <format id="r1" name="FFVideoFormat1080p${fps}" frameDuration="1/${fps}s" width="1920" height="1080" />`;
+  for (const [uri, id] of assetIdByUri) {
+    const durationFramesForAsset = clips
+      .filter((c) => c.clipUri === uri)
+      .reduce((max, c) => Math.max(max, c.durationFrames), 1);
+    resourceElements += `
+    <asset id="${id}" name="${escapeXmlAttr(uri.split(/[\\/]/).pop() || uri)}" start="0/${fps}s" duration="${durationFramesForAsset}/${fps}s" hasVideo="1" hasAudio="1" format="r1">
+      <media-rep kind="original-media" src="${escapeXmlAttr('file://' + uri)}" />
+    </asset>`;
+  }
+
+  // ── spine: asset-clips (ref=) / gaps, with markers nested by coverage ──
   let spineElements = '';
-
-  for (const cell of cells) {
-    const record = renders.get(cell.uid);
-    const clipUri = record?.output?.uri ? resolve(projectRoot, record.output.uri) : '';
-    const durationMs = cell.duration_ms || 3000;
-    const durationFrames = msToFrames(durationMs, fps);
-    const startFrame = msToFrames(currentTimeMs, fps);
-
-    if (clipUri && existsSync(clipUri)) {
+  for (const clip of clips) {
+    const note = `<note>${escapeXmlText(clip.cell.prompt || '')}</note>`;
+    if (clip.clipUri) {
+      const ref = assetIdByUri.get(clip.clipUri)!;
+      const clipEndFrame = clip.startFrame + clip.durationFrames;
+      const covering = markers.filter((m) => m.frame >= clip.startFrame && m.frame < clipEndFrame);
+      const markerXml = covering
+        .map((m) => {
+          const localFrame = m.frame - clip.startFrame; // clip-relative (clip's `start` is 0)
+          return `
+        <marker start="${localFrame}/${fps}s" duration="1/${fps}s" value="${escapeXmlAttr(m.label)}" color="${m.color}" />`;
+        })
+        .join('');
       spineElements += `
-      <asset-clip name="${cell.uid}" offset="${startFrame}/${fps}s" duration="${durationFrames}/${fps}s" start="0/${fps}s" src="file://${clipUri}">
-        <note>${(cell.prompt || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')}</note>
+      <asset-clip ref="${ref}" name="${escapeXmlAttr(clip.cell.uid)}" offset="${clip.startFrame}/${fps}s" duration="${clip.durationFrames}/${fps}s" start="0/${fps}s">
+        ${note}${markerXml}
       </asset-clip>`;
     } else {
-      // Gap placeholder
       spineElements += `
-      <gap name="Gap ${cell.uid}" offset="${startFrame}/${fps}s" duration="${durationFrames}/${fps}s" start="0/${fps}s" />`;
-    }
-
-    currentTimeMs += durationMs;
-  }
-
-  // Beat markers from audio_analysis (G-56)
-  let markerElements = '';
-  if (project.audio_analysis) {
-    const { downbeats = [], onsets = [] } = project.audio_analysis;
-    for (const dbMs of downbeats) {
-      const frame = msToFrames(dbMs, fps);
-      markerElements += `\n      <marker start="${frame}/${fps}s" duration="1/${fps}s" value="Downbeat" color="Blue" />`;
-    }
-    for (const onsetMs of onsets) {
-      const frame = msToFrames(onsetMs, fps);
-      markerElements += `\n      <marker start="${frame}/${fps}s" duration="1/${fps}s" value="Transient" color="Yellow" />`;
+      <gap name="${escapeXmlAttr('Gap ' + clip.cell.uid)}" offset="${clip.startFrame}/${fps}s" duration="${clip.durationFrames}/${fps}s" start="0/${fps}s" />`;
     }
   }
+
+  const projectName = escapeXmlAttr(project.title || project.slug || 'Studio Project');
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE fcpxml>
 <fcpxml version="1.10">
-  <resources>
-    <format id="r1" name="FFVideoFormat1080p${fps}" frameDuration="1/${fps}s" width="1920" height="1080" />
+  <resources>${resourceElements}
   </resources>
   <library>
     <event name="Ikenga Studio">
-      <project name="${project.title || project.slug || 'Studio Project'}">
-        <sequence format="r1" duration="${msToFrames(currentTimeMs, fps)}/${fps}s">
+      <project name="${projectName}">
+        <sequence format="r1" duration="${totalFrames}/${fps}s">
           <spine>
             ${spineElements}
-            ${markerElements}
           </spine>
         </sequence>
       </project>
@@ -162,22 +440,29 @@ export function buildResolvePythonScript(
   projectRoot: string,
   timelineName: string,
   fps: number = DEFAULT_FPS,
+  enableBeatSync: boolean = true,
 ): string {
-  const clipsPayload = cells.map((cell) => {
-    const record = renders.get(cell.uid);
-    const mediaPath = record?.output?.uri ? resolve(projectRoot, record.output.uri) : '';
+  const { clips } = quantizeClips(cells, renders, projectRoot, fps);
+
+  const clipsPayload = clips.map((clip) => {
+    const record = renders.get(clip.cell.uid);
     return {
-      uid: cell.uid,
-      mediaPath: existsSync(mediaPath) ? mediaPath : null,
-      durationMs: cell.duration_ms || 3000,
-      prompt: cell.prompt || '',
-      seed: cell.seed ?? null,
+      uid: clip.cell.uid,
+      mediaPath: clip.clipUri || null,
+      startFrame: clip.startFrame,
+      durationFrames: clip.durationFrames,
+      prompt: clip.cell.prompt || '',
+      seed: clip.cell.seed ?? null,
       model: record?.model_id ?? record?.engine ?? '',
     };
   });
 
-  const downbeats = project.audio_analysis?.downbeats ?? [];
-  const onsets = project.audio_analysis?.onsets ?? [];
+  const downbeats = enableBeatSync ? (project.audio_analysis?.downbeats ?? []) : [];
+  const beats = enableBeatSync ? (project.audio_analysis?.beats ?? []) : [];
+  const onsets = enableBeatSync ? (project.audio_analysis?.onsets ?? []) : [];
+
+  const projectTitleLiteral = pyStringLiteral(project.title || project.slug || 'Ikenga Studio');
+  const timelineNameLiteral = pyStringLiteral(timelineName);
 
   return `
 import sys, json, os
@@ -192,36 +477,61 @@ try:
     pm = resolve.GetProjectManager()
     proj = pm.GetCurrentProject()
     if not proj:
-        proj = pm.CreateProject("${project.title || project.slug || 'Ikenga Studio'}")
-    
+        proj = pm.CreateProject(${projectTitleLiteral})
+
     mp = proj.GetMediaPool()
     root_folder = mp.GetRootFolder()
 
     # Create new timeline for this export
-    timeline = mp.CreateEmptyTimeline("${timelineName}")
+    timeline = mp.CreateEmptyTimeline(${timelineNameLiteral})
     if not timeline:
         timeline = proj.GetCurrentTimeline()
 
     clips_data = ${JSON.stringify(clipsPayload)}
     downbeats = ${JSON.stringify(downbeats)}
+    beats = ${JSON.stringify(beats)}
     onsets = ${JSON.stringify(onsets)}
     fps = ${fps}
 
     media_items = []
+    path_to_item = {}
     for item in clips_data:
         if item["mediaPath"] and os.path.exists(item["mediaPath"]):
             imported = mp.ImportMedia([item["mediaPath"]])
             if imported:
                 media_items.extend(imported)
+                path_to_item[item["mediaPath"]] = imported[0]
 
     if media_items:
-        mp.AppendToTimeline(media_items)
+        # G-53: append with explicit frame-quantized timeline positions so
+        # the live timeline matches the FCPXML fallback's boundary math
+        # instead of relying on Resolve's own back-to-back append order.
+        clip_infos = []
+        for item in clips_data:
+            media = path_to_item.get(item["mediaPath"])
+            if media is None:
+                continue
+            clip_infos.append({
+                "mediaPoolItem": media,
+                "startFrame": 0,
+                "endFrame": item["durationFrames"],
+                "recordFrame": item["startFrame"],
+            })
+        if clip_infos:
+            mp.AppendToTimeline(clip_infos)
+        else:
+            mp.AppendToTimeline(media_items)
 
-    # Inject Beat Markers
+    # Inject Beat Markers (gated by enableBeatSync — G-75 #7)
     markers_count = 0
     for db in downbeats:
         frame = round((db / 1000.0) * fps)
-        timeline.AddMarker(frame, "Cyan", "Downbeat", "Measure start", 1)
+        timeline.AddMarker(frame, "Blue", "Downbeat", "Bar start", 1)
+        markers_count += 1
+
+    for beat in beats:
+        frame = round((beat / 1000.0) * fps)
+        timeline.AddMarker(frame, "Purple", "Beat", "Beat", 1)
         markers_count += 1
 
     for onset in onsets:
@@ -231,14 +541,30 @@ try:
 
     print(json.dumps({
         "ok": True,
-        "timelineName": "${timelineName}",
-        "trackCount": {"video": 1, "audio": 1},
+        "timelineName": ${timelineNameLiteral},
+        "trackCount": {"video": 1, "audio": 0},
         "markersCount": markers_count
     }))
 
 except Exception as e:
     print(json.dumps({"ok": False, "error": "SCRIPT_EXCEPTION", "message": str(e)}))
 `;
+}
+
+/** G-75 #9: resolve `outputPath` against `projectRoot` like `export.compose`
+ *  documents ("absolute or project-relative"), falling back to a sanitized
+ *  `exportsDir/<timelineName>.fcpxml` when none is given. Pure/exported so
+ *  it's directly unit-testable without touching the filesystem. */
+export function resolveDavinciOutputPath(opts: {
+  outputPath?: string;
+  projectRoot: string;
+  exportsDir: string;
+  timelineName: string;
+}): string {
+  if (opts.outputPath) {
+    return isAbsolute(opts.outputPath) ? opts.outputPath : resolve(opts.projectRoot, opts.outputPath);
+  }
+  return join(opts.exportsDir, `${sanitizeFilenameComponent(opts.timelineName)}.fcpxml`);
 }
 
 /**
@@ -249,8 +575,10 @@ export async function exportDaVinciTimeline(
 ): Promise<DaVinciExportResult> {
   const exportId = randomUUID();
   const fps = opts.fps || DEFAULT_FPS;
+  const enableBeatSync = opts.enableBeatSync ?? true;
   const isoStamp = new Date().toISOString().replace(/[:.]/g, '-');
-  const timelineName = `Ikenga - ${opts.project.title || opts.project.slug || 'Studio'} - ${isoStamp}`;
+  const rawTitle = opts.project.title || opts.project.slug || 'Studio';
+  const timelineName = `Ikenga - ${rawTitle} - ${isoStamp}`;
 
   const exportsDir = join(opts.projectRoot, 'exports');
   mkdirSync(exportsDir, { recursive: true });
@@ -275,15 +603,22 @@ export async function exportDaVinciTimeline(
   }
 
   // 1. Generate XML interchange fallback
-  const fcpxml = generateFcpxml(selectedCells, rendersMap, opts.project, opts.projectRoot, fps);
-  const xmlPath = opts.outputPath || join(exportsDir, `${timelineName}.fcpxml`);
+  const fcpxml = generateFcpxml(selectedCells, rendersMap, opts.project, opts.projectRoot, fps, enableBeatSync);
+  const xmlPath = resolveDavinciOutputPath({
+    outputPath: opts.outputPath,
+    projectRoot: opts.projectRoot,
+    exportsDir,
+    timelineName,
+  });
   writeFileSync(xmlPath, fcpxml, 'utf-8');
+
+  const markersCount = collectMarkers(opts.project, fps, enableBeatSync).length;
 
   // 2. Test live DaVinci Resolve connection (G-52)
   const isHealthy = await checkResolveHealth();
 
   if (isHealthy) {
-    // Run live Python export script
+    // Run live Python export script (async — G-75 #3, never execSync)
     const pyScript = buildResolvePythonScript(
       selectedCells,
       rendersMap,
@@ -291,29 +626,48 @@ export async function exportDaVinciTimeline(
       opts.projectRoot,
       timelineName,
       fps,
+      enableBeatSync,
     );
 
-    try {
-      const out = execSync('python', {
-        input: pyScript,
-        encoding: 'utf-8',
-        timeout: 10000,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      });
-      const parsed = JSON.parse(out.trim());
-      if (parsed.ok) {
+    const run = await runPythonScript(pyScript, {
+      timeoutMs: 10000,
+      env: resolveDaVinciEnv(),
+    });
+
+    if (run.code === 0 && !run.timedOut) {
+      try {
+        const parsed = JSON.parse(run.stdout.trim());
+        if (parsed.ok) {
+          return {
+            ok: true,
+            exportId,
+            outputPath: xmlPath,
+            timelineName: parsed.timelineName,
+            trackCount: parsed.trackCount,
+            markersCount: parsed.markersCount,
+          };
+        }
+        // G-75 #5: the script told us definitively that the live export
+        // failed — report that honestly rather than silently succeeding
+        // on the FCPXML fallback under a "live export succeeded" message.
         return {
-          ok: true,
+          ok: false,
           exportId,
           outputPath: xmlPath,
-          timelineName: parsed.timelineName,
-          trackCount: parsed.trackCount,
-          markersCount: parsed.markersCount,
+          error: parsed.error ?? 'SCRIPT_EXCEPTION',
+          message: `Live DaVinci Resolve export failed (${parsed.error ?? 'unknown error'}${
+            parsed.message ? `: ${parsed.message}` : ''
+          }). FCPXML fallback written to ${xmlPath}.`,
         };
+      } catch {
+        // Script produced non-JSON stdout — couldn't determine a definitive
+        // ok/fail verdict from Resolve, so this falls through as an
+        // infra-level "live path unavailable", not a reported script
+        // failure; the FCPXML fallback is still a legitimate, honest result.
       }
-    } catch {
-      // Live script execution failed, fallback to returning XML file
     }
+    // Process-level failure (nonzero exit, timeout, spawn error) — same
+    // treatment: fall through to the FCPXML-only result below.
   }
 
   // Return successful file interchange export
@@ -322,12 +676,10 @@ export async function exportDaVinciTimeline(
     exportId,
     outputPath: xmlPath,
     timelineName,
-    trackCount: { video: 1, audio: 1 },
-    markersCount:
-      (opts.project.audio_analysis?.downbeats?.length ?? 0) +
-      (opts.project.audio_analysis?.onsets?.length ?? 0),
+    trackCount: { video: 1, audio: 0 },
+    markersCount,
     message: isHealthy
-      ? 'Exported to live DaVinci Resolve timeline and XML interchange.'
+      ? 'Live DaVinci Resolve export could not be confirmed; exported FCPXML/OTIO interchange file ready for import.'
       : 'DaVinci Resolve not running; exported FCPXML/OTIO interchange file ready for import.',
   };
 }

@@ -23,9 +23,13 @@ import type {
   ProjectCreateParams,
   ProjectInfoParams,
   ProjectInfoResult,
+  ProjectLastOpenParams,
+  ProjectLastOpenResult,
   ProjectListResult,
   ProjectOpenParams,
   ProjectOpenResult,
+  ProjectRecentsParams,
+  ProjectRecentsResult,
   ProjectSummary,
   RpcMethod,
 } from './rpc-types.js';
@@ -64,6 +68,17 @@ export interface RpcHandlers {
   open(params: ProjectOpenParams): Promise<ProjectOpenResult>;
   close(params: ProjectCloseParams): Promise<{ ok: true } | { ok: false; error: ErrorCode; message?: string }>;
   list(): Promise<ProjectListResult>;
+  /**
+   * G-47 — enriched recents registry (archetypeId/cellCount/aspect, dead
+   * paths filtered out). Distinct from `list`: see rpc-types.ts.
+   */
+  recents(params: ProjectRecentsParams): Promise<ProjectRecentsResult>;
+  /**
+   * G-50 — persisted open-project state, so a respawned sidecar can offer the
+   * reopen. Read-only: it mounts nothing, and the caller's reopen still goes
+   * through `project.open` and the WP-04 trust gate.
+   */
+  lastOpen(params: ProjectLastOpenParams): Promise<ProjectLastOpenResult>;
   create(params: ProjectCreateParams): Promise<ProjectOpenResult>;
   info(params: ProjectInfoParams): Promise<ProjectInfoResult>;
   /**
@@ -87,6 +102,13 @@ const CreateParamsSchema = z.object({
   name: z.string().min(1),
 });
 const InfoParamsSchema = z.object({ projectId: z.string().min(1) });
+const RecentsParamsSchema = z.object({
+  limit: z.number().int().positive().max(200).optional(),
+});
+const LastOpenParamsSchema = z.object({
+  limit: z.number().int().positive().max(200).optional(),
+  openOnly: z.boolean().optional(),
+});
 
 // ─────────────────────────────────────────────────────────────────────────
 // Project shape validation (used by handlers when hydrating from disk)
@@ -139,6 +161,13 @@ const EXTENDED_METHODS = new Set<string>([
   'storyboard.upsert_beat',
   'storyboard.upsert_rung',
   'storyboard.set_approved',
+  // Plan 25 / D-25-5 — reordering WITHIN the sequence lane is the only canvas
+  // gesture allowed to mutate `Cell.index`; free placement never reaches here.
+  'storyboard.reorder_cells',
+  // Plan 25 / G-76 — authored canvas layout persisted to
+  // <projectRoot>/.studio/canvas.json (NOT localStorage, NOT storyboard.json).
+  'canvas.read',
+  'canvas.write',
   'breakdown.run',
   'anchor.list',
   'anchor.create',
@@ -165,6 +194,10 @@ const EXTENDED_METHODS = new Set<string>([
   'export.read_bytes',
   'export.check_bed',
   'export.prompt_package',
+  // Plan 24 / WP-23 — DaVinci Resolve & OTIO. G-75 #1: this was implemented
+  // in index.ts's `extended()` switch since WP-23 but never registered
+  // here, so every call 404'd with -32601 method-not-found over stdio.
+  'export.davinci_timeline',
 ]);
 
 export function startRpcLoop(handlers: RpcHandlers): { close(): void } {
@@ -210,6 +243,20 @@ export function startRpcLoop(handlers: RpcHandlers): { close(): void } {
         }
         case 'project.list': {
           writeResponse({ jsonrpc: '2.0', id, result: await handlers.list() });
+          return;
+        }
+        case 'project.recents': {
+          // Params are optional in full — `{}`/absent means "defaults".
+          const p = RecentsParamsSchema.safeParse(req.params ?? {});
+          if (!p.success) return invalidParams(id, p.error.message);
+          writeResponse({ jsonrpc: '2.0', id, result: await handlers.recents(p.data) });
+          return;
+        }
+        case 'project.last_open': {
+          // Params are optional in full — `{}`/absent means "defaults".
+          const p = LastOpenParamsSchema.safeParse(req.params ?? {});
+          if (!p.success) return invalidParams(id, p.error.message);
+          writeResponse({ jsonrpc: '2.0', id, result: await handlers.lastOpen(p.data) });
           return;
         }
         case 'project.create': {

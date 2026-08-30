@@ -5,6 +5,9 @@
  * --format=esm` (see ./build.sh). Owns:
  *
  *   • Project FS (open/close/list/create/info via JSON-RPC over stdio)
+ *   • Open-project session state (G-50) — persisted to studio.db so a
+ *     respawned sidecar can offer a reopen via `project.last_open`. It never
+ *     auto-reopens; see session.ts for why.
  *   • Render queue (SQLite-backed)
  *   • LRU cell cache
  *   • Per-project FS watcher emitting `pkg://com.ikenga.studio/*` events
@@ -49,14 +52,24 @@ import type {
   ErrorCode,
   GenericResult,
   ProjectInfoResult,
+  ProjectLastOpenResult,
   ProjectListResult,
   ProjectOpenResult,
+  ProjectRecentsResult,
   ProjectSummary,
   RpcMethod,
 } from './rpc-types.js';
 import { startWatcher, type WatcherHandle } from './watcher.js';
 import { requestProjectAccess } from './trust.js';
+import {
+  buildLastOpen,
+  markProjectClosed,
+  recordProjectOpened,
+  trustSourceFromEnv,
+} from './session.js';
+import { listRecentProjects, recordProjectMeta as recordRecentMeta } from './recents.js';
 import * as storyboard from './storyboard.js';
+import * as canvas from './canvas.js';
 import * as breakdown from './breakdown.js';
 import * as anchors from './anchors.js';
 import * as assets from './assets.js';
@@ -155,15 +168,19 @@ function findOpenById(projectId: string): OpenProject | undefined {
   return open.get(projectId);
 }
 
+// G-47 — records the recents-registry row on every successful open, deriving
+// the cheap archetype/cell-count/aspect fields from the Project the caller
+// just parsed off disk (no extra I/O). Delegates to recents.ts so the same
+// write path is exercised by recents.test.ts without spawning the sidecar.
 function recordProjectMeta(db: Db, p: OpenProject): void {
-  db.prepare(
-    `INSERT INTO projects (project_id, path, name, last_opened)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(project_id) DO UPDATE
-         SET path = excluded.path,
-             name = excluded.name,
-             last_opened = excluded.last_opened`,
-  ).run(p.projectId, p.path, p.project.title, Date.now());
+  recordRecentMeta(db, {
+    projectId: p.projectId,
+    path: p.path,
+    name: p.project.title,
+    archetypeId: p.project.archetype_id ?? null,
+    cellCount: p.project.cells.length,
+    aspect: p.project.aspect_ratio ?? null,
+  });
 }
 
 function listKnownProjects(db: Db): ProjectSummary[] {
@@ -383,11 +400,11 @@ function buildHandlers(db: Db): BuiltHandlers {
         return storyboard.writeFountain(root, params.text).result;
       case 'storyboard.read_cell_content':
         return storyboard.readCellContent(root, params.cellId as string).result;
-      case 'storyboard.write_cell_content': {
-        const r = storyboard.writeCellContent(root, params.cellId as string, params.html);
-        if (r.project) syncOpenProject(params.projectId as string, r.project);
-        return r.result;
-      }
+      case 'storyboard.write_cell_content':
+        // Content-only write — no storyboard.json mutation, so no `project`
+        // to sync back (see storyboard.ts's writeCellContent doc comment for
+        // why: one fs write in, one watcher emit out).
+        return storyboard.writeCellContent(root, params.cellId as string, params.html).result;
       case 'storyboard.list_cells':
         return storyboard.listCells(root, {
           beat_id: params.beat_id as string | undefined,
@@ -418,6 +435,22 @@ function buildHandlers(db: Db): BuiltHandlers {
         if (r.project) syncOpenProject(params.projectId as string, r.project);
         return r.result;
       }
+      // Plan 25 / D-25-5 — the sequence lane's one sanctioned mutation.
+      case 'storyboard.reorder_cells': {
+        const r = storyboard.reorderCells(root, params.order);
+        if (r.project) syncOpenProject(params.projectId as string, r.project);
+        return r.result;
+      }
+
+      // ── canvas.* (Plan 25 / G-76 — authored layout store) ──
+      case 'canvas.read':
+        return canvas.readCanvas(root).result;
+      case 'canvas.write':
+        // Writes <root>/.studio/canvas.json atomically; the FS watcher (which
+        // already carries `.studio/**`) emits the single cells/changed, so we
+        // do NOT emit here. Never touches storyboard.json.
+        return canvas.writeCanvas(root, params.doc).result;
+
       case 'storyboard.upsert_rung': {
         const r = storyboard.upsertRung(
           root,
@@ -568,7 +601,6 @@ function buildHandlers(db: Db): BuiltHandlers {
           cellIds: params.cellIds as string[] | undefined,
           outputPath: params.outputPath as string | undefined,
           fps: params.fps as number | undefined,
-          includeAudioStems: params.includeAudioStems as boolean | undefined,
           enableBeatSync: params.enableBeatSync as boolean | undefined,
         });
       }
@@ -607,6 +639,19 @@ function buildHandlers(db: Db): BuiltHandlers {
         .prepare(`SELECT project_id FROM projects WHERE path = ?`)
         .get(abs) as { project_id?: string } | undefined;
       const projectId = knownRow?.project_id ?? randomUUID();
+      // Plan 25 / G-76 — create `.studio/` BEFORE the watcher starts. The
+      // watcher drops targets that don't exist at watch start (see watcher.ts's
+      // Windows note), so on a project that has never been arranged the
+      // already-registered `.studio/**` glob would otherwise be dead: the first
+      // canvas.write would land silently and "arrange on one machine, watch it
+      // move on another" would only work from the SECOND open onwards.
+      try {
+        canvas.ensureStudioDir(abs);
+      } catch (e) {
+        // A read-only project dir is a legitimate state; layout persistence
+        // degrades (canvas.write will report the failure) but the open proceeds.
+        logErr(`could not create .studio/ in ${abs}: ${(e as Error).message}`);
+      }
       const watcher = await startWatcher(projectId, abs);
       const open_: OpenProject = { projectId, path: abs, project, watcher };
       open.set(projectId, open_);
@@ -617,6 +662,17 @@ function buildHandlers(db: Db): BuiltHandlers {
         `[studio-sidecar] hydrate project=${projectId} cells=${hyd.count} elapsedMs=${hyd.elapsedMs}\n`,
       );
       recordProjectMeta(db, open_);
+      // G-50 — durable open-project state, so the next sidecar (after a crash,
+      // a SIGTERM, or a dev-reload) can OFFER this project back via
+      // `project.last_open`. Nothing here reopens anything: the trust gate we
+      // just passed is per-open, and this row is a cache of its answer, not a
+      // substitute for it. `trustSourceFromEnv()` keeps a stub-minted grant
+      // from ever reading as a real one on a later production boot.
+      recordProjectOpened(db, {
+        projectId,
+        path: abs,
+        trustSource: trustSourceFromEnv(),
+      });
       // Resume any renders/exports orphaned by a prior crash now that this
       // project's root resolves again. `recover()` left them `queued` and
       // deferred the drain to avoid failing them at boot; kicking here is the
@@ -633,11 +689,25 @@ function buildHandlers(db: Db): BuiltHandlers {
       await o.watcher.close();
       lru.dropProject(projectId);
       open.delete(projectId);
+      // Deliberate close — stamp `closed_at` so the next boot does NOT offer
+      // this back as "you were working on this". The shutdown path pointedly
+      // does *not* do this: a project still mounted when the sidecar dies is
+      // exactly the one worth surfacing.
+      markProjectClosed(db, projectId);
       return { ok: true };
     },
 
     async list(): Promise<ProjectListResult> {
       return { ok: true, projects: listKnownProjects(db) };
+    },
+
+    async recents({ limit }): Promise<ProjectRecentsResult> {
+      return { ok: true, projects: listRecentProjects(db, { limit }) };
+    },
+
+    async lastOpen({ limit, openOnly }): Promise<ProjectLastOpenResult> {
+      const entries = buildLastOpen(db, { limit });
+      return { ok: true, entries: openOnly ? entries.filter((e) => e.wasOpenAtExit) : entries };
     },
 
     async create({ archetype_id, path, name }): Promise<ProjectOpenResult> {
@@ -738,6 +808,20 @@ async function main(): Promise<number> {
       process.env.STUDIO_TRUST_STUB === '1' ? 'on' : 'off'
     }\n`,
   );
+
+  // G-50 — surface, don't act. Projects still mounted when the previous
+  // sidecar stopped are reopen *candidates*; the trust gate owns the decision
+  // to actually mount one, so we log them and wait for the UI (or MCP) to ask
+  // via `project.last_open` and then call `project.open` itself.
+  const pending = buildLastOpen(db).filter((e) => e.wasOpenAtExit);
+  if (pending.length > 0) {
+    process.stderr.write(
+      `[studio-sidecar] last_open candidates=${pending.length} (not auto-reopened — ` +
+        `project.open re-runs the trust gate): ` +
+        pending.map((e) => `${e.path} [${e.reopen}]`).join(', ') +
+        '\n',
+    );
+  }
 
   const loop = startRpcLoop(handlers);
 

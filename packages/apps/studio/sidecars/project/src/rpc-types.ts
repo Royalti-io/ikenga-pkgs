@@ -5,6 +5,8 @@
  */
 
 import type { Project } from '@ikenga/studio-schema';
+import type { LastOpenEntry } from './session.js';
+import type { RecentProject } from './recents.js';
 
 export type ErrorCode =
   | 'trust-denied'
@@ -42,6 +44,34 @@ export interface ProjectSummary {
 }
 export type ProjectListResult = { ok: true; projects: ProjectSummary[] };
 
+/**
+ * `project.recents` (G-47 / WP-13 gate closer) — the enriched recents ledger:
+ * unlike `project.list`'s `ProjectSummary` (name/path/lastOpened only, dead
+ * paths kept and flagged `exists:false`), each row also carries the cheap
+ * fields recorded at open time (archetypeId/cellCount/aspect) and dead paths
+ * are filtered OUT rather than flagged — see recents.ts.
+ */
+export interface ProjectRecentsParams {
+  /** Cap on returned entries (default 20). */
+  limit?: number;
+}
+export type ProjectRecentsResult = { ok: true; projects: RecentProject[] };
+
+/**
+ * `project.last_open` (G-50 / WP-32 DoD 8) — the open-project registry as it
+ * stood when the sidecar last stopped, so a respawn can *offer* the reopen.
+ *
+ * Advisory only. Entries are not mounted; the caller reopens by calling
+ * `project.open`, which re-runs the WP-04 trust gate. See session.ts.
+ */
+export interface ProjectLastOpenParams {
+  /** Cap on returned entries (default 20). */
+  limit?: number;
+  /** When true, return only sessions still open at the previous exit. */
+  openOnly?: boolean;
+}
+export type ProjectLastOpenResult = { ok: true; entries: LastOpenEntry[] };
+
 export interface ProjectCreateParams {
   archetype_id: string;
   path: string;
@@ -71,6 +101,8 @@ export type RpcMethod =
   | 'project.open'
   | 'project.close'
   | 'project.list'
+  | 'project.recents'
+  | 'project.last_open'
   | 'project.create'
   | 'project.info'
   // storyboard.*
@@ -87,6 +119,11 @@ export type RpcMethod =
   | 'storyboard.upsert_beat'
   | 'storyboard.upsert_rung'
   | 'storyboard.set_approved'
+  // storyboard.* (Plan 25 / D-25-5 — the sequence lane's one sanctioned write)
+  | 'storyboard.reorder_cells'
+  // canvas.* (Plan 25 / G-76 — authored layout in <root>/.studio/canvas.json)
+  | 'canvas.read'
+  | 'canvas.write'
   // breakdown.* (plans/studio/19 WP-3 — deterministic script→cells scaffold)
   | 'breakdown.run'
   // anchor.*

@@ -14,7 +14,7 @@ Scaffold a new reusable block atom.
    - `id`, `kind`, `name`, `description`, `template_path`, `parameters[]`, `default_renderer`, `tags[]`, `metadata{}`.
 3. Writes the template:
    - **HyperFrames blocks** → **`index.html`** (the HF CLI hard-requires `index.html` as the composition entry; G-39). Minimal but real: a titled scene with a `data-duration` attribute and the block's parameters referenced as `{{name}}` placeholders / CSS vars.
-   - **Sketch blocks** (`kind: 'sketch'`) → a minimal valid **`.excalidraw`** JSON scene. Because `BlockSchema.default_renderer` only allows `hyperframes | remotion | auto`, sketch blocks set `default_renderer: 'auto'` and carry `metadata.renderer_hint: 'excalidraw'`.
+   - **Sketch blocks** (`kind: 'sketch'`) → a minimal valid **`.excalidraw`** JSON scene. `BlockSchema.default_renderer` accepts `excalidraw` directly since WP-32/G-68; targeting older schemas, set `default_renderer: 'auto'` and carry `metadata.renderer_hint: 'excalidraw'` instead (both forms remain valid).
 4. Registers via MCP `block.create_custom`, which writes into `<project>/blocks/custom/<id>/`.
 
 ## Template rules (G-39)

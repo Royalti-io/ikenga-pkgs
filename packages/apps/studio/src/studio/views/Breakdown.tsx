@@ -30,8 +30,9 @@
 //     and `anchor.generate` both write `prompt`; `description` is the older
 //     key nothing on this codepath writes any more (kept as a fallback).
 //   • Engine chip     — REAL, and only where it is real (D-3). `Cell.renderer`
-//     CANNOT carry the truth: its enum is hyperframes|remotion|excalidraw|veo|
-//     kling|runway|auto — there is no `fal` value. Engine + model live on
+//     CANNOT carry the truth: it is the *pick/intent* (and since WP-32/G-68 its
+//     enum does include `fal` + `blender`), not what actually ran. Engine +
+//     model live on
 //     `RenderRecord.engine` + `.model_id`, and only AFTER something rendered.
 //     The chip therefore requires a record whose `status === 'done'` — NOT
 //     merely a record's existence. `recordByUid` ranks done>running>queued>
@@ -193,7 +194,9 @@ import {
 import { useAnchorsStore, selectAnchors, selectAnchorsError } from '../anchors-store';
 import { getMcpClient, storyboardApi, renderApi, breakdownApi } from '../mcp-client';
 import { sendToChi, subscribeStudioEvent } from '../bridge';
-import { parseFountain, type FountainBlock, type FountainDoc, type FountainScene } from '../lib/fountain';
+import { parseFountain, type FountainDoc, type FountainScene } from '../lib/fountain';
+// D-1a tag→shot linking. Shared with the node canvas's beat→shot edges (G-57).
+import { computeLinking } from '../lib/tag-linking';
 import type { Anchor, Cell, EngineCapability, RenderRecord } from '../mcp-types';
 import { EmptyState } from '../components/EmptyState';
 import { recordByUid, engineLabel } from './composition/format';
@@ -288,8 +291,9 @@ interface ShotRow {
   renderer: string;
   track: Track;
   /** The shot's `done` RenderRecord, when something really rendered for it.
-   *  The ONLY honest source of engine + model (D-3) — `Cell.renderer`'s enum
-   *  has no `fal` value, so it cannot answer this. Undefined = nothing has
+   *  The ONLY honest source of engine + model (D-3) — `Cell.renderer` is the
+   *  pick/intent (it now includes `fal`/`blender` since WP-32/G-68), not what
+   *  actually ran, so it cannot answer this. Undefined = nothing has
    *  successfully rendered (no record at all, or only queued/running/failed/
    *  cancelled ones), and we fall back to the labelled Track pill rather than
    *  claiming an engine "rendered this shot" when none did. */
@@ -350,56 +354,13 @@ function anchorMeta(a: Anchor): { seed?: number; description?: string } {
 }
 
 // ─── line↔shot linking (D-1a) ────────────────────────────────────────────
-
-/** `tag` — at least one paragraph carries a `[[tag]]`, so links are exact.
- *  `none` — no tags at all, so there is nothing we can link honestly. There is
- *  deliberately no third mode: see the file header on the deleted positional
- *  fallback. */
-type LinkMode = 'tag' | 'none';
-
-interface Linking {
-  mode: LinkMode;
-  /** Per action-paragraph index → the shot uid it links to (or undefined). */
-  paraLink: Array<string | undefined>;
-  /** Per shot index → the shot uid, when that shot is linked to a paragraph. */
-  shotLink: Array<string | undefined>;
-  /** The ids with BOTH ends present — exactly what the rail draws. */
-  railIds: string[];
-  /** How many action paragraphs carry a `[[tag]]` at all. */
-  taggedParagraphs: number;
-}
-
-/** Tag-only (D-1a). The one rule that matters: a paragraph or a shot we cannot
- *  link EXACTLY is left unlinked — never linked speculatively, and never used
- *  to suppress the links we do have. An all-unlinked result is a legitimate
- *  answer ("this script carries no tags yet"), not a failure to paper over. */
-function computeLinking(actionBlocks: FountainBlock[], shots: ShotRow[]): Linking {
-  const paraLink: Array<string | undefined> = new Array(actionBlocks.length).fill(undefined);
-  const shotLink: Array<string | undefined> = new Array(shots.length).fill(undefined);
-  const taggedParagraphs = actionBlocks.filter((b) => b.tag).length;
-
-  // uid is inserted last so it wins over a shotId collision.
-  const byKey = new Map<string, number>();
-  shots.forEach((s, i) => { if (s.shotId) byKey.set(s.shotId, i); });
-  shots.forEach((s, i) => { byKey.set(s.uid, i); });
-
-  let mode: LinkMode = 'none';
-
-  if (taggedParagraphs > 0) {
-    mode = 'tag';
-    actionBlocks.forEach((b, i) => {
-      if (!b.tag) return;
-      const si = byKey.get(b.tag);
-      if (si == null) return;            // tag names a shot that doesn't exist
-      if (shotLink[si] !== undefined) return; // duplicate tag — first wins
-      paraLink[i] = shots[si].uid;
-      shotLink[si] = shots[si].uid;
-    });
-  }
-
-  const railIds = paraLink.filter((v): v is string => v !== undefined);
-  return { mode, paraLink, shotLink, railIds, taggedParagraphs };
-}
+//
+// `computeLinking` moved to `../lib/tag-linking` (imported above) when Plan 25's
+// node canvas needed the SAME mechanism for its beat → shot edges (G-57:
+// "reuse that mechanism; do not invent a second one"). The rule and its
+// rationale live with the function; nothing about this pane's behaviour
+// changed. `ShotRow` structurally satisfies `LinkableShot` (uid + shotId), so
+// the call site below is unchanged.
 
 // ─── rail (bezier connector) ──────────────────────────────────────────────
 

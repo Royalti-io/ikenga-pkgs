@@ -184,24 +184,31 @@ import type {
 // Separate line (own domain) so the shared type import above stays untouched.
 import type { Anchor, PromptPackage } from './mcp-types';
 
-/** What `project.list` ACTUALLY returns, tolerant of the two real runtime
- *  shapes it resolves to (the "honesty rule" — this boundary genuinely drifts):
+/** What `project.list` / `project.recents` ACTUALLY return, tolerant of the
+ *  three real runtime shapes they resolve to (the "honesty rule" — this
+ *  boundary genuinely drifts):
  *
- *   • real (in-shell): the sidecar's `ProjectSummary` — `projectId` / `name` /
- *     `path` / `lastOpened` (epoch ms), camelCase, ONE row per previously-opened
- *     project, most-recent first. It carries NO archetype / aspect / cell-count /
- *     render-coverage — those are NOT cheaply reachable for a project that isn't
- *     open (render.list is projectId-scoped to the open project).
+ *   • real, project.list: the sidecar's `ProjectSummary` — `projectId` /
+ *     `name` / `path` / `lastOpened` (epoch ms), camelCase, one row per
+ *     previously-opened project, most-recent first. Carries NO archetype /
+ *     aspect / cell-count — those aren't cheaply reachable there (render.list
+ *     is projectId-scoped to the open project).
+ *   • real, project.recents (G-47): the sidecar's `RecentProject` — same
+ *     camelCase shape PLUS `archetypeId` / `cellCount` / `aspect`, recorded at
+ *     open time. Dead paths are filtered out server-side rather than flagged.
  *   • mock (standalone): a full `Project` schema object (snake_case `slug` /
  *     `title` / `archetype_id` / `aspect_ratio` / `cells[]` / `updated_at`).
  *
  *  All fields are optional so the Launcher's `normalizeRecent()` can read
  *  whichever the active client emitted and degrade honestly (drop the coverage
- *  meter + exported/draft pill for real rows that don't carry them). */
+ *  meter + exported/draft pill for rows that don't carry them). */
 export interface RawRecentProject {
-  // real ProjectSummary (camelCase)
+  // real ProjectSummary / RecentProject (camelCase)
   projectId?: string;
   lastOpened?: number;
+  archetypeId?: string;
+  cellCount?: number;
+  aspect?: AspectRatio;
   // full Project / mock (snake_case + schema)
   project_id?: string;
   slug?: string;
@@ -214,7 +221,8 @@ export interface RawRecentProject {
   // shared
   name?: string;
   path?: string;
-  /** Whether the stored path still exists on disk (real project.list only).
+  /** Whether the stored path still exists on disk (real project.list only —
+   *  project.recents omits dead rows entirely, so this is always true there).
    *  Absent on mock/full-Project rows → treated as present. */
   exists?: boolean;
 }
@@ -226,6 +234,11 @@ export const projectApi = {
     c.callTool<{ closed: boolean }>('project.close', { project_id }),
   list:   (c: McpClient) =>
     c.callTool<{ projects: RawRecentProject[] }>('project.list'),
+  /** G-47 — enriched recents (archetype/cell-count/aspect, dead paths
+   *  filtered). Real mode only; the mock client has no matching tool case, so
+   *  callers gate on `client.mode === 'real'` (Launcher does). */
+  recents: (c: McpClient, limit?: number) =>
+    c.callTool<{ projects: RawRecentProject[] }>('project.recents', limit != null ? { limit } : {}),
   create: (c: McpClient, args: { archetype_id: string; path: string; name: string; aspect_ratio?: AspectRatio }) =>
     c.callTool<{ project_id: string }>('project.create', args),
   info:   (c: McpClient, project_id: string) =>
@@ -268,6 +281,32 @@ export const storyboardApi = {
     c.callTool<{ cells: Cell[] }>('storyboard.list_cells', args ?? {}),
   set_approved:(c: McpClient, cell_uid: string, approved: boolean) =>
     c.callTool<{ ok: true }>('storyboard.set_approved', { cell_uid, approved }),
+  /** Reassign `Cell.index` across the named cells, in the order given — the
+   *  node canvas sequence lane's ONE sanctioned mutation (Plan 25 D-25-5).
+   *  `order` is the FULL lane order front-to-back; cells not named keep their
+   *  index. One atomic write on the sidecar, so one watcher event. Free 2D
+   *  placement on the canvas is non-semantic and must never call this. */
+  reorder_cells: (c: McpClient, order: string[]) =>
+    c.callTool<{ moved: number; order: string[] }>('storyboard.reorder_cells', { order }),
+};
+
+/** The authored canvas document as it comes off `canvas.read` — `exists:false`
+ *  with a null `doc` is a project that has never been arranged, NOT an error. */
+export interface CanvasRead {
+  exists: boolean;
+  doc: unknown;
+  path: string;
+}
+
+export const canvasApi = {
+  /** Read `<project>/.studio/canvas.json` (Plan 25 authored state). Real mode
+   *  only — the mock client has no project on disk, so callers gate on
+   *  `client.mode === 'real'` and fall back to a local cache off-shell. */
+  read:  (c: McpClient) => c.callTool<CanvasRead>('canvas.read'),
+  /** Persist the authored canvas document, atomically. Replaces the file
+   *  wholesale (read → amend → write). Never touches storyboard.json. */
+  write: (c: McpClient, doc: unknown) =>
+    c.callTool<{ path: string; bytes: number; doc: unknown }>('canvas.write', { doc }),
 };
 
 /** One shot `breakdown.run` projected out of the script — an action paragraph

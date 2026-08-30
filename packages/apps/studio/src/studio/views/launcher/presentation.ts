@@ -70,8 +70,9 @@ export interface RecentRow {
    *  Open affordance (audit: Recents hygiene). Defaults true when the seam
    *  didn't carry it (mock rows / older sidecar). */
   exists: boolean;
-  /** Present ONLY when the row came from a full Project (standalone/mock). Real
-   *  project.list ProjectSummary rows omit these — never fabricate them. */
+  /** Present when the row came from a full Project (standalone/mock) OR from
+   *  the real project.recents seam (G-47). Real project.list ProjectSummary
+   *  rows omit these — never fabricate them. */
   archetype_id?: string;
   aspect?: AspectRatio;
   cellCount?: number;
@@ -94,9 +95,16 @@ export function normalizeRecent(raw: RawRecentProject): RecentRow | null {
   // exists defaults true when the seam didn't carry it (mock full-Project rows,
   // or an older sidecar) — only a real `exists:false` dims the row.
   const row: RecentRow = { id, name, path, lastOpened, exists: raw.exists !== false };
+  // archetype_id/aspect_ratio/cells come from the mock's full-Project shape;
+  // archetypeId/aspect/cellCount come from the real project.recents seam
+  // (G-47). Never both on the same row, but check both so either client
+  // shape renders the archetype chip + coverage meta honestly.
   if (typeof raw.archetype_id === 'string') row.archetype_id = raw.archetype_id;
+  else if (typeof raw.archetypeId === 'string') row.archetype_id = raw.archetypeId;
   if (typeof raw.aspect_ratio === 'string') row.aspect = raw.aspect_ratio as AspectRatio;
+  else if (typeof raw.aspect === 'string') row.aspect = raw.aspect as AspectRatio;
   if (Array.isArray(raw.cells)) row.cellCount = raw.cells.length;
+  else if (typeof raw.cellCount === 'number') row.cellCount = raw.cellCount;
   return row;
 }
 
