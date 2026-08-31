@@ -30,6 +30,14 @@
     "./retention": {
       "types": "./dist/retention.d.ts",
       "import": "./dist/retention.js"
+    },
+    "./db": {
+      "types": "./dist/db/client.d.ts",
+      "import": "./dist/db/client.js"
+    },
+    "./storage": {
+      "types": "./dist/storage/media-fs.d.ts",
+      "import": "./dist/storage/media-fs.js"
     }
   },
   "files": [
@@ -42,7 +50,7 @@
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist",
-    "test": "node --test --import=tsx src/schema.test.ts src/ipc.test.ts src/retention.test.ts"
+    "test": "node --test --import=tsx src/schema.test.ts src/ipc.test.ts src/retention.test.ts src/db/client.test.ts src/storage/media-fs.test.ts"
   },
   "dependencies": {
     "zod": "^3.23.0"
