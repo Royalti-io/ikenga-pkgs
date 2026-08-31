@@ -1,0 +1,54 @@
+{
+  "id": "com.ikenga.meetings",
+  "name": "Meetings",
+  "version": "0.1.0",
+  "ikenga_api": "3",
+  "kind": "app",
+
+  "author": {
+    "name": "Royalti, Inc.",
+    "key": "royalti"
+  },
+
+  "description": "Local-first meeting recording, synchronized transcript player, and meeting intelligence app.",
+
+  "nav": [
+    {
+      "id": "meetings",
+      "label": "Meetings",
+      "icon": "video",
+      "section": "ops",
+      "route": "/pkg/com.ikenga.meetings/"
+    }
+  ],
+
+  "routes": [
+    {
+      "path": "/pkg/com.ikenga.meetings/",
+      "kind": "iframe",
+      "source": "dist/index.html"
+    }
+  ],
+
+  "capabilities": {
+    "sqlite": true
+  },
+
+  "permissions": {
+    "sqlite.tables": [
+      "meetings",
+      "meeting_speakers",
+      "meeting_transcripts",
+      "meeting_action_items",
+      "meeting_summaries"
+    ],
+    "fs.read": [
+      "$pkg_data/**",
+      "~/.ikenga/media/**"
+    ],
+    "fs.write": [
+      "$pkg_data/**",
+      "~/.ikenga/media/**"
+    ]
+  }
+}
