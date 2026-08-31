@@ -60,7 +60,6 @@ export class MeetingsBotSidecar {
             meeting_id: this.currentMeetingId,
             state: status.active ? (status.paused ? 'paused' : 'recording') : 'idle',
             elapsed_seconds: status.elapsedSeconds,
-            video_path: status.videoPath,
             audio_path: status.audioPath,
           },
         };
@@ -83,14 +82,9 @@ export class MeetingsBotSidecar {
         const paths = getMeetingMediaFilePaths(config.meeting_id, config.output_dir);
 
         const graphConfig: FfmpegGraphConfig = {
-          videoInput: {
-            type: config.backend === 'local_recording' ? 'desktop' : 'x11grab',
-            displayOrWindow: config.backend === 'bot' ? ':99' : undefined,
-          },
           audioInput: {
             type: config.backend === 'bot' ? 'pulse' : 'default',
           },
-          outputVideoPath: paths.videoPath,
           outputAudioPath: paths.audioPath,
         };
 
@@ -103,7 +97,6 @@ export class MeetingsBotSidecar {
             ok: true,
             meeting_id: config.meeting_id,
             media_dir: mediaDir,
-            video_path: paths.videoPath,
             audio_path: paths.audioPath,
           },
         };
@@ -119,7 +112,6 @@ export class MeetingsBotSidecar {
           meeting_id: meetingId ?? '',
           state: 'stopped',
           elapsed_seconds: res.durationSeconds,
-          video_path: res.videoPath,
           audio_path: res.audioPath,
         });
 
@@ -129,7 +121,6 @@ export class MeetingsBotSidecar {
           result: {
             ok: true,
             duration_seconds: res.durationSeconds,
-            video_path: res.videoPath,
             audio_path: res.audioPath,
           },
         };
