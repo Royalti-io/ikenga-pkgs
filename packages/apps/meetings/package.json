@@ -14,7 +14,7 @@
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist",
-    "test": "node --test --import=tsx src/components/ConsentGate.test.ts"
+    "test": "node --test --import=tsx src/components/ConsentGate.test.ts src/intelligence/summarizer.test.ts"
   },
   "dependencies": {
     "@ikenga/meetings-contract": "workspace:*",
