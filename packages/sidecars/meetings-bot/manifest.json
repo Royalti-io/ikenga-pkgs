@@ -1,0 +1,65 @@
+{
+  "id": "com.ikenga.sidecar-meetings-bot",
+  "name": "Ikenga Meetings Bot & Local Recorder Sidecar",
+  "version": "0.1.0",
+  "ikenga_api": "3",
+  "kind": "embedded",
+
+  "author": {
+    "name": "Royalti, Inc.",
+    "key": "royalti"
+  },
+
+  "//": "WP-11/WP-03/WP-02: Meetings sidecar managing local own-machine recording (v1), whisper.cpp local STT, and Xvfb browser automation bot (v2). Like pa-playwright-browser, mcp[] is omitted so the kernel supervisor does not auto-spawn a competing instance.",
+
+  "sidecars": [
+    {
+      "name": "pa-meetings-bot",
+      "bin": "dist/sidecar.js",
+      "stdio": "json",
+      "auto_restart": false
+    }
+  ],
+
+  "permissions": {
+    "shell.execute": [
+      "node",
+      "ffmpeg",
+      "ffprobe",
+      "Xvfb",
+      "pactl",
+      "whisper-cli",
+      "main"
+    ],
+    "net": [
+      "http://127.0.0.1:*",
+      "https://meet.google.com",
+      "https://*.google.com",
+      "https://*.gstatic.com",
+      "https://app.zoom.us",
+      "https://*.zoom.us",
+      "https://teams.microsoft.com",
+      "https://*.teams.microsoft.com",
+      "https://huggingface.co",
+      "https://*.huggingface.co",
+      "https://github.com"
+    ],
+    "fs.read": [
+      "$pkg_data/**",
+      "~/.ikenga/media/**",
+      "~/.ikenga/models/**"
+    ],
+    "fs.write": [
+      "$pkg_data/**",
+      "~/.ikenga/media/**",
+      "~/.ikenga/models/**"
+    ],
+    "sqlite.tables": [
+      "meetings",
+      "meeting_speakers",
+      "meeting_transcripts",
+      "meeting_action_items",
+      "meeting_summaries"
+    ]
+  }
+}

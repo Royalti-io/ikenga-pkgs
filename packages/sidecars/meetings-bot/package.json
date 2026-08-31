@@ -1,0 +1,29 @@
+{
+  "name": "@ikenga/pkg-meetings-bot",
+  "version": "0.1.0",
+  "description": "Ikenga meeting recorder sidecar managing local own-machine capture, whisper.cpp STT engine, and Playwright bot runners.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "dist/sidecar.js",
+  "types": "dist/sidecar.d.ts",
+  "files": [
+    "dist",
+    "manifest.json",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "clean": "rm -rf dist",
+    "test": "node --test --import=tsx src/capture/preflight.test.ts src/capture/ffmpeg-graph.test.ts src/whisper/models.test.ts src/whisper/binary.test.ts src/whisper/engine.test.ts src/sidecar.test.ts"
+  },
+  "dependencies": {
+    "@ikenga/meetings-contract": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.4.0"
+  }
+}
