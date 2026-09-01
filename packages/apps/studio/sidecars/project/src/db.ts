@@ -156,12 +156,19 @@ export async function openDb(dbPath?: string, driver?: DbDriver): Promise<Databa
   if (driver) {
     db = driver(target);
   } else {
-    // Dynamic import so this module is typecheck-safe even before deps are
-    // installed; the bundle externalizes better-sqlite3.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const mod: any = await import('better-sqlite3');
-    const Ctor = mod.default ?? mod;
-    db = new Ctor(target) as Database;
+    // Under Bun (the standard Ikenga runtime per ADR-010), use built-in bun:sqlite.
+    // Falls back to better-sqlite3 only if running under standalone Node.
+    if (typeof (globalThis as any).Bun !== 'undefined') {
+      // @ts-ignore bun:sqlite is built into Bun at runtime
+      const { Database: BunDb } = await import('bun:sqlite');
+      db = new BunDb(target) as unknown as Database;
+    } else {
+      // Dynamic import so this module is typecheck-safe even before deps are installed
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const mod: any = await import('better-sqlite3');
+      const Ctor = mod.default ?? mod;
+      db = new Ctor(target) as Database;
+    }
   }
   // sane defaults
   db.exec("PRAGMA journal_mode = WAL;");

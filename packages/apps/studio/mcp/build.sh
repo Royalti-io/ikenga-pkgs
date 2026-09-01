@@ -22,13 +22,12 @@ if [[ "${1:-}" == "--watch" ]]; then
   WATCH_FLAG="--watch"
 fi
 
-echo "==> bundling $OUTPUT (target: node, format: esm)"
+echo "==> bundling $OUTPUT (target: bun, format: esm)"
 # @modelcontextprotocol/sdk is kept as a RUNTIME import (--external below) so it
 # resolves from the parent studio pkg's hoisted node_modules — the MCP's own
-# package.json declares no deps. better-sqlite3 / chokidar are NOT touched by
-# the MCP (only the sidecar opens those), so they need no --external here.
+# package.json declares no deps.
 bun build $WATCH_FLAG \
-  --target=node \
+  --target=bun \
   --format=esm \
   --external @modelcontextprotocol/sdk \
   src/index.ts \
@@ -36,11 +35,11 @@ bun build $WATCH_FLAG \
 
 # Prepend shebang — bun build doesn't add one for plain ESM outputs.
 {
-  echo '#!/usr/bin/env node'
+  echo '#!/usr/bin/env bun'
   cat "$TMP"
 } > "$OUTPUT"
-rm "$TMP"
 chmod +x "$OUTPUT"
+rm "$TMP"
 
 # Copy archetype + block skills into dist/skills so the MCP is self-contained.
 # An installed pkg cannot reach the workspace-relative source, so catalog.ts

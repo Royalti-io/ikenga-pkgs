@@ -116,7 +116,7 @@
   "mcp": [
     {
       "name": "studio",
-      "command": "node",
+      "command": "bun",
       "args": [
         "mcp/dist/index.js"
       ],
