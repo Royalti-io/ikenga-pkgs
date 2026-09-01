@@ -21,13 +21,10 @@ if [[ "${1:-}" == "--watch" ]]; then
   WATCH_FLAG="--watch"
 fi
 
-echo "==> bundling $OUTPUT (target: node, format: esm)"
-# better-sqlite3 is a native module; mark it external so we resolve it from
-# node_modules at runtime via real `require`/`import`.
+echo "==> bundling $OUTPUT (target: bun, format: esm)"
 bun build $WATCH_FLAG \
-  --target=node \
+  --target=bun \
   --format=esm \
-  --external better-sqlite3 \
   --external chokidar \
   --external esbuild \
   src/index.ts \
@@ -35,10 +32,10 @@ bun build $WATCH_FLAG \
 
 # Prepend shebang — bun build doesn't add one for plain ESM outputs.
 {
-  echo '#!/usr/bin/env node'
+  echo '#!/usr/bin/env bun'
   cat "$TMP"
 } > "$OUTPUT"
-rm "$TMP"
 chmod +x "$OUTPUT"
+rm "$TMP"
 
 echo "==> done: $(du -h "$OUTPUT" | cut -f1) $OUTPUT"

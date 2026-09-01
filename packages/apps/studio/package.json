@@ -27,7 +27,6 @@
     "@modelcontextprotocol/ext-apps": "^1.7.1",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@supabase/supabase-js": "^2.45.0",
-    "better-sqlite3": "^11.3.0",
     "chokidar": "^3.6.0",
     "excalidraw-animate": "^0.7.2",
     "puppeteer": "^25.0.0",
@@ -38,7 +37,6 @@
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.4",
-    "@types/better-sqlite3": "^7.6.11",
     "@types/node": "^20.11.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
