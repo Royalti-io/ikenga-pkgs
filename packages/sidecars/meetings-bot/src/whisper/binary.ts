@@ -22,8 +22,15 @@ export async function resolveWhisperBinary(
 ): Promise<WhisperBinaryResolution> {
   const candidates: Array<{ path: string; source: 'custom' | 'user_bin' | 'path' }> = [];
 
+  // An EXPLICIT path is exclusive, never the head of a fallback chain.
+  //
+  // Falling through to some other whisper build when the configured one is
+  // missing silently ignores the user's choice — they end up transcribing with
+  // a different model/binary than they asked for, and the error message they'd
+  // otherwise get ("not found at <path>") never appears. Worse, it makes the
+  // "is whisper installed" probe unfalsifiable: any bogus path still resolves.
   if (customPath) {
-    candidates.push({ path: customPath, source: 'custom' });
+    return resolveSingleCandidate({ path: customPath, source: 'custom' });
   }
 
   // Common user directory ~/.ikenga/bin/
@@ -37,9 +44,35 @@ export async function resolveWhisperBinary(
   }
 
   for (const candidate of candidates) {
-    if (candidate.source !== 'path' && !existsSync(candidate.path)) {
-      continue;
-    }
+    const resolved = await resolveSingleCandidate(candidate);
+    if (resolved.available) return resolved;
+  }
+
+  return {
+    available: false,
+    error:
+      'whisper.cpp binary (whisper-cli) not found. Please install whisper-cli or place it in ~/.ikenga/bin/whisper-cli.',
+  };
+}
+
+/** Probe exactly one candidate path; never falls back to another. */
+async function resolveSingleCandidate(candidate: {
+  path: string;
+  source: 'custom' | 'user_bin' | 'path';
+}): Promise<WhisperBinaryResolution> {
+  const notFound: WhisperBinaryResolution = {
+    available: false,
+    error:
+      candidate.source === 'custom'
+        ? `whisper.cpp binary (whisper-cli) not found at the configured path ${candidate.path}.`
+        : 'whisper.cpp binary (whisper-cli) not found. Please install whisper-cli or place it in ~/.ikenga/bin/whisper-cli.',
+  };
+
+  if (candidate.source !== 'path' && !existsSync(candidate.path)) {
+    return notFound;
+  }
+
+  {
     try {
       const { stdout, stderr } = await execFileAsync(candidate.path, ['-h']);
       const output = stdout || stderr;
@@ -64,9 +97,5 @@ export async function resolveWhisperBinary(
     }
   }
 
-  return {
-    available: false,
-    error:
-      'whisper.cpp binary (whisper-cli) not found. Please install whisper-cli or place it in ~/.ikenga/bin/whisper-cli.',
-  };
+  return notFound;
 }

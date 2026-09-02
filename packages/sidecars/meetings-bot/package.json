@@ -12,11 +12,11 @@
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node -e \"const f='dist/sidecar.js',fs=require('fs');const s=fs.readFileSync(f,'utf8');if(!s.startsWith('#!'))fs.writeFileSync(f,'#!/usr/bin/env node\\n'+s);fs.chmodSync(f,0o755)\"",
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist",
-    "test": "node --test --import=tsx src/capture/preflight.test.ts src/capture/ffmpeg-graph.test.ts src/whisper/models.test.ts src/whisper/binary.test.ts src/whisper/engine.test.ts src/sidecar.test.ts src/adapters/google-meet.test.ts src/auth/challenge-detect.test.ts"
+    "test": "node --test --import=tsx src/capture/preflight.test.ts src/capture/ffmpeg-graph.test.ts src/whisper/models.test.ts src/whisper/binary.test.ts src/whisper/engine.test.ts src/sidecar.test.ts src/cli.test.ts src/session.test.ts src/adapters/google-meet.test.ts src/auth/challenge-detect.test.ts"
   },
   "dependencies": {
     "@ikenga/meetings-contract": "workspace:*"

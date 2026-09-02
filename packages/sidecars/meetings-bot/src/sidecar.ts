@@ -6,7 +6,7 @@ import {
   RecordingStatusNotificationSchema,
 } from '@ikenga/meetings-contract';
 import { FfmpegCaptureSession, FfmpegGraphConfig } from './capture/ffmpeg-graph.js';
-import { resolveMeetingMediaDir, getMeetingMediaFilePaths, ensureMeetingMediaDir } from '@ikenga/meetings-contract';
+import { getMeetingMediaFilePaths, ensureMeetingMediaDir } from '@ikenga/meetings-contract/storage';
 import { LocalWhisperEngine } from './whisper/engine.js';
 import { runCapturePreflight } from './capture/preflight.js';
 
@@ -201,8 +201,23 @@ export class MeetingsBotSidecar {
   }
 }
 
-// Auto-run if executed directly as entrypoint
+// ─── Entrypoint ────────────────────────────────────────────────────────────
+//
+// Two modes, chosen by whether a subcommand was passed:
+//
+//   `sidecar.js start --meeting-id …`  → one-shot CLI (cli.ts). This is the
+//      mode the shell uses: `host.pkgSidecarCall` spawns the binary, reads one
+//      JSON object off stdout, and drops the child.
+//   `sidecar.js` (no args)             → long-lived stdio JSON-RPC server.
+//      Retained for manual/direct driving; the shell never reaches it, because
+//      `manifest.sidecars[]` entries are not supervised.
 if (import.meta.url === `file://${process.argv[1]}` || process.argv[1]?.endsWith('sidecar.js')) {
-  const sidecar = new MeetingsBotSidecar();
-  sidecar.startStdio();
+  const argv = process.argv.slice(2);
+  if (argv.length > 0) {
+    const { runCli } = await import('./cli.js');
+    process.exitCode = await runCli(argv);
+  } else {
+    const sidecar = new MeetingsBotSidecar();
+    sidecar.startStdio();
+  }
 }

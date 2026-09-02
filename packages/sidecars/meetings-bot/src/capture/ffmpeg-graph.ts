@@ -7,10 +7,34 @@ export interface FfmpegGraphConfig {
     type: 'pulse' | 'alsa' | 'dshow' | 'avfoundation' | 'default';
     deviceOrSink?: string;
   };
+  /**
+   * Capture BOTH sides of the conversation, not just one.
+   *
+   * A meeting has two audio paths that never meet in the OS: remote
+   * participants arrive on the output sink (you hear them) and the local
+   * speaker arrives on the input source (your mic). Recording a single
+   * device therefore always loses half the meeting — capturing
+   * `@DEFAULT_SOURCE@` alone yields a tape of you talking into silence,
+   * which is the failure the first cut of this file shipped with.
+   *
+   * When true (the default for `local_recording`) the graph opens the
+   * default sink MONITOR and the default mic as two inputs and `amix`es
+   * them into one mono track. PulseAudio/PipeWire-Pulse resolve the
+   * `@DEFAULT_*@` aliases at open time, so switching headphones mid-session
+   * does not need a re-plumb, and no `pactl` is required — ffmpeg talks to
+   * libpulse directly.
+   */
+  mixSystemAndMic?: boolean;
   outputAudioPath: string;
   outputCompressedPath?: string;
   ffmpegBinary?: string;
 }
+
+/** PulseAudio server-resolved alias for the monitor of the current default
+ *  sink — i.e. everything the machine is playing (the remote participants). */
+export const DEFAULT_MONITOR_DEVICE = '@DEFAULT_MONITOR@';
+/** PulseAudio server-resolved alias for the current default input (the mic). */
+export const DEFAULT_SOURCE_DEVICE = '@DEFAULT_SOURCE@';
 
 export interface CaptureSessionStatus {
   active: boolean;
@@ -27,20 +51,51 @@ export interface CaptureSessionStatus {
 export function buildFfmpegArgs(config: FfmpegGraphConfig): string[] {
   const args: string[] = ['-y'];
   const platform = os.platform();
+  const isLinuxPulse =
+    config.audioInput.type === 'pulse' ||
+    (config.audioInput.type === 'default' && platform === 'linux');
 
-  // Audio input configuration
-  if (config.audioInput.type === 'pulse' || (config.audioInput.type === 'default' && platform === 'linux')) {
-    const device = config.audioInput.deviceOrSink ?? 'default';
-    args.push('-f', 'pulse', '-i', device);
-  } else if (config.audioInput.type === 'dshow' || (config.audioInput.type === 'default' && platform === 'win32')) {
-    const device = config.audioInput.deviceOrSink ?? 'audio=virtual-audio-capturer';
-    args.push('-f', 'dshow', '-i', device);
-  } else if (config.audioInput.type === 'avfoundation' || (config.audioInput.type === 'default' && platform === 'darwin')) {
-    const device = config.audioInput.deviceOrSink ?? ':0';
-    args.push('-f', 'avfoundation', '-i', device);
+  // ── Dual-source path: system audio + mic, mixed ────────────────────────
+  // Only PulseAudio exposes a monitor device this cleanly, so the mix is
+  // Linux-only for now; other platforms fall through to the single-device
+  // path below and are a separate port (mirrors the Xvfb bot scoping).
+  if (isLinuxPulse && config.mixSystemAndMic !== false) {
+    // `thread_queue_size` is raised off its default of 8 because two live
+    // pulse captures feeding one filter graph will otherwise log
+    // "Thread message queue blocking" and drop packets on the input that
+    // loses the race — audible as clipped syllables in the transcript.
+    args.push(
+      '-thread_queue_size', '1024',
+      '-f', 'pulse', '-i', config.audioInput.deviceOrSink ?? DEFAULT_MONITOR_DEVICE,
+      '-thread_queue_size', '1024',
+      '-f', 'pulse', '-i', DEFAULT_SOURCE_DEVICE
+    );
+    // `duration=longest` keeps recording while either side is live, so the
+    // tape does not stop when one party mutes. `dropout_transition=0`
+    // suppresses amix's default 2s volume ramp when an input goes quiet —
+    // without it every pause re-normalises the gain and the speech that
+    // follows comes back at the wrong level.
+    args.push(
+      '-filter_complex',
+      '[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=0[aout]',
+      '-map', '[aout]'
+    );
+  } else {
+    // ── Single-device path (non-Linux, or explicit opt-out) ──────────────
+    if (isLinuxPulse) {
+      const device = config.audioInput.deviceOrSink ?? DEFAULT_MONITOR_DEVICE;
+      args.push('-f', 'pulse', '-i', device);
+    } else if (config.audioInput.type === 'dshow' || (config.audioInput.type === 'default' && platform === 'win32')) {
+      const device = config.audioInput.deviceOrSink ?? 'audio=virtual-audio-capturer';
+      args.push('-f', 'dshow', '-i', device);
+    } else if (config.audioInput.type === 'avfoundation' || (config.audioInput.type === 'default' && platform === 'darwin')) {
+      const device = config.audioInput.deviceOrSink ?? ':0';
+      args.push('-f', 'avfoundation', '-i', device);
+    }
   }
 
-  // Audio Output: 16kHz 16-bit Mono PCM for Whisper STT
+  // Audio Output: 16kHz 16-bit Mono PCM — whisper.cpp's native input format,
+  // so no resample step is needed between capture and STT.
   args.push(
     '-vn',
     '-c:a', 'pcm_s16le',
@@ -49,7 +104,7 @@ export function buildFfmpegArgs(config: FfmpegGraphConfig): string[] {
     config.outputAudioPath
   );
 
-  // Optional compressed output (AAC/M4A) for lightweight archiving if specified
+  // Optional compressed output (AAC/M4A) for lightweight archiving.
   if (config.outputCompressedPath) {
     args.push(
       '-vn',

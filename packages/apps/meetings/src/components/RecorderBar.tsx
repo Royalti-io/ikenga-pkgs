@@ -7,6 +7,10 @@ export interface RecorderBarProps {
   onStopRecording: () => void;
   hasConsent: boolean;
   onRequestConsent: () => void;
+  /** Non-null while a start/stop/transcribe round-trip is in flight. Disables
+   *  the controls so a second click cannot start a competing recorder or
+   *  interrupt a transcription that is already running. */
+  busy?: string | null;
 }
 
 export const RecorderBar: React.FC<RecorderBarProps> = ({
@@ -16,6 +20,7 @@ export const RecorderBar: React.FC<RecorderBarProps> = ({
   onStopRecording,
   hasConsent,
   onRequestConsent,
+  busy = null,
 }) => {
   const [meetingTitle, setMeetingTitle] = useState('');
 
@@ -67,13 +72,14 @@ export const RecorderBar: React.FC<RecorderBarProps> = ({
               {formatElapsed(elapsedSeconds)}
             </span>
             <span style={{ fontSize: '0.85rem', color: 'var(--ik-text-secondary, #9ca3af)' }}>
-              Capturing system audio & screen (100% local)
+              {busy ?? 'Capturing system audio + microphone (100% local)'}
             </span>
           </div>
 
           <button
             type="button"
             onClick={onStopRecording}
+            disabled={busy !== null}
             style={{
               padding: '0.5rem 1.25rem',
               borderRadius: '6px',
@@ -81,7 +87,8 @@ export const RecorderBar: React.FC<RecorderBarProps> = ({
               backgroundColor: '#dc2626',
               color: '#ffffff',
               fontWeight: 600,
-              cursor: 'pointer',
+              cursor: busy !== null ? 'not-allowed' : 'pointer',
+              opacity: busy !== null ? 0.6 : 1,
             }}
           >
             ⏹ Stop Recording
@@ -115,6 +122,7 @@ export const RecorderBar: React.FC<RecorderBarProps> = ({
           <button
             type="button"
             onClick={handleStart}
+            disabled={busy !== null}
             style={{
               padding: '0.5rem 1.25rem',
               borderRadius: '6px',
@@ -122,14 +130,16 @@ export const RecorderBar: React.FC<RecorderBarProps> = ({
               backgroundColor: 'var(--ik-primary, #3b82f6)',
               color: '#ffffff',
               fontWeight: 600,
-              cursor: 'pointer',
+              cursor: busy !== null ? 'not-allowed' : 'pointer',
+              opacity: busy !== null ? 0.6 : 1,
               display: 'flex',
               alignItems: 'center',
               gap: '0.5rem',
+              whiteSpace: 'nowrap',
             }}
           >
             <span>🎙️</span>
-            <span>Start Local Recording</span>
+            <span>{busy ?? 'Start Local Recording'}</span>
           </button>
         </>
       )}
