@@ -301,21 +301,26 @@ describe('transcribe pid guard', () => {
     assert.equal(isProcessAlive(liveChildPid), true);
     await writeWhisperPid(mediaDir, liveChildPid);
 
-    // Provide an existing transcript so cmdTranscribe can finish after clearing pid
-    const transcriptPath = paths.audioPath.replace(/\.wav$/i, '') + '.transcript.json';
-    const sampleTranscript = { transcription: [{ text: 'forced rerun' }] };
-    await fs.writeFile(transcriptPath, JSON.stringify(sampleTranscript), 'utf8');
-
-    const { code, json } = await captureCliOutput([
+    const { json } = await captureCliOutput([
       'transcribe',
       '--meeting-id', meetingId,
       '--output-dir', baseDir,
       '--force',
     ]);
 
-    // Live child process should have been killed
+    // The subject of this test is the GUARD, not the transcription.
+    //
+    // `--force` deliberately bypasses transcript reuse as well, so what happens
+    // after the guard is cleared depends on whether whisper.cpp and a model are
+    // installed on the machine running the test. Asserting `code === 0` made
+    // this pass on a developer box with whisper installed and fail on CI, which
+    // has neither — an environment-dependent test that turned the build red for
+    // everyone except its author.
+    //
+    // So assert only what `--force` actually promises: the stale process is
+    // killed, and the run is NOT short-circuited by the already-running refusal.
     await new Promise((r) => setTimeout(r, 100));
-    assert.equal(isProcessAlive(liveChildPid), false);
-    assert.equal(code, 0);
+    assert.equal(isProcessAlive(liveChildPid), false, '--force must kill the stale whisper');
+    assert.notEqual(json.already_running, true, '--force must not be refused by the guard');
   });
 });
