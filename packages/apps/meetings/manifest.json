@@ -1,0 +1,103 @@
+{
+  "id": "com.ikenga.meetings",
+  "name": "Meetings",
+  "version": "0.1.0",
+  "ikenga_api": "3",
+  "kind": "app",
+  "author": {
+    "name": "Royalti, Inc.",
+    "key": "royalti"
+  },
+  "ui": {
+    "nav": [
+      {
+        "id": "meetings.index",
+        "label": "Meetings",
+        "icon": "video",
+        "section": "ops",
+        "route": "/pkg/com.ikenga.meetings/meetings"
+      }
+    ],
+    "routes": [
+      {
+        "path": "/meetings",
+        "kind": "iframe",
+        "source": "dist/index.html"
+      }
+    ],
+    "csp": {
+      "default-src": [
+        "'self'"
+      ],
+      "script-src": [
+        "'self'",
+        "'unsafe-inline'"
+      ],
+      "style-src": [
+        "'self'",
+        "'unsafe-inline'"
+      ],
+      "font-src": [
+        "'self'",
+        "data:"
+      ],
+      "img-src": [
+        "'self'",
+        "data:",
+        "blob:",
+        "file:"
+      ],
+      "media-src": [
+        "'self'",
+        "blob:",
+        "file:"
+      ],
+      "connect-src": [
+        "'self'",
+        "http://127.0.0.1:*"
+      ]
+    }
+  },
+  "sidecars": [
+    {
+      "name": "pa-com-ikenga-meetings-bot",
+      "bin": "sidecars/bot/dist/sidecar.js",
+      "stdio": "json",
+      "restart_when_changed": [
+        "sidecars/bot/dist/sidecar.js"
+      ],
+      "auto_restart": false
+    }
+  ],
+  "capabilities": {
+    "sqlite": {
+      "db": "ikenga.local"
+    }
+  },
+  "permissions": {
+    "sqlite.tables": [
+      "meetings",
+      "meeting_speakers",
+      "meeting_transcripts",
+      "meeting_action_items",
+      "meeting_summaries",
+      "tasks"
+    ],
+    "fs.read": [
+      "$pkg_data/**",
+      "~/.ikenga/media/**",
+      "~/.ikenga/models/**",
+      "~/.ikenga/bin/**"
+    ],
+    "fs.write": [
+      "$pkg_data/**",
+      "~/.ikenga/media/**"
+    ],
+    "shell.execute": [
+      "node",
+      "ffmpeg",
+      "ffprobe",
+      "whisper-cli"
+    ]
+  }
+}

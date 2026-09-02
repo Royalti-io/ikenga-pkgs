@@ -1,0 +1,61 @@
+{
+  "id": "com.ikenga.sidecar-meetings-bot",
+  "name": "Ikenga Meetings Bot & Local Recorder Sidecar",
+  "version": "0.1.0",
+  "ikenga_api": "3",
+  "kind": "embedded",
+  "author": {
+    "name": "Royalti, Inc.",
+    "key": "royalti"
+  },
+  "//": "WP-11/WP-03/WP-02: source of truth for the meetings recorder. NOTE: the com.ikenga.meetings app cannot call this package's sidecar \u2014 pkg_sidecar_call requires the sidecar to belong to the calling pkg \u2014 so the app bundles this source into its own package via packages/apps/meetings/sidecars/bot/build.sh and declares it there. This manifest remains for standalone/bot use.",
+  "sidecars": [
+    {
+      "name": "pa-com-ikenga-sidecar-meetings-bot-runner",
+      "bin": "dist/sidecar.js",
+      "stdio": "json",
+      "auto_restart": false
+    }
+  ],
+  "permissions": {
+    "shell.execute": [
+      "node",
+      "ffmpeg",
+      "ffprobe",
+      "Xvfb",
+      "pactl",
+      "whisper-cli",
+      "main"
+    ],
+    "net": [
+      "http://127.0.0.1:*",
+      "https://meet.google.com",
+      "https://*.google.com",
+      "https://*.gstatic.com",
+      "https://app.zoom.us",
+      "https://*.zoom.us",
+      "https://teams.microsoft.com",
+      "https://*.teams.microsoft.com",
+      "https://huggingface.co",
+      "https://*.huggingface.co",
+      "https://github.com"
+    ],
+    "fs.read": [
+      "$pkg_data/**",
+      "~/.ikenga/media/**",
+      "~/.ikenga/models/**"
+    ],
+    "fs.write": [
+      "$pkg_data/**",
+      "~/.ikenga/media/**",
+      "~/.ikenga/models/**"
+    ],
+    "sqlite.tables": [
+      "meetings",
+      "meeting_speakers",
+      "meeting_transcripts",
+      "meeting_action_items",
+      "meeting_summaries"
+    ]
+  }
+}

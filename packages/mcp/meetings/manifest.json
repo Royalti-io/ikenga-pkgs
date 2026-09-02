@@ -1,0 +1,39 @@
+{
+  "id": "com.ikenga.mcp-meetings",
+  "name": "Meetings MCP",
+  "version": "0.1.0",
+  "ikenga_api": "3",
+  "kind": "skill",
+
+  "author": {
+    "name": "Royalti, Inc.",
+    "key": "royalti"
+  },
+
+  "description": "Model Context Protocol (MCP) server for querying meeting transcripts, search, summaries, and recording controls.",
+
+  "mcp": [
+    {
+      "name": "meetings",
+      "command": "node",
+      "args": ["dist/index.js"],
+      "lifecycle": "long-lived"
+    }
+  ],
+
+  "capabilities": {
+    "sqlite": true
+  },
+
+  "permissions": {
+    "sqlite.tables": [
+      "meetings",
+      "meeting_speakers",
+      "meeting_transcripts",
+      "meeting_action_items",
+      "meeting_summaries"
+    ],
+    "shell.execute": ["node"],
+    "net": ["http://127.0.0.1:*"]
+  }
+}
