@@ -15,11 +15,17 @@ import { MeetingStage } from './components/MeetingStage.js';
 import { Transcript } from './components/Transcript.js';
 import { summarizeMeetingTranscript } from './intelligence/summarizer.js';
 import { syncActionItemsToTasks } from './intelligence/task-sync.js';
-import { callSidecar, connectBridge, hostSqlExecutor, isStandalone } from './bridge.js';
+import {
+  callSidecar,
+  connectBridge,
+  hostSqlExecutor,
+  isStandalone,
+  transcribeMeeting,
+} from './bridge.js';
 
 const db = new MeetingsDbClient(hostSqlExecutor);
 
-/** Budget for `sidecar transcribe`. Whisper runs at roughly 1× realtime on CPU
+/** Budget for supervised MCP transcribe tool. Whisper runs at roughly 1× realtime on CPU
  *  for `small.en`, so an hour of meeting needs an hour of headroom. Two hours
  *  covers any meeting this app is meant to record. */
 const TRANSCRIBE_TIMEOUT_SECS = 7200;
@@ -217,10 +223,7 @@ export const App: React.FC = () => {
       setBusy('Transcribing locally…');
       await db.updateMeetingStatus(meetingId, 'transcribing');
 
-      const result = await callSidecar<{ segments: TranscriptSegment[] }>(
-        ['transcribe', '--meeting-id', meetingId],
-        { timeoutSecs: TRANSCRIBE_TIMEOUT_SECS }
-      );
+      const result = await transcribeMeeting(meetingId, TRANSCRIBE_TIMEOUT_SECS);
 
       // Clear any partial run first so a retry replaces the transcript rather
       // than appending a second copy of every line.

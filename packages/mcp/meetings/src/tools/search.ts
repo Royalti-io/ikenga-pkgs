@@ -59,9 +59,14 @@ export async function handleSearchTool(
 ): Promise<any> {
   switch (name) {
     case 'search_transcripts': {
-      const results = await client.searchTranscripts(args.query, args.meeting_id);
+      const query = String(args?.query ?? '');
+      const meetingId =
+        typeof args?.meeting_id === 'string' && args.meeting_id.trim()
+          ? args.meeting_id.trim()
+          : undefined;
+      const results = await client.searchTranscripts(query, meetingId);
       return {
-        query: args.query,
+        query,
         count: results.length,
         segments: results.map((r) => ({
           meeting_id: r.meeting_id,
@@ -75,11 +80,16 @@ export async function handleSearchTool(
     }
 
     case 'get_meeting_transcript': {
-      const segments = await client.listTranscriptSegments(args.meeting_id);
-      const speakers = await client.listSpeakers(args.meeting_id);
+      const meetingId = String(args?.meeting_id ?? '');
+      const segments = await client.listTranscriptSegments(meetingId);
+      const speakers = await client.listSpeakers(meetingId);
       return {
-        meeting_id: args.meeting_id,
-        speakers: speakers.map((s) => ({ id: s.id, name: s.name, source: s.speaker_source })),
+        meeting_id: meetingId,
+        speakers: speakers.map((s) => ({
+          id: s.id,
+          name: s.name,
+          source: s.speaker_source,
+        })),
         segment_count: segments.length,
         segments: segments.map((s) => ({
           speaker: s.speaker_name ?? 'Speaker',
@@ -91,11 +101,12 @@ export async function handleSearchTool(
     }
 
     case 'get_meeting_summary': {
-      const summary = await client.getSummary(args.meeting_id);
+      const meetingId = String(args?.meeting_id ?? '');
+      const summary = await client.getSummary(meetingId);
       if (!summary) {
         return {
           found: false,
-          meeting_id: args.meeting_id,
+          meeting_id: meetingId,
           message: 'No summary generated yet for this meeting.',
         };
       }
