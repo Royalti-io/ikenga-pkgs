@@ -42,10 +42,65 @@ export function normalizeRow<T>(row: any): T {
   return out as T;
 }
 
+/**
+ * The tables this pkg is allowed to touch.
+ *
+ * Mirrors `permissions["sqlite.tables"]` in the com.ikenga.meetings manifest.
+ * That manifest scope is enforced by the shell for the IFRAME path
+ * (`host.dbQuery` / `host.dbExec` check it in pkg-iframe-host.tsx) — but a pkg's
+ * BACKEND process has no scoped accessor available to it, so opening the
+ * database with better-sqlite3 means holding a connection with full read/write
+ * over every table in `ikenga.db`: tasks, email, finance, everything.
+ *
+ * That is a real widening of trust and it should not be incidental. This guard
+ * re-imposes the manifest scope in code, so a bug — or a prompt injection
+ * reaching a tool argument — cannot reach beyond the meetings domain. It is not
+ * a substitute for host-side enforcement; it is the best a pkg can do for itself
+ * until a scoped backend accessor exists.
+ */
+export const ALLOWED_TABLES = [
+  'meetings',
+  'meeting_speakers',
+  'meeting_transcripts',
+  'meeting_action_items',
+  'meeting_summaries',
+] as const;
+
+/** Every table name a statement references, lowercased. */
+export function tablesReferenced(sql: string): string[] {
+  const found = new Set<string>();
+  const re = /\b(?:from|join|into|update|table)\s+["'`\[]?([A-Za-z_][A-Za-z0-9_]*)["'`\]]?/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(sql)) !== null) {
+    if (m[1]) found.add(m[1].toLowerCase());
+  }
+  return [...found];
+}
+
+/** Throw unless every table a statement touches is in the pkg's scope. */
+export function assertInScope(sql: string): void {
+  const allowed = new Set<string>(ALLOWED_TABLES);
+  const out = tablesReferenced(sql).filter((t) => !allowed.has(t));
+  if (out.length > 0) {
+    throw new Error(
+      `meetings pkg may not touch table(s): ${out.join(', ')}. ` +
+        `Allowed: ${ALLOWED_TABLES.join(', ')}.`
+    );
+  }
+}
+
 export class BetterSqliteExecutor implements SqlExecutor {
   public readonly db: Database.Database;
+  /** True only for a database this pkg created for itself (tests). */
+  private readonly ownsSchema: boolean;
 
   constructor(dbPathOrInstance: string | Database.Database = resolveDatabasePath()) {
+    const livePath = resolveDatabasePath();
+    this.ownsSchema =
+      typeof dbPathOrInstance === 'string'
+        ? dbPathOrInstance === ':memory:' || path.resolve(dbPathOrInstance) !== path.resolve(livePath)
+        : false;
+
     if (typeof dbPathOrInstance === 'string') {
       if (dbPathOrInstance !== ':memory:') {
         const dir = path.dirname(dbPathOrInstance);
@@ -66,7 +121,18 @@ export class BetterSqliteExecutor implements SqlExecutor {
       // Pragmas may not apply to all database configurations
     }
 
-    this.initSchema();
+    // Schema is owned by the shell's migration runner (0063_meetings_domain,
+    // recorded in `_pa_migrations`), NOT by this pkg.
+    //
+    // Creating tables here would put DDL into the user's canonical database
+    // from a pkg process, outside the migration ledger. If this inline schema
+    // ever drifted from the migration, the divergence would be silent and
+    // unattributable. So the tables are only created for a database this pkg
+    // owns outright — an in-memory or explicitly-pathed test database — and
+    // never for the live one.
+    if (this.ownsSchema) {
+      this.initSchema();
+    }
   }
 
   private initSchema(): void {
@@ -138,12 +204,14 @@ export class BetterSqliteExecutor implements SqlExecutor {
   }
 
   async query<T = unknown>(sql: string, params: unknown[] = []): Promise<T[]> {
+    assertInScope(sql);
     const stmt = this.db.prepare(sql);
     const rows = stmt.all(...params);
     return rows.map((r) => normalizeRow<T>(r));
   }
 
   async exec(sql: string, params: unknown[] = []): Promise<void | unknown> {
+    assertInScope(sql);
     if (params && params.length > 0) {
       const stmt = this.db.prepare(sql);
       return stmt.run(...params);

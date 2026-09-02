@@ -17,7 +17,7 @@
     "dev": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist",
-    "test": "node --test --import=tsx src/tools/search.test.ts src/tools/recorder.test.ts src/integration.test.ts src/index.test.ts"
+    "test": "node --test --import=tsx src/tools/search.test.ts src/tools/recorder.test.ts src/integration.test.ts src/index.test.ts src/sqlite.test.ts"
   },
   "dependencies": {
     "@ikenga/meetings-contract": "workspace:*",
