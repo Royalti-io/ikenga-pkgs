@@ -27,7 +27,7 @@ import {
 
 import { buildFfmpegArgs, FfmpegGraphConfig } from './capture/ffmpeg-graph.js';
 import { runCapturePreflight } from './capture/preflight.js';
-import { LocalWhisperEngine } from './whisper/engine.js';
+import { LocalWhisperEngine, parseWhisperCppJson } from './whisper/engine.js';
 import { resolveWhisperBinary } from './whisper/binary.js';
 import {
   DEFAULT_WHISPER_MODEL,
@@ -265,6 +265,32 @@ async function cmdTranscribe(flags: Record<string, string>): Promise<unknown> {
   const stat = await fs.stat(audioPath).catch(() => null);
   if (!stat) throw new Error(`audio file not found: ${audioPath}`);
   if (stat.size === 0) throw new Error(`audio file is empty: ${audioPath}`);
+
+  // ── Reuse a completed run before starting a new one ─────────────────────
+  //
+  // whisper.cpp is a GRANDCHILD of the shell: the host spawns this CLI, and
+  // this CLI spawns whisper. When a call is abandoned (an MCP timeout, a pane
+  // reload) the host kills the CLI, but the grandchild is not in that kill and
+  // keeps running to completion — observed burning ~380% CPU for minutes after
+  // its caller had given up, then writing a perfectly good transcript nobody
+  // read. Rather than throw that work away and pay for it twice, a retry
+  // adopts the finished JSON when it is newer than the audio it describes.
+  const outJsonPath = audioPath.replace(/\.wav$/i, '') + '.transcript.json';
+  if (flags.force !== 'true') {
+    const jsonStat = await fs.stat(outJsonPath).catch(() => null);
+    if (jsonStat && jsonStat.mtimeMs >= stat.mtimeMs) {
+      const parsed = JSON.parse(await fs.readFile(outJsonPath, 'utf8'));
+      const segments = parseWhisperCppJson(parsed, meetingId);
+      return {
+        ok: true,
+        meeting_id: meetingId,
+        audio_path: audioPath,
+        segment_count: segments.length,
+        segments,
+        reused_existing_transcript: true,
+      };
+    }
+  }
 
   const engine = new LocalWhisperEngine();
   const segments = await engine.transcribe({
