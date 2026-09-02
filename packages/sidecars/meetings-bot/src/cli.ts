@@ -129,6 +129,9 @@ async function cmdStart(flags: Record<string, string>): Promise<unknown> {
   const graphConfig: FfmpegGraphConfig = {
     audioInput: { type: 'pulse' },
     outputAudioPath: paths.audioPath,
+    // Written during capture rather than transcoded afterwards, so playback is
+    // available the moment a recording stops.
+    outputCompressedPath: paths.audioCompressedPath,
   };
   const args = buildFfmpegArgs(graphConfig);
 
@@ -311,6 +314,54 @@ async function cmdTranscribe(flags: Record<string, string>): Promise<unknown> {
   };
 }
 
+
+/**
+ * Return a meeting's audio as base64 for playback in the iframe.
+ *
+ * The pane cannot load audio off disk: there is no file-read host verb, and an
+ * <audio src="/home/..."> resolves against the pkg content server, not the
+ * filesystem — which is why the player's controls did nothing at all. Bytes
+ * over the bridge into a blob: URL is the same route com.ikenga.studio uses for
+ * render previews.
+ *
+ * Prefers the compressed copy and transcodes one on demand when it is missing,
+ * so recordings made before that existed still play without re-recording.
+ */
+async function cmdReadAudio(flags: Record<string, string>): Promise<unknown> {
+  const meetingId = requireFlag(flags, 'meeting-id');
+  const paths = getMeetingMediaFilePaths(meetingId, flags['output-dir']);
+
+  let sourcePath = paths.audioCompressedPath;
+  let mime = 'audio/mp4';
+
+  if (!(await fs.stat(sourcePath).catch(() => null))) {
+    const master = await fs.stat(paths.audioPath).catch(() => null);
+    if (!master) throw new Error(`no audio found for meeting ${meetingId}`);
+    try {
+      await execFileAsync(flags.ffmpeg ?? 'ffmpeg', [
+        '-y', '-i', paths.audioPath,
+        '-vn', '-c:a', 'aac', '-b:a', '32k', '-ac', '1',
+        paths.audioCompressedPath,
+      ]);
+    } catch {
+      // Transcode failed (no AAC encoder, disk full). Fall back to the PCM
+      // master: far larger over the bridge, but playable, and a big file beats
+      // a dead play button.
+      sourcePath = paths.audioPath;
+      mime = 'audio/wav';
+    }
+  }
+
+  const buf = await fs.readFile(sourcePath);
+  return {
+    ok: true,
+    meeting_id: meetingId,
+    mime,
+    bytes: buf.length,
+    base64: buf.toString('base64'),
+  };
+}
+
 // ─── entrypoint ────────────────────────────────────────────────────────────
 
 const COMMANDS: Record<string, (flags: Record<string, string>) => Promise<unknown>> = {
@@ -319,6 +370,7 @@ const COMMANDS: Record<string, (flags: Record<string, string>) => Promise<unknow
   status: cmdStatus,
   stop: cmdStop,
   transcribe: cmdTranscribe,
+  'read-audio': cmdReadAudio,
 };
 
 export async function runCli(argv: string[]): Promise<number> {

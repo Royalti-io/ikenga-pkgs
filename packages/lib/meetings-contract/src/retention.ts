@@ -77,6 +77,13 @@ export function getMeetingMediaRelativeDir(meetingId: string): string {
 export const MEETING_MEDIA_FILES = {
   VIDEO: 'video.mp4',
   AUDIO: 'audio.wav',
+  /** Compressed playback copy. The canonical `audio.wav` is 16 kHz mono PCM
+   *  because that is whisper's native input — but it is ~115 MB/hour, and the
+   *  iframe can only receive media as base64 over the MCP bridge (there is no
+   *  file-read host verb and no asset URL a pkg pane can point an <audio> at).
+   *  A 32 kbps mono AAC copy is ~14 MB/hour, which is the difference between a
+   *  player that loads and one that cannot. */
+  AUDIO_COMPRESSED: 'audio.m4a',
   METADATA: 'meta.json',
   TRANSCRIPT_RAW: 'transcript.raw.json',
 } as const;

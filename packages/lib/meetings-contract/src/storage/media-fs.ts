@@ -23,6 +23,9 @@ export interface MeetingMediaPaths {
   dir: string;
   videoPath: string;
   audioPath: string;
+  /** Compressed playback copy; may not exist for recordings made before it
+   *  was introduced, so readers must fall back to `audioPath`. */
+  audioCompressedPath: string;
   metaPath: string;
   transcriptRawPath: string;
 }
@@ -39,6 +42,7 @@ export function getMeetingMediaFilePaths(
     dir,
     videoPath: path.join(dir, MEETING_MEDIA_FILES.VIDEO),
     audioPath: path.join(dir, MEETING_MEDIA_FILES.AUDIO),
+    audioCompressedPath: path.join(dir, MEETING_MEDIA_FILES.AUDIO_COMPRESSED),
     metaPath: path.join(dir, MEETING_MEDIA_FILES.METADATA),
     transcriptRawPath: path.join(dir, MEETING_MEDIA_FILES.TRANSCRIPT_RAW),
   };

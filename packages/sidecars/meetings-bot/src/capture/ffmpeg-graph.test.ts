@@ -83,6 +83,40 @@ describe('FFmpeg Audio-Only Graph Builder', () => {
     assert.ok(args.includes('@DEFAULT_SOURCE@'));
   });
 
+  it('asplits the mix when a compressed playback copy is requested', () => {
+    // A filter output pad can only be consumed by ONE output, so mapping
+    // [aout] into both the WAV and the M4A fails at runtime with "Filter aout
+    // has an unconnected output". The graph must split instead.
+    const args = buildFfmpegArgs({
+      audioInput: { type: 'pulse' },
+      outputAudioPath: '/tmp/m/audio.wav',
+      outputCompressedPath: '/tmp/m/audio.m4a',
+    });
+
+    const filterIdx = args.indexOf('-filter_complex');
+    assert.match(String(args[filterIdx + 1]), /asplit=2\[aout\]\[acomp\]/);
+
+    // Both outputs are mapped, from different pads.
+    assert.ok(args.includes('[aout]'));
+    assert.ok(args.includes('[acomp]'));
+    assert.equal(args.filter((a) => a === '-map').length, 2);
+
+    // Compressed copy is low-bitrate mono: it exists to cross the MCP bridge
+    // as base64, where size is the binding constraint.
+    assert.ok(args.includes('32k'));
+    assert.ok(args.includes('/tmp/m/audio.m4a'));
+  });
+
+  it('does not asplit when only the master is requested', () => {
+    const args = buildFfmpegArgs({
+      audioInput: { type: 'pulse' },
+      outputAudioPath: '/tmp/m/audio.wav',
+    });
+    const filterIdx = args.indexOf('-filter_complex');
+    assert.ok(!String(args[filterIdx + 1]).includes('asplit'));
+    assert.equal(args.filter((a) => a === '-map').length, 1);
+  });
+
   it('falls back to a single input when the mix is explicitly disabled', () => {
     const args = buildFfmpegArgs({
       audioInput: { type: 'pulse', deviceOrSink: 'some.monitor' },

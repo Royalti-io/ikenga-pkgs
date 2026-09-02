@@ -1,6 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Meeting, TranscriptSegment, MeetingSpeaker } from '@ikenga/meetings-contract';
 import { TranscriptView } from './TranscriptView.js';
+import { callSidecar } from '../bridge.js';
+
+/** Decode the sidecar's base64 payload into a blob: URL the <audio> can play. */
+function base64ToBlobUrl(base64: string, mime: string): string {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes], { type: mime }));
+}
 
 export interface SynchronizedPlayerProps {
   meeting: Meeting;
@@ -21,6 +30,62 @@ export const SynchronizedPlayer: React.FC<SynchronizedPlayerProps> = ({
   const [durationSecs, setDurationSecs] = useState<number>(meeting.duration_seconds || 0);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [audioError, setAudioError] = useState<string | null>(null);
+  const [loadingAudio, setLoadingAudio] = useState<boolean>(false);
+
+  // ── Load the audio as bytes ─────────────────────────────────────────────
+  //
+  // The element cannot be pointed at `meeting.audio_path`: a filesystem path in
+  // `src` resolves against the pkg content server's origin, not the disk, so it
+  // 404s and every transport control silently does nothing. There is no
+  // file-read host verb and no asset URL a pkg pane can reference, so the bytes
+  // come over the bridge and become a blob: URL — the same route studio uses
+  // for render previews.
+  useEffect(() => {
+    let cancelled = false;
+    let objectUrl: string | null = null;
+
+    setAudioUrl(null);
+    setAudioError(null);
+    setIsPlaying(false);
+    setCurrentTimeMs(0);
+
+    if (!meeting.audio_path) {
+      setAudioError('This meeting has no audio file on disk.');
+      return;
+    }
+
+    setLoadingAudio(true);
+    (async () => {
+      try {
+        const res = await callSidecar<{ base64: string; mime: string; bytes: number }>(
+          ['read-audio', '--meeting-id', meeting.id],
+          // Generous: the sidecar transcodes on demand for recordings made
+          // before the compressed copy existed.
+          { timeoutSecs: 600 }
+        );
+        if (cancelled) return;
+        if (!res.base64) {
+          setAudioError('Audio file is empty.');
+          return;
+        }
+        objectUrl = base64ToBlobUrl(res.base64, res.mime);
+        setAudioUrl(objectUrl);
+      } catch (err) {
+        if (!cancelled) setAudioError((err as Error).message);
+      } finally {
+        if (!cancelled) setLoadingAudio(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      // Revoke on unmount/switch or each opened meeting leaks its whole
+      // decoded buffer for the life of the pane.
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [meeting.id, meeting.audio_path]);
 
   useEffect(() => {
     if (audioRef.current) {
@@ -33,7 +98,10 @@ export const SynchronizedPlayer: React.FC<SynchronizedPlayerProps> = ({
       audioRef.current.currentTime = seekMs / 1000;
       setCurrentTimeMs(seekMs);
       if (audioRef.current.paused) {
-        audioRef.current.play().catch(() => {});
+        audioRef.current
+          .play()
+          .then(() => setIsPlaying(true))
+          .catch((err) => setAudioError(`Playback failed: ${err.message}`));
       }
     }
   };
@@ -55,7 +123,10 @@ export const SynchronizedPlayer: React.FC<SynchronizedPlayerProps> = ({
       audioRef.current.pause();
       setIsPlaying(false);
     } else {
-      audioRef.current.play().then(() => setIsPlaying(true)).catch(() => {});
+      audioRef.current
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch((err) => setAudioError(`Playback failed: ${err.message}`));
     }
   };
 
@@ -127,15 +198,32 @@ export const SynchronizedPlayer: React.FC<SynchronizedPlayerProps> = ({
         </div>
 
         {/* Hidden Audio Element */}
-        <audio
-          ref={audioRef}
-          src={meeting.audio_path}
-          onTimeUpdate={handleTimeUpdate}
-          onLoadedMetadata={handleLoadedMetadata}
-          onPlay={() => setIsPlaying(true)}
-          onPause={() => setIsPlaying(false)}
-          onEnded={() => setIsPlaying(false)}
-        />
+        {audioUrl && (
+          <audio
+            ref={audioRef}
+            src={audioUrl}
+            onTimeUpdate={handleTimeUpdate}
+            onLoadedMetadata={handleLoadedMetadata}
+            onPlay={() => setIsPlaying(true)}
+            onPause={() => setIsPlaying(false)}
+            onEnded={() => setIsPlaying(false)}
+            onError={() => setAudioError('The browser could not decode this audio.')}
+          />
+        )}
+
+        {(loadingAudio || audioError) && (
+          <div
+            style={{
+              fontSize: '0.8rem',
+              padding: '0.4rem 0.6rem',
+              borderRadius: '4px',
+              color: audioError ? '#fca5a5' : 'var(--ik-text-secondary, #9ca3af)',
+              backgroundColor: audioError ? 'rgba(127,29,29,0.25)' : 'transparent',
+            }}
+          >
+            {audioError ?? 'Loading audio…'}
+          </div>
+        )}
 
         {/* Audio Visualizer & Waveform Mock */}
         <div

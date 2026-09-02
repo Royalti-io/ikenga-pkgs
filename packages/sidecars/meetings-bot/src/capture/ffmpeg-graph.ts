@@ -51,6 +51,9 @@ export interface CaptureSessionStatus {
 export function buildFfmpegArgs(config: FfmpegGraphConfig): string[] {
   const args: string[] = ['-y'];
   const platform = os.platform();
+  // Whether the mix came out of a filter graph — the compressed output must
+  // then be mapped from the filter's second pad, not from an input stream.
+  let mappedFromFilter = false;
   const isLinuxPulse =
     config.audioInput.type === 'pulse' ||
     (config.audioInput.type === 'default' && platform === 'linux');
@@ -75,11 +78,23 @@ export function buildFfmpegArgs(config: FfmpegGraphConfig): string[] {
     // suppresses amix's default 2s volume ramp when an input goes quiet —
     // without it every pause re-normalises the gain and the speech that
     // follows comes back at the wrong level.
-    args.push(
-      '-filter_complex',
-      '[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=0[aout]',
-      '-map', '[aout]'
-    );
+    //
+    // When a compressed copy is also wanted the mix is `asplit`, because a
+    // filter output pad can only be consumed by ONE output — mapping [aout]
+    // twice fails with "Filter aout has an unconnected output".
+    if (config.outputCompressedPath) {
+      args.push(
+        '-filter_complex',
+        '[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=0,asplit=2[aout][acomp]'
+      );
+    } else {
+      args.push(
+        '-filter_complex',
+        '[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=0[aout]'
+      );
+    }
+    args.push('-map', '[aout]');
+    mappedFromFilter = true;
   } else {
     // ── Single-device path (non-Linux, or explicit opt-out) ──────────────
     if (isLinuxPulse) {
@@ -104,12 +119,22 @@ export function buildFfmpegArgs(config: FfmpegGraphConfig): string[] {
     config.outputAudioPath
   );
 
-  // Optional compressed output (AAC/M4A) for lightweight archiving.
+  // Optional compressed playback copy.
+  //
+  // 32 kbps mono AAC, not 128 kbps: this file exists to be shipped into the
+  // iframe as base64 over the MCP bridge, where size is the binding constraint
+  // (~14 MB/hour at 32k vs ~57 MB at 128k). It carries speech, and the
+  // canonical 16 kHz PCM master remains on disk for anything that needs
+  // fidelity.
   if (config.outputCompressedPath) {
+    if (mappedFromFilter) {
+      args.push('-map', '[acomp]');
+    }
     args.push(
       '-vn',
       '-c:a', 'aac',
-      '-b:a', '128k',
+      '-b:a', '32k',
+      '-ac', '1',
       config.outputCompressedPath
     );
   }
