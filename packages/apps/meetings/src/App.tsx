@@ -1,74 +1,94 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Meeting,
-  TranscriptSegment,
+  MeetingActionItem,
+  MeetingSummary,
   MeetingSpeaker,
   MeetingsDbClient,
+  TranscriptSegment,
 } from '@ikenga/meetings-contract';
-import { RecorderBar } from './components/RecorderBar.js';
-import { MeetingList } from './components/MeetingList.js';
-import { SynchronizedPlayer } from './components/SynchronizedPlayer.js';
 import { ConsentGate } from './components/ConsentGate.js';
-import { connectBridge, hostSqlExecutor, callSidecar, isStandalone } from './bridge.js';
+import { CommandPalette } from './components/CommandPalette.js';
+import { Digest } from './components/Digest.js';
+import { LiveRecording } from './components/LiveRecording.js';
+import { MeetingStage } from './components/MeetingStage.js';
+import { Transcript } from './components/Transcript.js';
+import { summarizeMeetingTranscript } from './intelligence/summarizer.js';
+import { syncActionItemsToTasks } from './intelligence/task-sync.js';
+import { callSidecar, connectBridge, hostSqlExecutor, isStandalone } from './bridge.js';
 
-// Single db client over the host's SQL bridge. Every read and write in this
-// file goes through it, so the pane's contents are whatever ikenga.db holds —
-// state does not live in React and does not die with a reload.
 const db = new MeetingsDbClient(hostSqlExecutor);
 
 /** Budget for `sidecar transcribe`. Whisper runs at roughly 1× realtime on CPU
- *  for `small.en`, so an hour of meeting needs an hour of headroom; the host
- *  aborts the call at this limit and the run is lost, which is worse than
- *  waiting. Two hours covers any meeting this app is meant to record. */
+ *  for `small.en`, so an hour of meeting needs an hour of headroom. Two hours
+ *  covers any meeting this app is meant to record. */
 const TRANSCRIBE_TIMEOUT_SECS = 7200;
+
+const CONSENT_KEY = 'ikenga_meetings_consent_acknowledged_v1';
 
 type Phase = 'connecting' | 'ready' | 'unavailable';
 
 export const App: React.FC = () => {
   const [phase, setPhase] = useState<Phase>('connecting');
   const [meetings, setMeetings] = useState<Meeting[]>([]);
-  const [selectedMeeting, setSelectedMeeting] = useState<Meeting | null>(null);
+  const [selected, setSelected] = useState<Meeting | null>(null);
   const [segments, setSegments] = useState<TranscriptSegment[]>([]);
   const [speakers, setSpeakers] = useState<MeetingSpeaker[]>([]);
-  const [isRecording, setIsRecording] = useState<boolean>(false);
-  const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
+  const [summary, setSummary] = useState<MeetingSummary | null>(null);
+  const [actionItems, setActionItems] = useState<MeetingActionItem[]>([]);
+
+  const [recording, setRecording] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [currentMs, setCurrentMs] = useState(0);
+  const [seekToMs, setSeekToMs] = useState<number | null>(null);
+
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showConsentModal, setShowConsentModal] = useState<boolean>(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [consentOpen, setConsentOpen] = useState(false);
   const [hasConsent, setHasConsent] = useState<boolean>(() => {
     try {
-      return localStorage.getItem('ikenga_meetings_consent_acknowledged_v1') === 'true';
+      return localStorage.getItem(CONSENT_KEY) === 'true';
     } catch {
       return false;
     }
   });
 
-  // Id of the meeting currently being captured. Held in a ref as well as in
-  // the row, because the stop handler must reach it from inside a timer
-  // callback that closed over an older render.
   const recordingIdRef = useRef<string | null>(null);
 
-  // Track parent theme (pkgs own their theme by mirroring the shell's <html>).
+  // Pkgs own their theme by mirroring the shell's <html> attributes.
   useEffect(() => {
-    const syncTheme = () => {
+    const sync = () => {
       try {
-        const parentHtml = window.parent?.document?.documentElement;
-        if (parentHtml) {
-          const theme = parentHtml.getAttribute('data-theme');
-          const mode = parentHtml.getAttribute('data-mode');
-          if (theme) document.documentElement.setAttribute('data-theme', theme);
-          if (mode) document.documentElement.setAttribute('data-mode', mode);
+        const parent = window.parent?.document?.documentElement;
+        if (!parent) return;
+        for (const attr of ['data-theme', 'data-mode', 'data-density']) {
+          const v = parent.getAttribute(attr);
+          if (v) document.documentElement.setAttribute(attr, v);
         }
       } catch {
-        // cross-origin iframe fallback
+        /* cross-origin fallback — keep our own defaults */
       }
     };
-    syncTheme();
-    const interval = setInterval(syncTheme, 1000);
-    return () => clearInterval(interval);
+    sync();
+    const t = setInterval(sync, 1000);
+    return () => clearInterval(t);
   }, []);
 
-  const refreshMeetings = useCallback(async () => {
+  // ⌘K / Ctrl-K opens the archive. Stage has no permanent list, so this is the
+  // only way to reach an older meeting — it has to be always live.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
+  const refresh = useCallback(async () => {
     const rows = await db.listMeetings();
     setMeetings(rows);
     return rows;
@@ -76,24 +96,21 @@ export const App: React.FC = () => {
 
   // ── Boot ────────────────────────────────────────────────────────────────
   //
-  // Connect, then reconcile against reality before painting: a recording is a
-  // detached ffmpeg process that survives this iframe being closed, reloaded,
-  // or crashed. If one is still running we must re-attach to it rather than
-  // show an idle recorder over a live microphone.
+  // Reconcile before painting: a recording is a detached ffmpeg process that
+  // outlives this iframe. If one is still running we re-attach rather than show
+  // an idle recorder over a hot microphone.
   useEffect(() => {
     let cancelled = false;
-
     (async () => {
       try {
         const conn = await connectBridge();
         if (cancelled) return;
-
         if (conn.mode === 'standalone') {
           setPhase('unavailable');
           return;
         }
 
-        const rows = await refreshMeetings();
+        const rows = await refresh();
         if (cancelled) return;
 
         const inFlight = rows.find((m) => m.status === 'recording');
@@ -104,19 +121,20 @@ export const App: React.FC = () => {
             inFlight.id,
           ]);
           if (cancelled) return;
-
           if (status.state === 'recording') {
             recordingIdRef.current = inFlight.id;
-            setIsRecording(true);
-            setElapsedSeconds(status.elapsed_seconds);
-            setSelectedMeeting(inFlight);
+            setRecording(true);
+            setElapsed(status.elapsed_seconds);
+            setSelected(inFlight);
           } else {
-            // The row says "recording" but no recorder is alive — the app was
-            // killed mid-session. Mark it failed so the list stops lying, and
-            // leave the partial audio on disk for the user to transcribe.
+            // Row claims "recording" but nothing is alive — the app was killed
+            // mid-session. Mark it failed so the list stops lying; the partial
+            // audio stays on disk and stays transcribable.
             await db.updateMeetingStatus(inFlight.id, 'failed');
-            await refreshMeetings();
+            await refresh();
           }
+        } else if (rows.length > 0) {
+          setSelected(rows[0]!);
         }
 
         setPhase('ready');
@@ -127,60 +145,76 @@ export const App: React.FC = () => {
         }
       }
     })();
-
     return () => {
       cancelled = true;
     };
-  }, [refreshMeetings]);
+  }, [refresh]);
 
-  // Elapsed-time ticker. Derived from the recorder's own clock at boot and
-  // then advanced locally; the sidecar remains the authority on whether a
-  // recording is actually live.
   useEffect(() => {
-    if (!isRecording) return;
-    const timer = setInterval(() => setElapsedSeconds((prev) => prev + 1), 1000);
-    return () => clearInterval(timer);
-  }, [isRecording]);
+    if (!recording) return;
+    const t = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [recording]);
 
-  // Load a meeting's transcript when it is selected.
+  /**
+   * Derive and persist the meeting's intelligence (WP-08).
+   *
+   * Run once, after a transcript lands, rather than on every open: the
+   * summariser is deterministic over the same segments, so recomputing on each
+   * render would only burn cycles and churn rows.
+   */
+  const buildDigest = useCallback(async (meetingId: string, segs: TranscriptSegment[]) => {
+    if (segs.length === 0) return;
+    const existing = await db.getSummary(meetingId);
+    if (existing) return;
+
+    const { summary: sum, actionItems: acts } = summarizeMeetingTranscript(meetingId, segs);
+    await db.insertSummary(sum);
+    for (const a of acts) await db.insertActionItem(a);
+    setSummary(sum);
+    setActionItems(acts);
+  }, []);
+
+  // Load everything attached to the selected meeting.
   useEffect(() => {
     let cancelled = false;
-    if (!selectedMeeting) {
-      setSegments([]);
-      setSpeakers([]);
+    if (!selected) {
+      setSegments([]); setSpeakers([]); setSummary(null); setActionItems([]);
       return;
     }
     (async () => {
       try {
-        const [segs, spk] = await Promise.all([
-          db.listTranscriptSegments(selectedMeeting.id),
-          db.listSpeakers(selectedMeeting.id),
+        const [segs, spk, sum, acts] = await Promise.all([
+          db.listTranscriptSegments(selected.id),
+          db.listSpeakers(selected.id),
+          db.getSummary(selected.id),
+          db.listActionItems(selected.id),
         ]);
         if (cancelled) return;
         setSegments(segs);
         setSpeakers(spk);
+        setSummary(sum);
+        setActionItems(acts);
+        setCurrentMs(0);
+
+        // Backfill the digest for a transcript that predates WP-08, or whose
+        // summarisation was interrupted. Without this, every meeting recorded
+        // before the intelligence layer existed would show no summary and no
+        // action items forever — the digest would only ever appear for
+        // meetings transcribed after this shipped.
+        if (!sum && segs.length > 0) {
+          await buildDigest(selected.id, segs);
+        }
       } catch (err) {
         if (!cancelled) setError((err as Error).message);
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [selectedMeeting?.id]);
+    return () => { cancelled = true; };
+  }, [selected?.id, buildDigest]);
 
-  /**
-   * Transcribe a finished recording and persist its segments.
-   *
-   * Separate from `handleStopRecording` because the audio outlives a failed
-   * transcription: whisper can be abandoned by an MCP timeout, a shell reload,
-   * or a crash, and in every one of those cases the WAV is still on disk and
-   * fully recoverable. Stranding a 40-minute meeting because the STT step
-   * failed once would be the worst possible outcome for this app, so the same
-   * path is reachable again from the meeting list.
-   */
   const runTranscription = useCallback(
     async (meetingId: string) => {
-      setBusy('Transcribing (this runs locally and can take a while)…');
+      setBusy('Transcribing locally…');
       await db.updateMeetingStatus(meetingId, 'transcribing');
 
       const result = await callSidecar<{ segments: TranscriptSegment[] }>(
@@ -188,78 +222,51 @@ export const App: React.FC = () => {
         { timeoutSecs: TRANSCRIBE_TIMEOUT_SECS }
       );
 
-      // Clear any partial run before inserting, so a retry cannot double up
-      // the transcript.
+      // Clear any partial run first so a retry replaces the transcript rather
+      // than appending a second copy of every line.
       await db.deleteTranscriptSegments(meetingId);
-      for (const segment of result.segments) {
-        await db.insertTranscriptSegment(segment);
-      }
+      for (const seg of result.segments) await db.insertTranscriptSegment(seg);
 
       await db.updateMeetingStatus(meetingId, 'completed');
-      const rows = await refreshMeetings();
-      setSelectedMeeting(rows.find((m) => m.id === meetingId) ?? null);
-      setSegments(await db.listTranscriptSegments(meetingId));
+      const rows = await refresh();
+      const updated = rows.find((m) => m.id === meetingId) ?? null;
+      setSelected(updated);
+
+      const segs = await db.listTranscriptSegments(meetingId);
+      setSegments(segs);
+      await buildDigest(meetingId, segs);
     },
-    [refreshMeetings]
+    [refresh, buildDigest]
   );
 
-  const handleRetryTranscription = async (meetingId: string) => {
+  const startRecording = async () => {
+    if (!hasConsent) { setConsentOpen(true); return; }
     setError(null);
-    try {
-      await runTranscription(meetingId);
-    } catch (err) {
-      setError((err as Error).message);
-      try {
-        await db.updateMeetingStatus(meetingId, 'failed');
-        await refreshMeetings();
-      } catch {
-        /* surfaced above */
-      }
-    } finally {
-      setBusy(null);
-    }
-  };
-
-  const handleStartRecording = async (title: string) => {
-    if (!hasConsent) {
-      setShowConsentModal(true);
-      return;
-    }
-    setError(null);
-    setBusy('Starting recorder…');
+    setBusy('Starting…');
 
     const meetingId = crypto.randomUUID();
     const now = new Date().toISOString();
-    const meeting: Meeting = {
-      id: meetingId,
-      title,
-      platform: 'local_recording',
-      status: 'recording',
-      start_time: now,
-      duration_seconds: 0,
-      created_at: now,
-      updated_at: now,
-    };
+    const title = `Recording — ${new Date().toLocaleString()}`;
 
     try {
-      // Start the recorder BEFORE writing the row. If capture cannot start
-      // (no audio device, ffmpeg missing) we must not leave a "recording" row
-      // behind that no process backs — the boot reconciler would then have to
-      // clean up a meeting that never existed.
+      // Start the recorder BEFORE writing the row, so a capture failure never
+      // leaves a "recording" row behind that no process backs.
       const started = await callSidecar<{ audio_path: string }>([
-        'start',
-        '--meeting-id',
-        meetingId,
+        'start', '--meeting-id', meetingId,
       ]);
 
-      await db.insertMeeting({ ...meeting, audio_path: started.audio_path });
+      const meeting: Meeting = {
+        id: meetingId, title, platform: 'local_recording', status: 'recording',
+        start_time: now, duration_seconds: 0, created_at: now, updated_at: now,
+        audio_path: started.audio_path,
+      };
+      await db.insertMeeting(meeting);
       recordingIdRef.current = meetingId;
-      setElapsedSeconds(0);
-      setIsRecording(true);
-      setSelectedMeeting({ ...meeting, audio_path: started.audio_path });
-      setSegments([]);
-      setSpeakers([]);
-      await refreshMeetings();
+      setElapsed(0);
+      setRecording(true);
+      setSelected(meeting);
+      setSegments([]); setSpeakers([]); setSummary(null); setActionItems([]);
+      await refresh();
     } catch (err) {
       setError(`Could not start recording: ${(err as Error).message}`);
     } finally {
@@ -267,19 +274,16 @@ export const App: React.FC = () => {
     }
   };
 
-  const handleStopRecording = async () => {
+  const stopRecording = async () => {
     const meetingId = recordingIdRef.current;
     if (!meetingId) return;
-
     setError(null);
-    setBusy('Finalizing recording…');
-    setIsRecording(false);
+    setBusy('Finalizing…');
+    setRecording(false);
 
     try {
       const stopped = await callSidecar<{ duration_seconds: number; audio_path: string }>([
-        'stop',
-        '--meeting-id',
-        meetingId,
+        'stop', '--meeting-id', meetingId,
       ]);
       recordingIdRef.current = null;
 
@@ -288,198 +292,183 @@ export const App: React.FC = () => {
         duration_seconds: stopped.duration_seconds,
         audio_path: stopped.audio_path,
       });
-      await refreshMeetings();
-
+      await refresh();
       await runTranscription(meetingId);
     } catch (err) {
-      // The audio is already safely on disk at this point, so a transcription
-      // failure marks the meeting failed rather than discarding the recording.
-      setError(`${(err as Error).message}`);
+      // The audio is already safely on disk, so a transcription failure marks
+      // the meeting failed rather than discarding the recording.
+      setError((err as Error).message);
       try {
         await db.updateMeetingStatus(meetingId, 'failed');
-        await refreshMeetings();
-      } catch {
-        /* surfaced above */
-      }
+        await refresh();
+      } catch { /* surfaced above */ }
     } finally {
       setBusy(null);
     }
   };
 
-  const handleDeleteMeeting = async (meetingId: string) => {
+  const retryTranscription = async (meeting: Meeting) => {
+    setError(null);
+    setSelected(meeting);
+    try {
+      await runTranscription(meeting.id);
+    } catch (err) {
+      setError((err as Error).message);
+      try {
+        await db.updateMeetingStatus(meeting.id, 'failed');
+        await refresh();
+      } catch { /* surfaced above */ }
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const deleteMeeting = async (meeting: Meeting) => {
     setError(null);
     try {
-      await db.deleteMeetingCascade(meetingId);
-      if (selectedMeeting?.id === meetingId) {
-        setSelectedMeeting(null);
-        setSegments([]);
-        setSpeakers([]);
-      }
-      await refreshMeetings();
+      await db.deleteMeetingCascade(meeting.id);
+      const rows = await refresh();
+      if (selected?.id === meeting.id) setSelected(rows[0] ?? null);
     } catch (err) {
       setError((err as Error).message);
     }
   };
 
-  const handleRenameSpeaker = (updated: MeetingSpeaker) => {
-    setSpeakers((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-    setSegments((prev) =>
-      prev.map((seg) =>
-        seg.speaker_id === updated.id
-          ? { ...seg, speaker_name: updated.name, speaker_source: 'manual' }
-          : seg
-      )
-    );
+  const exportToTasks = async (items: MeetingActionItem[]) => {
+    setError(null);
+    setBusy('Sending to Tasks…');
+    try {
+      await syncActionItemsToTasks(items, hostSqlExecutor);
+      for (const item of items) {
+        await db.updateActionItemStatus(item.id, 'synced_to_tasks');
+      }
+      if (selected) setActionItems(await db.listActionItems(selected.id));
+    } catch (err) {
+      setError(`Could not export to Tasks: ${(err as Error).message}`);
+    } finally {
+      setBusy(null);
+    }
   };
 
   const acceptConsent = () => {
     try {
-      localStorage.setItem('ikenga_meetings_consent_acknowledged_v1', 'true');
+      localStorage.setItem(CONSENT_KEY, 'true');
     } catch {
-      // A blocked localStorage costs the user a re-acknowledgement per session,
-      // which is acceptable; failing the gate open is not.
+      // Blocked storage costs a re-acknowledgement per session, which is
+      // acceptable; failing the gate open is not.
     }
     setHasConsent(true);
-    setShowConsentModal(false);
+    setConsentOpen(false);
   };
 
   if (phase !== 'ready') {
     return (
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '0.75rem',
-          height: '100vh',
-          backgroundColor: 'var(--ik-background, #0d0d12)',
-          color: 'var(--ik-text-secondary, #9ca3af)',
-          fontFamily: 'system-ui, -apple-system, sans-serif',
-          padding: '2rem',
-          textAlign: 'center',
-        }}
-      >
-        {phase === 'connecting' ? (
-          <span>Connecting to Ikenga…</span>
-        ) : (
-          <>
-            <strong style={{ color: 'var(--ik-text-primary, #fff)' }}>
-              {isStandalone() ? 'Open Meetings inside Ikenga' : 'Meetings is unavailable'}
-            </strong>
-            <span style={{ maxWidth: '38rem' }}>
-              {error ??
-                'This app records and transcribes on your machine, so it needs the Ikenga shell for database and recorder access.'}
-            </span>
-          </>
-        )}
+      <div className="mtg-shell">
+        <div className="mtg-centre">
+          {phase === 'connecting' ? (
+            <span>Connecting to Ikenga…</span>
+          ) : (
+            <div>
+              <strong>
+                {isStandalone() ? 'Open Meetings inside Ikenga' : 'Meetings is unavailable'}
+              </strong>
+              <p>
+                {error ??
+                  'This app records and transcribes on your machine, so it needs the Ikenga shell for database and recorder access.'}
+              </p>
+            </div>
+          )}
+        </div>
       </div>
     );
   }
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        height: '100vh',
-        width: '100vw',
-        backgroundColor: 'var(--ik-background, #0d0d12)',
-        color: 'var(--ik-text-primary, #ffffff)',
-        boxSizing: 'border-box',
-        padding: '1rem',
-        gap: '1rem',
-        fontFamily: 'system-ui, -apple-system, sans-serif',
-      }}
-    >
-      {/* Top Bar: Title & Recorder Controls */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <h1 style={{ margin: 0, fontSize: '1.4rem', fontWeight: 700 }}>🎙️ Ikenga Meetings</h1>
-          <span style={{ fontSize: '0.8rem', color: 'var(--ik-text-secondary, #9ca3af)' }}>
-            Zero-Cloud Local Notetaker
-          </span>
-        </div>
+    <div className="mtg-shell">
+      <header className="mtg-bar">
+        <button className="mtg-search" onClick={() => setPaletteOpen(true)}>
+          Search meetings <kbd>⌘K</kbd>
+        </button>
+        <div className="mtg-spacer" />
+        {!recording && (
+          <button
+            className="mtg-btn mtg-btn--rec"
+            onClick={startRecording}
+            disabled={busy !== null}
+          >
+            <span className="mtg-dot" />
+            {busy ?? 'Record'}
+          </button>
+        )}
+      </header>
 
-        <RecorderBar
-          isRecording={isRecording}
-          elapsedSeconds={elapsedSeconds}
-          onStartRecording={handleStartRecording}
-          onStopRecording={handleStopRecording}
-          hasConsent={hasConsent}
-          onRequestConsent={() => setShowConsentModal(true)}
+      {error && (
+        <div className="mtg-alert" role="alert">
+          <span>{error}</span>
+          <button onClick={() => setError(null)} aria-label="Dismiss">×</button>
+        </div>
+      )}
+
+      {recording ? (
+        <LiveRecording
+          title={selected?.title ?? 'Recording'}
+          elapsedSeconds={elapsed}
+          onStop={stopRecording}
           busy={busy}
         />
-
-        {error && (
-          <div
-            role="alert"
-            style={{
-              padding: '0.6rem 0.9rem',
-              borderRadius: '6px',
-              border: '1px solid #7f1d1d',
-              backgroundColor: 'rgba(127, 29, 29, 0.25)',
-              color: '#fca5a5',
-              fontSize: '0.85rem',
-              display: 'flex',
-              justifyContent: 'space-between',
-              gap: '1rem',
-            }}
-          >
-            <span>{error}</span>
-            <button
-              type="button"
-              onClick={() => setError(null)}
-              style={{
-                background: 'none',
-                border: 'none',
-                color: 'inherit',
-                cursor: 'pointer',
-                fontWeight: 700,
-              }}
-              aria-label="Dismiss error"
-            >
-              ×
-            </button>
+      ) : selected ? (
+        <main className="mtg-stage">
+          <div className="mtg-inner">
+            <MeetingStage
+              meeting={selected}
+              speakers={speakers}
+              currentMs={currentMs}
+              onTimeChange={setCurrentMs}
+              seekToMs={seekToMs}
+              onSeekHandled={() => setSeekToMs(null)}
+            />
+            <Digest
+              summary={summary}
+              actionItems={actionItems}
+              onSeek={setSeekToMs}
+              onExport={exportToTasks}
+              busy={busy !== null}
+            />
+            <Transcript
+              segments={segments}
+              speakers={speakers}
+              currentMs={currentMs}
+              onSeek={setSeekToMs}
+            />
           </div>
-        )}
-      </div>
+        </main>
+      ) : (
+        <div className="mtg-centre">
+          <div>
+            <strong>No meetings yet</strong>
+            <p>
+              Record starts capturing this machine — system audio and microphone
+              together, so both sides of a call land in the tape. Everything stays
+              on disk here; nothing is uploaded.
+            </p>
+          </div>
+        </div>
+      )}
 
-      {/* Main Content Area */}
-      <div
-        style={{
-          flex: 1,
-          display: 'grid',
-          gridTemplateColumns: selectedMeeting ? '360px 1fr' : '1fr',
-          gap: '1rem',
-          overflow: 'hidden',
-        }}
-      >
-        <MeetingList
-          meetings={meetings}
-          selectedMeetingId={selectedMeeting?.id}
-          onSelectMeeting={(m) => setSelectedMeeting(m)}
-          onDeleteMeeting={handleDeleteMeeting}
-          onRetryTranscription={handleRetryTranscription}
-          busy={busy !== null}
-        />
+      <CommandPalette
+        meetings={meetings}
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onPick={setSelected}
+        onRetry={retryTranscription}
+        onDelete={deleteMeeting}
+      />
 
-        {selectedMeeting && (
-          <SynchronizedPlayer
-            meeting={selectedMeeting}
-            segments={segments}
-            speakers={speakers}
-            onRenameSpeaker={handleRenameSpeaker}
-          />
-        )}
-      </div>
-
-      {/* Consent Gate Modal */}
-      {showConsentModal && (
+      {consentOpen && (
         <ConsentGate
           hasAcknowledged={false}
           onAccept={acceptConsent}
-          onCancel={() => setShowConsentModal(false)}
+          onCancel={() => setConsentOpen(false)}
         />
       )}
     </div>

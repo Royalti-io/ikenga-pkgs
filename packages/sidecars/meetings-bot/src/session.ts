@@ -62,6 +62,32 @@ export async function clearSession(mediaDir: string): Promise<void> {
   await fs.rm(sessionFilePath(mediaDir), { force: true });
 }
 
+export const WHISPER_PID_FILE = 'whisper.pid';
+
+export function whisperPidFilePath(mediaDir: string): string {
+  return path.join(mediaDir, WHISPER_PID_FILE);
+}
+
+export async function writeWhisperPid(mediaDir: string, pid: number): Promise<void> {
+  await fs.writeFile(whisperPidFilePath(mediaDir), String(pid), 'utf8');
+}
+
+export async function readWhisperPid(mediaDir: string): Promise<number | null> {
+  const file = whisperPidFilePath(mediaDir);
+  if (!existsSync(file)) return null;
+  try {
+    const raw = (await fs.readFile(file, 'utf8')).trim();
+    const pid = Number.parseInt(raw, 10);
+    return Number.isFinite(pid) ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function clearWhisperPid(mediaDir: string): Promise<void> {
+  await fs.rm(whisperPidFilePath(mediaDir), { force: true });
+}
+
 /**
  * Whether a pid is still alive.
  *

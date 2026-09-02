@@ -15,7 +15,7 @@
 import { spawn } from 'node:child_process';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { openSync } from 'node:fs';
+import { openSync, existsSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -40,6 +40,9 @@ import {
   readSession,
   writeSession,
   clearSession,
+  readWhisperPid,
+  writeWhisperPid,
+  clearWhisperPid,
   isProcessAlive,
   elapsedSecondsSince,
 } from './session.js';
@@ -199,19 +202,71 @@ async function cmdStatus(flags: Record<string, string>): Promise<unknown> {
   };
 }
 
-async function probeDurationSeconds(audioPath: string): Promise<number | null> {
+export interface AudioFacts {
+  duration_seconds: number | null;
+  sample_rate: number | null;
+  channels: number | null;
+  codec: string | null;
+}
+
+export function parseFfprobeJson(rawJson: string): AudioFacts {
   try {
-    const { stdout } = await execFileAsync('ffprobe', [
+    const data = JSON.parse(rawJson);
+    const stream = Array.isArray(data.streams) ? data.streams[0] : undefined;
+    const format = data.format;
+
+    const durationRaw = format?.duration;
+    const parsedDuration = durationRaw != null ? Number.parseFloat(String(durationRaw)) : NaN;
+    const duration_seconds = Number.isFinite(parsedDuration) ? Math.round(parsedDuration) : null;
+
+    const sampleRateRaw = stream?.sample_rate;
+    const parsedSampleRate = sampleRateRaw != null ? Number.parseInt(String(sampleRateRaw), 10) : NaN;
+    const sample_rate = Number.isFinite(parsedSampleRate) ? parsedSampleRate : null;
+
+    const channelsRaw = stream?.channels;
+    const channels = typeof channelsRaw === 'number' && Number.isFinite(channelsRaw) ? channelsRaw : null;
+
+    const codec = typeof stream?.codec_name === 'string' && stream.codec_name ? stream.codec_name : null;
+
+    return {
+      duration_seconds,
+      sample_rate,
+      channels,
+      codec,
+    };
+  } catch {
+    return {
+      duration_seconds: null,
+      sample_rate: null,
+      channels: null,
+      codec: null,
+    };
+  }
+}
+
+export async function probeAudio(audioPath: string, ffprobeBin = 'ffprobe'): Promise<AudioFacts> {
+  try {
+    const { stdout } = await execFileAsync(ffprobeBin, [
       '-v', 'error',
+      '-show_entries', 'stream=sample_rate,channels,codec_name',
       '-show_entries', 'format=duration',
-      '-of', 'default=noprint_wrappers=1:nokey=1',
+      '-of', 'json',
       audioPath,
     ]);
-    const parsed = Number.parseFloat(stdout.trim());
-    return Number.isFinite(parsed) ? Math.round(parsed) : null;
+    return parseFfprobeJson(stdout);
   } catch {
-    return null;
+    return {
+      duration_seconds: null,
+      sample_rate: null,
+      channels: null,
+      codec: null,
+    };
   }
+}
+
+async function probeDurationSeconds(audioPath: string, ffprobeBin = 'ffprobe'): Promise<number | null> {
+  const facts = await probeAudio(audioPath, ffprobeBin);
+  return facts.duration_seconds;
 }
 
 async function cmdStop(flags: Record<string, string>): Promise<unknown> {
@@ -247,7 +302,7 @@ async function cmdStop(flags: Record<string, string>): Promise<unknown> {
   // Prefer the real media duration: wall-clock overstates by the startup and
   // shutdown margins, which would desync every transcript timestamp in the
   // player against the audio it is supposed to follow.
-  const duration = (await probeDurationSeconds(session.audioPath)) ?? wallClock;
+  const duration = (await probeDurationSeconds(session.audioPath, flags.ffprobe)) ?? wallClock;
 
   const stat = await fs.stat(session.audioPath).catch(() => null);
 
@@ -262,12 +317,38 @@ async function cmdStop(flags: Record<string, string>): Promise<unknown> {
 
 async function cmdTranscribe(flags: Record<string, string>): Promise<unknown> {
   const meetingId = requireFlag(flags, 'meeting-id');
+  const mediaDir = resolveMeetingMediaDir(meetingId, flags['output-dir']);
   const paths = getMeetingMediaFilePaths(meetingId, flags['output-dir']);
   const audioPath = flags.audio ?? paths.audioPath;
 
   const stat = await fs.stat(audioPath).catch(() => null);
   if (!stat) throw new Error(`audio file not found: ${audioPath}`);
   if (stat.size === 0) throw new Error(`audio file is empty: ${audioPath}`);
+
+  // ── Guard against concurrent whisper runs for the same meeting ───────────
+  const existingPid = await readWhisperPid(mediaDir);
+  if (existingPid !== null) {
+    if (isProcessAlive(existingPid)) {
+      if (flags.force === 'true') {
+        try {
+          process.kill(existingPid, 'SIGKILL');
+        } catch {
+          // ignore
+        }
+        await clearWhisperPid(mediaDir);
+      } else {
+        return {
+          ok: false,
+          error: `a transcription is already running for this meeting (pid ${existingPid})`,
+          already_running: true,
+          pid: existingPid,
+        };
+      }
+    } else {
+      // Stale pid from a dead process
+      await clearWhisperPid(mediaDir);
+    }
+  }
 
   // ── Reuse a completed run before starting a new one ─────────────────────
   //
@@ -295,22 +376,124 @@ async function cmdTranscribe(flags: Record<string, string>): Promise<unknown> {
     }
   }
 
-  const engine = new LocalWhisperEngine();
-  const segments = await engine.transcribe({
-    audioWavPath: audioPath,
-    meetingId,
-    model: (flags.model as WhisperModelName) ?? DEFAULT_WHISPER_MODEL,
-    language: flags.language ?? 'en',
-    whisperBinaryPath: flags['whisper-bin'],
-    modelDir: flags['model-dir'],
-  });
+  try {
+    const engine = new LocalWhisperEngine();
+    const segments = await engine.transcribe({
+      audioWavPath: audioPath,
+      meetingId,
+      model: (flags.model as WhisperModelName) ?? DEFAULT_WHISPER_MODEL,
+      language: flags.language ?? 'en',
+      whisperBinaryPath: flags['whisper-bin'],
+      modelDir: flags['model-dir'],
+      onSpawn: async (pid) => {
+        await writeWhisperPid(mediaDir, pid);
+      },
+    });
+
+    return {
+      ok: true,
+      meeting_id: meetingId,
+      audio_path: audioPath,
+      segment_count: segments.length,
+      segments,
+    };
+  } finally {
+    await clearWhisperPid(mediaDir);
+  }
+}
+
+async function cmdInfo(flags: Record<string, string>): Promise<unknown> {
+  const meetingId = requireFlag(flags, 'meeting-id');
+  const mediaDir = resolveMeetingMediaDir(meetingId, flags['output-dir']);
+
+  if (!existsSync(mediaDir)) {
+    throw new Error(`meeting media directory not found for meeting ${meetingId}`);
+  }
+
+  const paths = getMeetingMediaFilePaths(meetingId, flags['output-dir']);
+
+  // Audio WAV master
+  const audioStat = await fs.stat(paths.audioPath).catch(() => null);
+  const audioExists = audioStat !== null;
+  const audioFacts = audioExists
+    ? await probeAudio(paths.audioPath, flags.ffprobe)
+    : { duration_seconds: null, sample_rate: null, channels: null, codec: null };
+
+  const audio = {
+    path: paths.audioPath,
+    bytes: audioStat?.size ?? 0,
+    exists: audioExists,
+    ...audioFacts,
+  };
+
+  // Compressed M4A playback copy
+  const compressedStat = await fs.stat(paths.audioCompressedPath).catch(() => null);
+  const compressedExists = compressedStat !== null;
+  const compressed = {
+    path: paths.audioCompressedPath,
+    bytes: compressedStat?.size ?? 0,
+    exists: compressedExists,
+  };
+
+  // Transcript JSON
+  const transcriptPath = paths.audioPath.replace(/\.wav$/i, '') + '.transcript.json';
+  const transcriptStat = await fs.stat(transcriptPath).catch(() => null);
+  const transcriptExists = transcriptStat !== null;
+  let segmentCount: number | null = null;
+  let generatedAt: string | null = null;
+
+  if (transcriptExists && transcriptStat) {
+    generatedAt = transcriptStat.mtime.toISOString();
+    try {
+      const raw = await fs.readFile(transcriptPath, 'utf8');
+      const parsed = JSON.parse(raw);
+      const segments = parseWhisperCppJson(parsed, meetingId);
+      segmentCount = segments.length;
+    } catch {
+      segmentCount = null;
+    }
+  }
+
+  const transcript = {
+    path: transcriptPath,
+    exists: transcriptExists,
+    segment_count: segmentCount,
+    generated_at: generatedAt,
+  };
+
+  // STT Engine facts
+  const whisper = await resolveWhisperBinary(flags['whisper-bin']);
+  const model = (flags.model as WhisperModelName) ?? DEFAULT_WHISPER_MODEL;
+  const modelPath = resolveModelPath(model, flags['model-dir']);
+  const modelReady = await isModelDownloaded(model, flags['model-dir']);
+
+  const engine = {
+    binary_path: whisper.path ?? null,
+    available: whisper.available,
+    model_name: model,
+    model_path: modelPath,
+    model_downloaded: modelReady,
+  };
+
+  // Active recording session
+  const session = await readSession(mediaDir);
+  const isRecording = session !== null && isProcessAlive(session.ffmpegPid);
+  const recording = {
+    active: isRecording,
+    pid: isRecording ? session.ffmpegPid : null,
+    started_at: isRecording ? session.startedAt : null,
+    elapsed_seconds: isRecording ? elapsedSecondsSince(session.startedAt) : 0,
+  };
 
   return {
     ok: true,
     meeting_id: meetingId,
-    audio_path: audioPath,
-    segment_count: segments.length,
-    segments,
+    media_dir: mediaDir,
+    audio,
+    compressed,
+    transcript,
+    engine,
+    recording,
   };
 }
 
@@ -371,6 +554,7 @@ const COMMANDS: Record<string, (flags: Record<string, string>) => Promise<unknow
   stop: cmdStop,
   transcribe: cmdTranscribe,
   'read-audio': cmdReadAudio,
+  info: cmdInfo,
 };
 
 export async function runCli(argv: string[]): Promise<number> {

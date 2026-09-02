@@ -1,5 +1,4 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -8,8 +7,6 @@ import { TranscriptSegment } from '@ikenga/meetings-contract';
 import { resolveWhisperBinary } from './binary.js';
 import { resolveModelPath, WhisperModelName, DEFAULT_WHISPER_MODEL } from './models.js';
 
-const execFileAsync = promisify(execFile);
-
 export interface TranscribeOptions {
   audioWavPath: string;
   meetingId: string;
@@ -17,6 +14,7 @@ export interface TranscribeOptions {
   language?: string;
   whisperBinaryPath?: string;
   modelDir?: string;
+  onSpawn?: (pid: number) => void | Promise<void>;
 }
 
 export interface WhisperRawWord {
@@ -193,7 +191,28 @@ export class LocalWhisperEngine {
     // what the flag does. Default segmentation yields the sentence-level lines
     // the transcript view and the player's seek behaviour are built around.
 
-    await execFileAsync(binaryRes.path, args);
+    const child = spawn(binaryRes.path, args, {
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+
+    if (typeof child.pid === 'number' && options.onSpawn) {
+      await options.onSpawn(child.pid);
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      let stderr = '';
+      child.stderr?.on('data', (d) => {
+        stderr = (stderr + d.toString()).slice(-4096);
+      });
+      child.on('error', reject);
+      child.on('close', (code) => {
+        if (code === 0) {
+          resolve();
+        } else {
+          reject(new Error(`whisper.cpp exited with code ${code}${stderr ? `: ${stderr.trim()}` : ''}`));
+        }
+      });
+    });
 
     const jsonPath = outJsonPrefix + '.json';
     if (!existsSync(jsonPath)) {

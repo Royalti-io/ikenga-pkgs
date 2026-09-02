@@ -10,6 +10,10 @@ import {
   writeSession,
   clearSession,
   sessionFilePath,
+  readWhisperPid,
+  writeWhisperPid,
+  clearWhisperPid,
+  whisperPidFilePath,
   isProcessAlive,
   elapsedSecondsSince,
   RecordingSession,
@@ -57,6 +61,35 @@ describe('recording session state', () => {
 
   it('clearing a non-existent session is a no-op, not an error', async () => {
     await clearSession(await tmpDir());
+  });
+});
+
+describe('whisper pid management', () => {
+  it('round-trips a whisper pid through disk', async () => {
+    const dir = await tmpDir();
+    await writeWhisperPid(dir, 12345);
+    assert.equal(await readWhisperPid(dir), 12345);
+  });
+
+  it('reports null when no whisper pid file exists', async () => {
+    assert.equal(await readWhisperPid(await tmpDir()), null);
+  });
+
+  it('treats corrupt or non-numeric pid file as null rather than throwing', async () => {
+    const dir = await tmpDir();
+    await fs.writeFile(whisperPidFilePath(dir), 'invalid-pid', 'utf8');
+    assert.equal(await readWhisperPid(dir), null);
+  });
+
+  it('clears a whisper pid', async () => {
+    const dir = await tmpDir();
+    await writeWhisperPid(dir, 9876);
+    await clearWhisperPid(dir);
+    assert.equal(await readWhisperPid(dir), null);
+  });
+
+  it('clearing a non-existent whisper pid file is a no-op', async () => {
+    await clearWhisperPid(await tmpDir());
   });
 });
 

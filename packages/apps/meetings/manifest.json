@@ -80,7 +80,8 @@
       "meeting_speakers",
       "meeting_transcripts",
       "meeting_action_items",
-      "meeting_summaries"
+      "meeting_summaries",
+      "tasks"
     ],
     "fs.read": [
       "$pkg_data/**",

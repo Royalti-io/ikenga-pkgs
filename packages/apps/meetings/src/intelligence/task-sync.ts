@@ -1,5 +1,10 @@
 import { MeetingActionItem, SqlExecutor } from '@ikenga/meetings-contract';
-import crypto from 'node:crypto';
+// NOTE: `crypto.randomUUID()` is the WEB Crypto global, deliberately NOT
+// `node:crypto`. This module is imported by the iframe app, and a `node:crypto`
+// import makes the whole package unbundleable for the browser (rollup: "node:crypto
+// is not exported"), the same failure the media-fs barrel caused. `randomUUID` is
+// on the global `crypto` in every browser this ships to and in Node >= 19, so the
+// node-side tests keep working unchanged.
 
 export interface TaskSyncResult {
   syncedCount: number;
