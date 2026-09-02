@@ -83,13 +83,20 @@ export function parseWhisperCppJson(
   const rawSegments = jsonData.transcription || jsonData.segments || [];
   for (const seg of rawSegments) {
     // whisper.cpp formats timestamps in seconds or ms
-    const startMs = typeof seg.timestamps?.from === 'string'
-      ? parseTimestampMs(seg.timestamps.from)
-      : Math.round((seg.from ?? seg.start ?? 0) * 1000);
+    // whisper.cpp emits BOTH a numeric `offsets` block (already milliseconds)
+    // and a display `timestamps` block. Prefer offsets: it needs no parsing and
+    // cannot lose precision.
+    const startMs = typeof seg.offsets?.from === 'number'
+      ? seg.offsets.from
+      : typeof seg.timestamps?.from === 'string'
+        ? parseTimestampMs(seg.timestamps.from)
+        : Math.round((seg.from ?? seg.start ?? 0) * 1000);
 
-    const endMs = typeof seg.timestamps?.to === 'string'
-      ? parseTimestampMs(seg.timestamps.to)
-      : Math.round((seg.to ?? seg.end ?? 0) * 1000);
+    const endMs = typeof seg.offsets?.to === 'number'
+      ? seg.offsets.to
+      : typeof seg.timestamps?.to === 'string'
+        ? parseTimestampMs(seg.timestamps.to)
+        : Math.round((seg.to ?? seg.end ?? 0) * 1000);
 
     const text = (seg.text ?? '').trim();
     if (!text) continue;
@@ -97,12 +104,16 @@ export function parseWhisperCppJson(
     const words: Array<{ word: string; start_ms: number; end_ms: number; confidence: number }> = [];
     if (Array.isArray(seg.words)) {
       for (const w of seg.words) {
-        const wStart = typeof w.timestamps?.from === 'string'
-          ? parseTimestampMs(w.timestamps.from)
-          : Math.round((w.from ?? w.start ?? 0) * 1000);
-        const wEnd = typeof w.timestamps?.to === 'string'
-          ? parseTimestampMs(w.timestamps.to)
-          : Math.round((w.to ?? w.end ?? 0) * 1000);
+        const wStart = typeof w.offsets?.from === 'number'
+          ? w.offsets.from
+          : typeof w.timestamps?.from === 'string'
+            ? parseTimestampMs(w.timestamps.from)
+            : Math.round((w.from ?? w.start ?? 0) * 1000);
+        const wEnd = typeof w.offsets?.to === 'number'
+          ? w.offsets.to
+          : typeof w.timestamps?.to === 'string'
+            ? parseTimestampMs(w.timestamps.to)
+            : Math.round((w.to ?? w.end ?? 0) * 1000);
 
         words.push({
           word: (w.word ?? w.text ?? '').trim(),
@@ -129,8 +140,15 @@ export function parseWhisperCppJson(
 }
 
 function parseTimestampMs(timeStr: string): number {
-  // HH:MM:SS.mmm or MM:SS.mmm
-  const parts = timeStr.split(':');
+  // HH:MM:SS,mmm or HH:MM:SS.mmm (also MM:SS forms).
+  //
+  // whisper.cpp writes SRT-style timestamps with a COMMA as the decimal
+  // separator ("00:00:00,220"). `parseFloat('00,220')` is 0, so parsing these
+  // as-is silently discarded the milliseconds on every segment and quantised
+  // the whole transcript to whole seconds — every player seek landed up to a
+  // second away from the word it was supposed to hit.
+  const normalized = timeStr.replace(',', '.');
+  const parts = normalized.split(':');
   if (parts.length === 3) {
     const hours = parseFloat(parts[0] ?? '0');
     const mins = parseFloat(parts[1] ?? '0');
@@ -141,7 +159,7 @@ function parseTimestampMs(timeStr: string): number {
     const secs = parseFloat(parts[1] ?? '0');
     return Math.round((mins * 60 + secs) * 1000);
   }
-  return Math.round(parseFloat(timeStr) * 1000);
+  return Math.round(parseFloat(normalized) * 1000);
 }
 
 export class LocalWhisperEngine {
@@ -166,8 +184,14 @@ export class LocalWhisperEngine {
       '-oj', // output JSON
       '-of', outJsonPrefix,
       '-l', options.language ?? 'en',
-      '-ml', '1', // word-level token timestamps
     ];
+
+    // NOTE: `-ml 1` is deliberately NOT passed. It sets whisper.cpp's max line
+    // length to ONE CHARACTER, which splits the transcript into a separate
+    // segment per token — "And" / "so" / "my" / "fellow" as four rows. It was
+    // added under the comment "word-level token timestamps", but that is not
+    // what the flag does. Default segmentation yields the sentence-level lines
+    // the transcript view and the player's seek behaviour are built around.
 
     await execFileAsync(binaryRes.path, args);
 

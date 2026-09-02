@@ -76,3 +76,48 @@ describe('Local Whisper STT Engine', () => {
     assert.equal(seg.words[0]?.start_ms, 1000);
   });
 });
+
+describe('whisper.cpp timestamp parsing', () => {
+  it('keeps milliseconds from SRT-style comma-separated timestamps', () => {
+    // Regression: whisper.cpp writes "00:00:01,220"; parseFloat("01,220") is 1,
+    // so the milliseconds were silently dropped and every segment snapped to a
+    // whole second. Player seeks then landed up to 1s off the spoken word.
+    const segs = parseWhisperCppJson(
+      {
+        transcription: [
+          { timestamps: { from: '00:00:01,220', to: '00:00:02,750' }, text: 'hello there' },
+        ],
+      },
+      'm1'
+    );
+    assert.equal(segs.length, 1);
+    assert.equal(segs[0]?.start_ms, 1220);
+    assert.equal(segs[0]?.end_ms, 2750);
+  });
+
+  it('prefers the numeric offsets block over the display timestamps', () => {
+    const segs = parseWhisperCppJson(
+      {
+        transcription: [
+          {
+            offsets: { from: 4321, to: 8765 },
+            timestamps: { from: '00:00:04,321', to: '00:00:08,765' },
+            text: 'offsets win',
+          },
+        ],
+      },
+      'm1'
+    );
+    assert.equal(segs[0]?.start_ms, 4321);
+    assert.equal(segs[0]?.end_ms, 8765);
+  });
+
+  it('still handles period-separated timestamps', () => {
+    const segs = parseWhisperCppJson(
+      { transcription: [{ timestamps: { from: '00:00:02.500', to: '00:00:03.250' }, text: 'x' }] },
+      'm1'
+    );
+    assert.equal(segs[0]?.start_ms, 2500);
+    assert.equal(segs[0]?.end_ms, 3250);
+  });
+});
