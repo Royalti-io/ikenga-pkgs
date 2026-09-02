@@ -6,6 +6,10 @@ export interface MeetingListProps {
   selectedMeetingId?: string;
   onSelectMeeting: (meeting: Meeting) => void;
   onDeleteMeeting?: (meetingId: string) => void;
+  /** Re-run STT for a recording whose transcription did not finish. The audio
+   *  survives a failed transcribe, so this must stay reachable. */
+  onRetryTranscription?: (meetingId: string) => void;
+  busy?: boolean;
 }
 
 export const MeetingList: React.FC<MeetingListProps> = ({
@@ -13,6 +17,8 @@ export const MeetingList: React.FC<MeetingListProps> = ({
   selectedMeetingId,
   onSelectMeeting,
   onDeleteMeeting,
+  onRetryTranscription,
+  busy = false,
 }) => {
   const [platformFilter, setPlatformFilter] = useState<string>('all');
   const [search, setSearch] = useState<string>('');
@@ -152,12 +158,41 @@ export const MeetingList: React.FC<MeetingListProps> = ({
                       padding: '0.15rem 0.4rem',
                       borderRadius: '4px',
                       backgroundColor:
-                        m.status === 'completed' ? '#064e3b' : '#374151',
-                      color: m.status === 'completed' ? '#34d399' : '#d1d5db',
+                        m.status === 'completed'
+                          ? '#064e3b'
+                          : m.status === 'failed'
+                            ? '#7f1d1d'
+                            : '#374151',
+                      color:
+                        m.status === 'completed'
+                          ? '#34d399'
+                          : m.status === 'failed'
+                            ? '#fca5a5'
+                            : '#d1d5db',
                     }}
                   >
                     {m.status}
                   </span>
+                  {onRetryTranscription && m.status === 'failed' && m.audio_path && (
+                    <button
+                      title="Transcribe this recording again"
+                      disabled={busy}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRetryTranscription(m.id);
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: busy ? '#6b7280' : '#60a5fa',
+                        cursor: busy ? 'not-allowed' : 'pointer',
+                        padding: '0.2rem 0.4rem',
+                        fontSize: '0.7rem',
+                      }}
+                    >
+                      ↻ Transcribe
+                    </button>
+                  )}
                   {onDeleteMeeting && (
                     <button
                       title="Delete recording and transcripts"

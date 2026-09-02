@@ -81,14 +81,23 @@ export function bridgeMode(): BridgeMode | undefined {
 
 async function callHostTool(
   name: string,
-  args: Record<string, unknown> = {}
+  args: Record<string, unknown> = {},
+  // `timeoutMs` is the MCP REQUEST timeout, which is a different budget from
+  // the sidecar's own `timeoutSecs` and defaults to 60s in the SDK. Whisper on
+  // a real meeting runs far longer than that, so without raising this the
+  // transcription is abandoned mid-run with "MCP error -32001: Request timed
+  // out" while the work was proceeding perfectly well.
+  opts: { timeoutMs?: number } = {}
 ): Promise<HostCallResult> {
   if (!_app) {
     throw new Error(
       `Meetings needs to run inside the Ikenga shell — ${name} is unavailable in a plain browser tab.`
     );
   }
-  const result = (await _app.callServerTool({ name, arguments: args })) as HostCallResult;
+  const result = (await _app.callServerTool(
+    { name, arguments: args },
+    opts.timeoutMs ? { timeout: opts.timeoutMs, maxTotalTimeout: opts.timeoutMs } : undefined
+  )) as HostCallResult;
   if (result.isError) {
     throw new Error(result.content?.[0]?.text ?? `${name} failed`);
   }
@@ -122,7 +131,7 @@ export const hostSqlExecutor = {
 
 // ─── Sidecar ───────────────────────────────────────────────────────────────
 
-export const MEETINGS_SIDECAR = 'pa-meetings-bot';
+export const MEETINGS_SIDECAR = 'pa-com-ikenga-meetings-bot';
 
 /**
  * Invoke the meetings sidecar CLI and return its parsed JSON result.
@@ -135,11 +144,18 @@ export async function callSidecar<T = Record<string, unknown>>(
   args: string[],
   opts: { timeoutSecs?: number } = {}
 ): Promise<T> {
-  const res = await callHostTool('host.pkgSidecarCall', {
-    sidecar: MEETINGS_SIDECAR,
-    args,
-    ...(opts.timeoutSecs ? { timeoutSecs: opts.timeoutSecs } : {}),
-  });
+  const res = await callHostTool(
+    'host.pkgSidecarCall',
+    {
+      sidecar: MEETINGS_SIDECAR,
+      args,
+      ...(opts.timeoutSecs ? { timeoutSecs: opts.timeoutSecs } : {}),
+    },
+    // Both budgets must be raised together: the host kills the child at
+    // `timeoutSecs`, the MCP layer abandons the request at `timeoutMs`.
+    // Whichever is shorter wins, so they are derived from the same number.
+    opts.timeoutSecs ? { timeoutMs: opts.timeoutSecs * 1000 } : {}
+  );
 
   let payload: unknown = res.structuredContent;
   if (!payload) {

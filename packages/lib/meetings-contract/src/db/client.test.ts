@@ -124,3 +124,44 @@ describe('MeetingsDbClient', () => {
     }
   });
 });
+
+describe('SQLite NULL handling', () => {
+  it('reads back a meeting whose optional columns are NULL', async () => {
+    // Regression: SQLite stores an unset column as NULL, but the schemas model
+    // those columns with `.optional()`, which rejects null. Listing any meeting
+    // recorded without a url/end_time therefore threw a ZodError — observed in
+    // the shell as "Could not start recording" fired immediately AFTER the
+    // recording had in fact started successfully.
+    const exec = {
+      rows: [] as Record<string, unknown>[],
+      async query<T>(): Promise<T[]> {
+        return this.rows as T[];
+      },
+      async exec(): Promise<void> {},
+    };
+    exec.rows = [
+      {
+        id: '3f2504e0-4f89-41d3-9a0c-0305e82c3301',
+        title: 'Recorded with nulls',
+        platform: 'local_recording',
+        url: null,
+        status: 'recording',
+        start_time: '2026-09-02T12:00:00.000Z',
+        end_time: null,
+        duration_seconds: 0,
+        video_path: null,
+        audio_path: '/tmp/audio.wav',
+        created_at: '2026-09-02T12:00:00.000Z',
+        updated_at: '2026-09-02T12:00:00.000Z',
+      },
+    ];
+
+    const client = new MeetingsDbClient(exec);
+    const meetings = await client.listMeetings();
+    assert.equal(meetings.length, 1);
+    assert.equal(meetings[0]?.id, '3f2504e0-4f89-41d3-9a0c-0305e82c3301');
+    assert.equal(meetings[0]?.url, undefined);
+    assert.equal(meetings[0]?.end_time, undefined);
+    assert.equal(meetings[0]?.audio_path, '/tmp/audio.wav');
+  });
+});

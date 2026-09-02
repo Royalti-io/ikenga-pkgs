@@ -4,23 +4,19 @@
   "version": "0.1.0",
   "ikenga_api": "3",
   "kind": "embedded",
-
   "author": {
     "name": "Royalti, Inc.",
     "key": "royalti"
   },
-
-  "//": "WP-11/WP-03/WP-02: Meetings sidecar managing local own-machine recording (v1), whisper.cpp local STT, and Xvfb browser automation bot (v2). Like pa-playwright-browser, mcp[] is omitted so the kernel supervisor does not auto-spawn a competing instance.",
-
+  "//": "WP-11/WP-03/WP-02: source of truth for the meetings recorder. NOTE: the com.ikenga.meetings app cannot call this package's sidecar \u2014 pkg_sidecar_call requires the sidecar to belong to the calling pkg \u2014 so the app bundles this source into its own package via packages/apps/meetings/sidecars/bot/build.sh and declares it there. This manifest remains for standalone/bot use.",
   "sidecars": [
     {
-      "name": "pa-meetings-bot",
+      "name": "pa-com-ikenga-sidecar-meetings-bot-runner",
       "bin": "dist/sidecar.js",
       "stdio": "json",
       "auto_restart": false
     }
   ],
-
   "permissions": {
     "shell.execute": [
       "node",

@@ -7,15 +7,17 @@
   "files": [
     "manifest.json",
     "dist",
+    "sidecars/bot/dist",
     "README.md"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "build": "tsc -p tsconfig.json --noEmit && vite build && bash sidecars/bot/build.sh",
     "dev": "vite",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist",
     "test": "node --test --import=tsx src/components/ConsentGate.test.ts src/intelligence/summarizer.test.ts test/e2e-smoke.test.ts",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "build:sidecar": "bash sidecars/bot/build.sh"
   },
   "dependencies": {
     "@ikenga/meetings-contract": "workspace:*",

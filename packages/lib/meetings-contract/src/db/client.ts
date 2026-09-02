@@ -18,6 +18,26 @@ export interface SqlExecutor {
   exec(sql: string, params?: unknown[]): Promise<void | unknown>;
 }
 
+/**
+ * Drop NULL-valued keys from a SQLite row before Zod validation.
+ *
+ * SQLite has no `undefined` — an unset column reads back as `null`. The schemas
+ * model those columns with `.optional()`, which accepts `undefined` and REJECTS
+ * `null`, so parsing a raw row threw on any meeting that simply had no `url` or
+ * `end_time`. Deleting the key restores the "absent" shape `.optional()` expects.
+ *
+ * Done here, at the SQL boundary, rather than by loosening every field to
+ * `.nullish()`: null-vs-absent is a storage artefact, and callers of these types
+ * should not have to handle a third state that carries no meaning.
+ */
+function stripNulls(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(row)) {
+    if (value !== null) out[key] = value;
+  }
+  return out;
+}
+
 export class MeetingsDbClient {
   constructor(private readonly executor: SqlExecutor) {}
 
@@ -55,7 +75,7 @@ export class MeetingsDbClient {
     }
 
     const rows = await this.executor.query<Record<string, unknown>>(sql, params);
-    return rows.map((row) => MeetingSchema.parse(row));
+    return rows.map((row) => MeetingSchema.parse(stripNulls(row)));
   }
 
   async getMeetingById(id: string): Promise<Meeting | null> {
@@ -66,7 +86,7 @@ export class MeetingsDbClient {
     if (!rows || rows.length === 0 || !rows[0]) {
       return null;
     }
-    return MeetingSchema.parse(rows[0]);
+    return MeetingSchema.parse(stripNulls(rows[0] as Record<string, unknown>));
   }
 
   async insertMeeting(meeting: Meeting): Promise<void> {
@@ -157,7 +177,7 @@ export class MeetingsDbClient {
       'SELECT * FROM meeting_speakers WHERE meeting_id = ?',
       [meetingId]
     );
-    return rows.map((r) => MeetingSpeakerSchema.parse(r));
+    return rows.map((r) => MeetingSpeakerSchema.parse(stripNulls(r)));
   }
 
   // ==========================================
@@ -202,7 +222,7 @@ export class MeetingsDbClient {
         }
       }
       return TranscriptSegmentSchema.parse({
-        ...r,
+        ...stripNulls(r),
         words,
       });
     });
@@ -228,7 +248,7 @@ export class MeetingsDbClient {
         }
       }
       return TranscriptSegmentSchema.parse({
-        ...r,
+        ...stripNulls(r),
         words,
       });
     });
@@ -261,7 +281,7 @@ export class MeetingsDbClient {
       'SELECT * FROM meeting_action_items WHERE meeting_id = ?',
       [meetingId]
     );
-    return rows.map((r) => MeetingActionItemSchema.parse(r));
+    return rows.map((r) => MeetingActionItemSchema.parse(stripNulls(r)));
   }
 
   async updateActionItemStatus(
@@ -344,6 +364,13 @@ export class MeetingsDbClient {
   // ==========================================
   // Cascading Deletion (Guaranteed Delete Path)
   // ==========================================
+
+  /** Drop a meeting's transcript without touching the meeting or its media.
+   *  Used before re-transcribing, so a retry replaces the previous run rather
+   *  than appending a second copy of every line. */
+  async deleteTranscriptSegments(meetingId: string): Promise<void> {
+    await this.executor.exec('DELETE FROM meeting_transcripts WHERE meeting_id = ?', [meetingId]);
+  }
 
   async deleteMeetingCascade(id: string): Promise<void> {
     await this.executor.exec('DELETE FROM meeting_transcripts WHERE meeting_id = ?', [id]);

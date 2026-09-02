@@ -168,6 +168,58 @@ export const App: React.FC = () => {
     };
   }, [selectedMeeting?.id]);
 
+  /**
+   * Transcribe a finished recording and persist its segments.
+   *
+   * Separate from `handleStopRecording` because the audio outlives a failed
+   * transcription: whisper can be abandoned by an MCP timeout, a shell reload,
+   * or a crash, and in every one of those cases the WAV is still on disk and
+   * fully recoverable. Stranding a 40-minute meeting because the STT step
+   * failed once would be the worst possible outcome for this app, so the same
+   * path is reachable again from the meeting list.
+   */
+  const runTranscription = useCallback(
+    async (meetingId: string) => {
+      setBusy('Transcribing (this runs locally and can take a while)…');
+      await db.updateMeetingStatus(meetingId, 'transcribing');
+
+      const result = await callSidecar<{ segments: TranscriptSegment[] }>(
+        ['transcribe', '--meeting-id', meetingId],
+        { timeoutSecs: TRANSCRIBE_TIMEOUT_SECS }
+      );
+
+      // Clear any partial run before inserting, so a retry cannot double up
+      // the transcript.
+      await db.deleteTranscriptSegments(meetingId);
+      for (const segment of result.segments) {
+        await db.insertTranscriptSegment(segment);
+      }
+
+      await db.updateMeetingStatus(meetingId, 'completed');
+      const rows = await refreshMeetings();
+      setSelectedMeeting(rows.find((m) => m.id === meetingId) ?? null);
+      setSegments(await db.listTranscriptSegments(meetingId));
+    },
+    [refreshMeetings]
+  );
+
+  const handleRetryTranscription = async (meetingId: string) => {
+    setError(null);
+    try {
+      await runTranscription(meetingId);
+    } catch (err) {
+      setError((err as Error).message);
+      try {
+        await db.updateMeetingStatus(meetingId, 'failed');
+        await refreshMeetings();
+      } catch {
+        /* surfaced above */
+      }
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const handleStartRecording = async (title: string) => {
     if (!hasConsent) {
       setShowConsentModal(true);
@@ -238,21 +290,7 @@ export const App: React.FC = () => {
       });
       await refreshMeetings();
 
-      setBusy('Transcribing (this runs locally and can take a while)…');
-      const result = await callSidecar<{ segments: TranscriptSegment[] }>(
-        ['transcribe', '--meeting-id', meetingId],
-        { timeoutSecs: TRANSCRIBE_TIMEOUT_SECS }
-      );
-
-      for (const segment of result.segments) {
-        await db.insertTranscriptSegment(segment);
-      }
-
-      await db.updateMeetingStatus(meetingId, 'completed');
-      const rows = await refreshMeetings();
-      const updated = rows.find((m) => m.id === meetingId) ?? null;
-      setSelectedMeeting(updated);
-      setSegments(await db.listTranscriptSegments(meetingId));
+      await runTranscription(meetingId);
     } catch (err) {
       // The audio is already safely on disk at this point, so a transcription
       // failure marks the meeting failed rather than discarding the recording.
@@ -422,6 +460,8 @@ export const App: React.FC = () => {
           selectedMeetingId={selectedMeeting?.id}
           onSelectMeeting={(m) => setSelectedMeeting(m)}
           onDeleteMeeting={handleDeleteMeeting}
+          onRetryTranscription={handleRetryTranscription}
+          busy={busy !== null}
         />
 
         {selectedMeeting && (
