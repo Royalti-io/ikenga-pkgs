@@ -138,7 +138,9 @@ export const MEETINGS_SIDECAR = 'pa-com-ikenga-meetings-bot';
  *
  * `timeoutSecs` matters: transcription of a long meeting runs for minutes and
  * the host's default timeout would abort a perfectly healthy whisper run, so
- * every caller passes a budget matched to the work it is asking for.
+ * every caller passes a budget matched to the work it is asking for. Both
+ * budgets have to move together — the MCP request timeout is a second,
+ * shorter one, and whichever is smaller wins.
  */
 export async function callSidecar<T = Record<string, unknown>>(
   args: string[],
@@ -177,3 +179,76 @@ export async function callSidecar<T = Record<string, unknown>>(
   }
   return payload as T;
 }
+
+// ─── Supervised MCP Tools ──────────────────────────────────────────────────
+
+export interface TranscribeOptions {
+  meetingId: string;
+  audioPath?: string;
+  outputDir?: string;
+  model?: string;
+  language?: string;
+  force?: boolean;
+}
+
+export interface TranscribeResponse {
+  ok: boolean;
+  meeting_id: string;
+  segment_count: number;
+  segments: import('@ikenga/meetings-contract').TranscriptSegment[];
+  reused_existing_transcript?: boolean;
+  error?: string;
+}
+
+/**
+ * Invoke a tool on this package's own supervised long-lived MCP server.
+ * The shell forwards non-`host.` tool calls to `pkg_mcp_call`.
+ */
+export async function callPkgTool<T = Record<string, unknown>>(
+  name: string,
+  args: Record<string, unknown> = {},
+  opts: { timeoutMs?: number } = {}
+): Promise<T> {
+  const res = await callHostTool(name, args, opts);
+  let payload: unknown = res.structuredContent;
+  if (!payload) {
+    const text = res.content?.[0]?.text;
+    if (!text) throw new Error(`tool ${name} returned no output`);
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      throw new Error(`tool ${name} returned non-JSON output: ${text.slice(0, 300)}`);
+    }
+  }
+
+  const obj = payload as Record<string, unknown>;
+  if (obj && obj.ok === false && typeof obj.error === 'string') {
+    throw new Error(obj.error);
+  }
+  return payload as T;
+}
+
+/**
+ * Transcribe a meeting via the supervised long-lived MCP server (WP-17).
+ * Unlike a one-shot CLI dropped by the shell, the MCP server tracks the
+ * whisper process directly and terminates it cleanly if the session is dropped.
+ */
+export async function transcribeMeeting(
+  opts: TranscribeOptions | string,
+  timeoutSecs = 7200
+): Promise<TranscribeResponse> {
+  const options: TranscribeOptions = typeof opts === 'string' ? { meetingId: opts } : opts;
+  const toolArgs: Record<string, unknown> = {
+    meeting_id: options.meetingId,
+    ...(options.audioPath ? { audio_path: options.audioPath } : {}),
+    ...(options.outputDir ? { output_dir: options.outputDir } : {}),
+    ...(options.model ? { model: options.model } : {}),
+    ...(options.language ? { language: options.language } : {}),
+    ...(options.force !== undefined ? { force: options.force } : {}),
+  };
+
+  return callPkgTool<TranscribeResponse>('transcribe', toolArgs, {
+    timeoutMs: timeoutSecs * 1000,
+  });
+}
+

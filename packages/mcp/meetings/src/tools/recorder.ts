@@ -21,6 +21,21 @@ export const RECORDER_TOOLS = [
     },
   },
   {
+    name: 'start_recording',
+    description:
+      'Start a local meeting recording session (screen and microphone/system audio) with 100% on-device processing.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: {
+          type: 'string',
+          description: 'Title of the meeting or recording session.',
+        },
+      },
+      required: ['title'],
+    },
+  },
+  {
     name: 'start_local_recorder',
     description:
       'Start a local own-machine meeting recording session (screen and microphone/system audio) with 100% on-device processing.',
@@ -33,6 +48,20 @@ export const RECORDER_TOOLS = [
         },
       },
       required: ['title'],
+    },
+  },
+  {
+    name: 'stop_recording',
+    description: 'Stop the active meeting recording session and trigger audio extraction.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        meeting_id: {
+          type: 'string',
+          description: 'UUID of the meeting session to stop.',
+        },
+      },
+      required: ['meeting_id'],
     },
   },
   {
@@ -87,8 +116,8 @@ export async function handleRecorderTool(
   switch (name) {
     case 'list_meetings': {
       const meetings = await client.listMeetings({
-        status: args.status as MeetingStatus,
-        limit: args.limit ?? 20,
+        status: args?.status ? (args.status as MeetingStatus) : undefined,
+        limit: args?.limit ? Number(args.limit) : 20,
       });
       return {
         count: meetings.length,
@@ -103,35 +132,39 @@ export async function handleRecorderTool(
       };
     }
 
+    case 'start_recording':
     case 'start_local_recorder': {
       const meetingId = crypto.randomUUID();
+      const now = new Date().toISOString();
       const newMeeting = {
         id: meetingId,
-        title: args.title,
+        title: String(args?.title ?? 'Untitled Recording'),
         platform: 'local_recording' as const,
         status: 'recording' as const,
-        start_time: new Date().toISOString(),
+        start_time: now,
         duration_seconds: 0,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        created_at: now,
+        updated_at: now,
       };
       await client.insertMeeting(newMeeting);
       return {
         ok: true,
         meeting_id: meetingId,
-        title: args.title,
+        title: newMeeting.title,
         status: 'recording',
         message: 'Started local meeting recording.',
       };
     }
 
+    case 'stop_recording':
     case 'stop_local_recorder': {
-      await client.updateMeetingStatus(args.meeting_id, 'completed', {
+      const meetingId = String(args?.meeting_id ?? '');
+      await client.updateMeetingStatus(meetingId, 'completed', {
         end_time: new Date().toISOString(),
       });
       return {
         ok: true,
-        meeting_id: args.meeting_id,
+        meeting_id: meetingId,
         status: 'completed',
         message: 'Recording stopped.',
       };
@@ -139,24 +172,25 @@ export async function handleRecorderTool(
 
     case 'schedule_recording': {
       const meetingId = crypto.randomUUID();
+      const now = new Date().toISOString();
       const scheduled = {
         id: meetingId,
-        title: args.title,
-        platform: (args.platform ?? 'local_recording') as any,
-        url: args.url,
+        title: String(args?.title ?? 'Scheduled Meeting'),
+        platform: (args?.platform ?? 'local_recording') as any,
+        url: typeof args?.url === 'string' && args.url.trim() ? args.url.trim() : undefined,
         status: 'scheduled' as const,
-        start_time: args.start_time,
+        start_time: String(args?.start_time ?? now),
         duration_seconds: 0,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
+        created_at: now,
+        updated_at: now,
       };
       await client.insertMeeting(scheduled);
       return {
         ok: true,
         meeting_id: meetingId,
-        title: args.title,
+        title: scheduled.title,
         status: 'scheduled',
-        start_time: args.start_time,
+        start_time: scheduled.start_time,
       };
     }
 
