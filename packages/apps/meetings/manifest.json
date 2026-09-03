@@ -69,20 +69,6 @@
       "auto_restart": false
     }
   ],
-  "mcp": [
-    {
-      "name": "meetings",
-      "command": "node",
-      "args": [
-        "mcp/dist/index.js"
-      ],
-      "lifecycle": "long-lived",
-      "restart_when_changed": [
-        "mcp/dist/index.js"
-      ],
-      "auto_restart": true
-    }
-  ],
   "capabilities": {
     "sqlite": {
       "db": "ikenga.local"

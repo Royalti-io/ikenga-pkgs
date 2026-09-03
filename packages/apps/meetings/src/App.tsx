@@ -20,7 +20,6 @@ import {
   connectBridge,
   hostSqlExecutor,
   isStandalone,
-  transcribeMeeting,
 } from './bridge.js';
 
 const db = new MeetingsDbClient(hostSqlExecutor);
@@ -223,7 +222,22 @@ export const App: React.FC = () => {
       setBusy('Transcribing locally…');
       await db.updateMeetingStatus(meetingId, 'transcribing');
 
-      const result = await transcribeMeeting(meetingId, TRANSCRIBE_TIMEOUT_SECS);
+      // Routed through the one-shot sidecar, NOT the long-lived MCP server.
+      //
+      // WP-17's supervised server is built and merged, but declaring it in the
+      // manifest makes the shell run `npm install` for this pkg
+      // (shell/src-tauri/src/pkg/npm_install.rs), which fails on the pnpm
+      // `workspace:*` protocol it cannot resolve — and that failure aborts
+      // registration entirely, so the pkg could not be mounted or used at all.
+      //
+      // Transcription therefore goes back through the sidecar until the shell
+      // fix lands. `transcribeMeeting` in bridge.ts stays in place and the MCP
+      // server stays in the tree; only the wiring is reverted. Swap this one
+      // line back once the shell can materialize a workspace-linked pkg.
+      const result = await callSidecar<{ segments: TranscriptSegment[] }>(
+        ['transcribe', '--meeting-id', meetingId],
+        { timeoutSecs: TRANSCRIBE_TIMEOUT_SECS }
+      );
 
       // Clear any partial run first so a retry replaces the transcript rather
       // than appending a second copy of every line.
