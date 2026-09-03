@@ -32,9 +32,11 @@ import { resolveWhisperBinary } from './whisper/binary.js';
 import {
   DEFAULT_WHISPER_MODEL,
   WhisperModelName,
+  WHISPER_MODELS,
   resolveModelPath,
   isModelDownloaded,
 } from './whisper/models.js';
+import { ensureWhisperBinary, ensureModel } from './whisper/acquire.js';
 import {
   RecordingSession,
   readSession,
@@ -545,6 +547,70 @@ async function cmdReadAudio(flags: Record<string, string>): Promise<unknown> {
   };
 }
 
+
+/**
+ * Acquire whisper.cpp and a model (WP-20).
+ *
+ * Emits progress lines on STDERR as it goes — stdout is reserved for the single
+ * JSON result, because `pkg_sidecar_call` parses it. A 488 MB download with no
+ * feedback is indistinguishable from a hang, which is how a first-run
+ * experience gets abandoned.
+ */
+async function cmdInstallWhisper(flags: Record<string, string>): Promise<unknown> {
+  const model = (flags.model as WhisperModelName) ?? DEFAULT_WHISPER_MODEL;
+  if (!WHISPER_MODELS[model]) {
+    throw new Error(
+      `Unknown model '${model}'. Available: ${Object.keys(WHISPER_MODELS).join(', ')}`
+    );
+  }
+
+  const onProgress = (p: {
+    what: string;
+    receivedBytes: number;
+    totalBytes: number;
+    fraction: number | null;
+  }) => {
+    const mb = (n: number) => (n / 1024 / 1024).toFixed(1);
+    const pct = p.fraction === null ? '  ?%' : `${String(Math.round(p.fraction * 100)).padStart(3)}%`;
+    process.stderr.write(`\r${pct}  ${p.what}  ${mb(p.receivedBytes)}/${mb(p.totalBytes)} MB   `);
+  };
+
+  const binary = await ensureWhisperBinary({
+    onProgress,
+    force: flags.force === 'true',
+  });
+  if (!binary.alreadyPresent) process.stderr.write('\n');
+
+  const mdl = await ensureModel(model, {
+    modelDir: flags['model-dir'],
+    onProgress,
+    force: flags.force === 'true',
+  });
+  if (!mdl.alreadyPresent) process.stderr.write('\n');
+
+  // Prove it runs rather than trusting that the files landed.
+  const resolved = await resolveWhisperBinary(binary.binaryPath);
+  if (!resolved.available) {
+    throw new Error(
+      `Downloaded whisper to ${binary.binaryPath} but it will not execute: ${resolved.error}`
+    );
+  }
+
+  return {
+    ok: true,
+    whisper: {
+      path: binary.binaryPath,
+      release: binary.release,
+      already_present: binary.alreadyPresent,
+    },
+    model: {
+      name: model,
+      path: mdl.modelPath,
+      already_present: mdl.alreadyPresent,
+    },
+  };
+}
+
 // ─── entrypoint ────────────────────────────────────────────────────────────
 
 const COMMANDS: Record<string, (flags: Record<string, string>) => Promise<unknown>> = {
@@ -555,6 +621,7 @@ const COMMANDS: Record<string, (flags: Record<string, string>) => Promise<unknow
   transcribe: cmdTranscribe,
   'read-audio': cmdReadAudio,
   info: cmdInfo,
+  'install-whisper': cmdInstallWhisper,
 };
 
 export async function runCli(argv: string[]): Promise<number> {

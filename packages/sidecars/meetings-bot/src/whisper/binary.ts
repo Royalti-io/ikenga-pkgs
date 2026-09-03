@@ -3,13 +3,14 @@ import { promisify } from 'node:util';
 import path from 'node:path';
 import os from 'node:os';
 import { existsSync } from 'node:fs';
+import { acquiredBinaryPath } from './acquire.js';
 
 const execFileAsync = promisify(execFile);
 
 export interface WhisperBinaryResolution {
   available: boolean;
   path?: string;
-  source?: 'custom' | 'user_bin' | 'path';
+  source?: 'custom' | 'acquired' | 'user_bin' | 'path';
   version?: string;
   error?: string;
 }
@@ -20,7 +21,7 @@ export interface WhisperBinaryResolution {
 export async function resolveWhisperBinary(
   customPath?: string
 ): Promise<WhisperBinaryResolution> {
-  const candidates: Array<{ path: string; source: 'custom' | 'user_bin' | 'path' }> = [];
+  const candidates: Array<{ path: string; source: 'custom' | 'acquired' | 'user_bin' | 'path' }> = [];
 
   // An EXPLICIT path is exclusive, never the head of a fallback chain.
   //
@@ -32,6 +33,11 @@ export async function resolveWhisperBinary(
   if (customPath) {
     return resolveSingleCandidate({ path: customPath, source: 'custom' });
   }
+
+  // An acquired toolchain (WP-20) — `~/.ikenga/whisper/<release>/whisper-cli`.
+  // Checked before the hand-placed locations below because it is the one this
+  // pkg can verify, having downloaded it against a pinned checksum itself.
+  candidates.push({ path: acquiredBinaryPath(), source: 'acquired' });
 
   // Common user directory ~/.ikenga/bin/
   const userBin = path.join(os.homedir(), '.ikenga', 'bin', os.platform() === 'win32' ? 'whisper-cli.exe' : 'whisper-cli');
@@ -58,7 +64,7 @@ export async function resolveWhisperBinary(
 /** Probe exactly one candidate path; never falls back to another. */
 async function resolveSingleCandidate(candidate: {
   path: string;
-  source: 'custom' | 'user_bin' | 'path';
+  source: 'custom' | 'acquired' | 'user_bin' | 'path';
 }): Promise<WhisperBinaryResolution> {
   const notFound: WhisperBinaryResolution = {
     available: false,
