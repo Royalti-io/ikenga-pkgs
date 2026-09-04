@@ -1,5 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react';
-import { callSidecar } from '../bridge.js';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { callSidecar, notifyUser } from '../bridge.js';
 import { getIcsUrl, getWindowMinutes, isDismissed, dismiss } from '../lib/calendar/store.js';
 
 export interface UpcomingMeeting {
@@ -36,6 +36,8 @@ const POLL_MS = 60_000;
  */
 export const CalendarNudge: React.FC<CalendarNudgeProps> = ({ onRecord, busy, onConfigure }) => {
   const [upcoming, setUpcoming] = useState<UpcomingMeeting[]>([]);
+  /** Meetings already notified about, so a 60s poll does not re-notify. */
+  const notifiedRef = useRef<Set<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
 
   const poll = useCallback(async () => {
@@ -49,7 +51,23 @@ export const CalendarNudge: React.FC<CalendarNudgeProps> = ({ onRecord, busy, on
         ['calendar-upcoming', '--ics-url', url, '--window', String(getWindowMinutes())],
         { timeoutSecs: 30 }
       );
-      setUpcoming((res.upcoming ?? []).filter((m) => !isDismissed(m.uid)));
+      const fresh = (res.upcoming ?? []).filter((m) => !isDismissed(m.uid));
+
+      // Notify once per meeting, and only when it is newly surfaced. The
+      // in-pane banner is invisible while the user is in the call — reaching
+      // them outside the window is the entire reason WP-26 exists. If the verb
+      // is unavailable (older shell) this degrades to the banner alone rather
+      // than failing the poll.
+      for (const m of fresh) {
+        if (notifiedRef.current.has(m.uid)) continue;
+        notifiedRef.current.add(m.uid);
+        void notifyUser(
+          `${m.title} is starting`,
+          'Open Ikenga Meetings to record it.'
+        );
+      }
+
+      setUpcoming(fresh);
       setError(null);
     } catch (err) {
       // A failing feed must not nag on every poll — surface it once, quietly,
