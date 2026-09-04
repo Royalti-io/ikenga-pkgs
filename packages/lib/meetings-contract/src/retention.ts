@@ -84,6 +84,13 @@ export const MEETING_MEDIA_FILES = {
    *  A 32 kbps mono AAC copy is ~14 MB/hour, which is the difference between a
    *  player that loads and one that cannot. */
   AUDIO_COMPRESSED: 'audio.m4a',
+  /** Stereo diarization master: left = remote (system output monitor), right =
+   *  local (microphone). v1 ships no speaker model — pyannote is gated and
+   *  cannot live in a pkg — so two-way attribution comes from the fact that
+   *  capture already opens those two sources separately before mixing them
+   *  (D-15). Roughly double the mono master's size, and additive: the mono
+   *  `AUDIO` remains whisper's input and `AUDIO_COMPRESSED` remains playback. */
+  AUDIO_STEREO: 'audio.stereo.wav',
   METADATA: 'meta.json',
   TRANSCRIPT_RAW: 'transcript.raw.json',
 } as const;

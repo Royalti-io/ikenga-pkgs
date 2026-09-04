@@ -15,6 +15,15 @@ export interface TranscribeOptions {
   whisperBinaryPath?: string;
   modelDir?: string;
   onSpawn?: (pid: number) => void | Promise<void>;
+  /**
+   * Stamped onto every resulting segment's `speaker_id` (free-form — the
+   * contract schema has no enum for it). Used for channel-split
+   * transcription: when `audioWavPath` is one extracted leg of the stereo
+   * master (see `capture/channel-extract.ts`) rather than the full mix, the
+   * caller already knows which speaker that leg is and passes it through
+   * here instead of leaving every segment unattributed.
+   */
+  speakerId?: string;
 }
 
 export interface WhisperRawWord {
@@ -74,7 +83,8 @@ export function calculateWer(reference: string, hypothesis: string): number {
  */
 export function parseWhisperCppJson(
   jsonData: any,
-  meetingId: string
+  meetingId: string,
+  options?: { speakerId?: string }
 ): TranscriptSegment[] {
   const segments: TranscriptSegment[] = [];
 
@@ -125,6 +135,7 @@ export function parseWhisperCppJson(
     segments.push({
       id: crypto.randomUUID(),
       meeting_id: meetingId,
+      speaker_id: options?.speakerId,
       speaker_source: 'dom_cue',
       start_ms: Math.max(0, startMs),
       end_ms: Math.max(startMs, endMs),
@@ -222,6 +233,6 @@ export class LocalWhisperEngine {
     const rawContent = await fs.readFile(jsonPath, 'utf8');
     const parsedJson = JSON.parse(rawContent);
 
-    return parseWhisperCppJson(parsedJson, options.meetingId);
+    return parseWhisperCppJson(parsedJson, options.meetingId, { speakerId: options.speakerId });
   }
 }

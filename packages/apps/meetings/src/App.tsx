@@ -13,6 +13,7 @@ import { Digest } from './components/Digest.js';
 import { LiveRecording } from './components/LiveRecording.js';
 import { MeetingStage } from './components/MeetingStage.js';
 import { Transcript } from './components/Transcript.js';
+import { SttPicker, type SttPickerScope } from './components/SttPicker.js';
 import { summarizeMeetingTranscript } from './intelligence/summarizer.js';
 import { syncActionItemsToTasks } from './intelligence/task-sync.js';
 import {
@@ -22,6 +23,8 @@ import {
   isStandalone,
   transcribeMeeting,
 } from './bridge.js';
+import { STT_PROVIDER_LABELS, sttProviderIsCloud } from './lib/stt/types.js';
+import { getDefaultProvider, resolveProvider } from './lib/stt/store.js';
 
 const db = new MeetingsDbClient(hostSqlExecutor);
 
@@ -52,6 +55,9 @@ export const App: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [consentOpen, setConsentOpen] = useState(false);
+  const [sttPicker, setSttPicker] = useState<{ scope: SttPickerScope; firstRun: boolean } | null>(
+    null
+  );
   const [hasConsent, setHasConsent] = useState<boolean>(() => {
     try {
       return localStorage.getItem(CONSENT_KEY) === 'true';
@@ -220,10 +226,22 @@ export const App: React.FC = () => {
 
   const runTranscription = useCallback(
     async (meetingId: string) => {
-      setBusy('Transcribing locally…');
+      // WP-19: resolved fresh at transcribe time (not at record time) so an
+      // override set on the LiveRecording screen, or a retry after changing
+      // the backend, both take effect.
+      const provider = resolveProvider(meetingId);
+      const providerLabel = STT_PROVIDER_LABELS[provider];
+      setBusy(
+        sttProviderIsCloud(provider)
+          ? `Transcribing via ${providerLabel} (leaves this machine)…`
+          : `Transcribing (${providerLabel})…`
+      );
       await db.updateMeetingStatus(meetingId, 'transcribing');
 
-      const result = await transcribeMeeting(meetingId, TRANSCRIBE_TIMEOUT_SECS);
+      const result = await transcribeMeeting(
+        { meetingId, provider },
+        TRANSCRIBE_TIMEOUT_SECS
+      );
 
       // Clear any partial run first so a retry replaces the transcript rather
       // than appending a second copy of every line.
@@ -244,6 +262,18 @@ export const App: React.FC = () => {
 
   const startRecording = async () => {
     if (!hasConsent) { setConsentOpen(true); return; }
+    // WP-19: a first-time user picks a transcription backend before their
+    // first recording, not after — this is what makes the picker
+    // "self-contained" for a third-party installer with no shell settings
+    // familiarity. Once a default exists, Record never blocks on this again.
+    if (getDefaultProvider() === null) {
+      setSttPicker({ scope: 'default', firstRun: true });
+      return;
+    }
+    await beginRecording();
+  };
+
+  const beginRecording = async () => {
     setError(null);
     setBusy('Starting…');
 
@@ -386,11 +416,31 @@ export const App: React.FC = () => {
     );
   }
 
+  const defaultProvider = getDefaultProvider() ?? 'local';
+  // The header control targets whatever meeting is on screen (live or
+  // selected) so its override applies before that meeting's own transcribe
+  // call — see `runTranscription`'s fresh `resolveProvider` read.
+  const sttScopeMeetingId = recordingIdRef.current ?? selected?.id ?? null;
+  const sttEffectiveProvider = resolveProvider(sttScopeMeetingId);
+
   return (
     <div className="mtg-shell">
       <header className="mtg-bar">
         <button className="mtg-search" onClick={() => setPaletteOpen(true)}>
           Search meetings <kbd>⌘K</kbd>
+        </button>
+        <button
+          type="button"
+          className="mtg-stt-trigger"
+          onClick={() =>
+            setSttPicker({
+              scope: sttScopeMeetingId ? { meetingId: sttScopeMeetingId } : 'default',
+              firstRun: false,
+            })
+          }
+          title="Change transcription backend"
+        >
+          STT: {STT_PROVIDER_LABELS[sttEffectiveProvider]}
         </button>
         <div className="mtg-spacer" />
         {!recording && (
@@ -425,6 +475,9 @@ export const App: React.FC = () => {
             <MeetingStage
               meeting={selected}
               speakers={speakers}
+              channelAttributed={segments.some(
+                (s) => s.speaker_id === 'remote' || s.speaker_id === 'local'
+              )}
               currentMs={currentMs}
               onTimeChange={setCurrentMs}
               seekToMs={seekToMs}
@@ -451,8 +504,11 @@ export const App: React.FC = () => {
             <strong>No meetings yet</strong>
             <p>
               Record starts capturing this machine — system audio and microphone
-              together, so both sides of a call land in the tape. Everything stays
-              on disk here; nothing is uploaded.
+              together, so both sides of a call land in the tape. Recording is
+              always local.{' '}
+              {defaultProvider === 'local'
+                ? 'Transcription stays on this machine too — nothing is uploaded.'
+                : `Transcription uses ${STT_PROVIDER_LABELS[defaultProvider]}, which sends this meeting's audio off this machine.`}
             </p>
           </div>
         </div>
@@ -469,9 +525,32 @@ export const App: React.FC = () => {
 
       {consentOpen && (
         <ConsentGate
+          cloudProvider={(() => {
+            // The gate's copy must describe the CONFIGURED state, not a
+            // hoped-for one: with a cloud provider selected, "nothing leaves
+            // this machine" is simply false.
+            const p = getDefaultProvider();
+            return p && sttProviderIsCloud(p) ? STT_PROVIDER_LABELS[p] : undefined;
+          })()}
           hasAcknowledged={false}
           onAccept={acceptConsent}
           onCancel={() => setConsentOpen(false)}
+        />
+      )}
+
+      {sttPicker && (
+        <SttPicker
+          scope={sttPicker.scope}
+          firstRun={sttPicker.firstRun}
+          onClose={() => {
+            const wasFirstRun = sttPicker.firstRun;
+            setSttPicker(null);
+            // Confirming the first-run gate is what unblocks the Record
+            // press that triggered it — see `startRecording` above. Cancel
+            // is not offered in first-run mode, so `onClose` here only ever
+            // fires via a confirmed choice.
+            if (wasFirstRun) void beginRecording();
+          }}
         />
       )}
     </div>

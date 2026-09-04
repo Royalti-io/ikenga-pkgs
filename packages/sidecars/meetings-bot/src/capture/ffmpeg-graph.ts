@@ -27,6 +27,25 @@ export interface FfmpegGraphConfig {
   mixSystemAndMic?: boolean;
   outputAudioPath: string;
   outputCompressedPath?: string;
+  /**
+   * Optional stereo master: left channel = system monitor (remote
+   * participants), right channel = mic (the local speaker) — see D-15.
+   *
+   * The two legs are separate ffmpeg inputs right up until `amix` folds them
+   * into the mono master above, so keeping them apart into a second, stereo
+   * output gives exact two-way speaker attribution for free: no diarization
+   * model, no gated HuggingFace token. Exact for a 1:1 call; for multi-party
+   * it degrades gracefully to "me vs everyone else", which still beats no
+   * attribution at all.
+   *
+   * Only produced on the dual-source path (`isLinuxPulse && mixSystemAndMic
+   * !== false`) — a single-device capture never had two legs to keep apart.
+   * It is a straight PCM copy of both mono legs at the master's rate, so it
+   * roughly DOUBLES the master's on-disk size (two channels instead of one)
+   * — worth it for the free attribution, but callers that are disk-conscious
+   * can leave this unset and keep only the existing mono outputs.
+   */
+  outputStereoPath?: string;
   ffmpegBinary?: string;
 }
 
@@ -81,18 +100,32 @@ export function buildFfmpegArgs(config: FfmpegGraphConfig): string[] {
     //
     // When a compressed copy is also wanted the mix is `asplit`, because a
     // filter output pad can only be consumed by ONE output — mapping [aout]
-    // twice fails with "Filter aout has an unconnected output".
+    // twice fails with "Filter aout has an unconnected output". The same rule
+    // is why the stereo master below is its OWN filter chain (`join`) off the
+    // same two inputs, rather than trying to derive it from the mix: [0:a]
+    // and [1:a] are re-readable any number of times (ffmpeg auto-`asplit`s an
+    // input label that feeds more than one filter chain), but a filter's
+    // OUTPUT pad is not.
+    const filterChains: string[] = [];
     if (config.outputCompressedPath) {
-      args.push(
-        '-filter_complex',
+      filterChains.push(
         '[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=0,asplit=2[aout][acomp]'
       );
     } else {
-      args.push(
-        '-filter_complex',
+      filterChains.push(
         '[0:a][1:a]amix=inputs=2:duration=longest:dropout_transition=0[aout]'
       );
     }
+    if (config.outputStereoPath) {
+      // `join` with an explicit map, not `amerge`: amerge's channel order is
+      // implicit (input order) and undocumented for anything but the common
+      // case, where `join`'s `map=` pins left/right explicitly so a future
+      // reader doesn't have to trust that ffmpeg kept 0 before 1.
+      filterChains.push(
+        '[0:a][1:a]join=inputs=2:channel_layout=stereo:map=0.0-FL|1.0-FR[astereo]'
+      );
+    }
+    args.push('-filter_complex', filterChains.join(';'));
     args.push('-map', '[aout]');
     mappedFromFilter = true;
   } else {
@@ -139,7 +172,33 @@ export function buildFfmpegArgs(config: FfmpegGraphConfig): string[] {
     );
   }
 
+  // Stereo master (left = monitor/remote, right = mic/local). Only meaningful
+  // when the graph actually had two separate legs to keep apart — a
+  // single-device capture has nothing to split, so the option is silently
+  // ignored there rather than erroring on a config that is valid for the
+  // common (dual-source) case.
+  if (config.outputStereoPath && mappedFromFilter && isLinuxPulse && config.mixSystemAndMic !== false) {
+    args.push(
+      '-map', '[astereo]',
+      '-vn',
+      '-c:a', 'pcm_s16le',
+      '-ar', '16000',
+      '-ac', '2',
+      config.outputStereoPath
+    );
+  }
+
   return args;
+}
+
+/**
+ * Derives the stereo-master sibling path of an `audio.wav` master, e.g.
+ * `.../audio.wav` -> `.../audio.stereo.wav`. Kept here (not in
+ * `@ikenga/meetings-contract`) so this pkg does not need a contract change to
+ * ship the stereo master as an addition to the existing media layout.
+ */
+export function deriveStereoPath(audioPath: string): string {
+  return audioPath.replace(/\.wav$/i, '.stereo.wav');
 }
 
 export class FfmpegCaptureSession extends EventEmitter {

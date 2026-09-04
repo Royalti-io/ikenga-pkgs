@@ -189,6 +189,9 @@ export interface TranscribeOptions {
   model?: string;
   language?: string;
   force?: boolean;
+  /** WP-19: which STT backend to use. Defaults to 'local' server-side when
+   *  omitted (see `mcp/src/index.ts`). */
+  provider?: import('./lib/stt/types.js').SttProviderId;
 }
 
 export interface TranscribeResponse {
@@ -245,10 +248,92 @@ export async function transcribeMeeting(
     ...(options.model ? { model: options.model } : {}),
     ...(options.language ? { language: options.language } : {}),
     ...(options.force !== undefined ? { force: options.force } : {}),
+    ...(options.provider ? { provider: options.provider } : {}),
   };
 
   return callPkgTool<TranscribeResponse>('transcribe', toolArgs, {
     timeoutMs: timeoutSecs * 1000,
   });
+}
+
+// ─── STT provider abstraction (WP-19) ──────────────────────────────────────
+
+export interface EngineAudioCapability {
+  available: boolean;
+  reason: string;
+}
+
+/**
+ * Query whether the shell's configured engine can accept audio input, via a
+ * `host.engine.capabilities` host tool mirroring
+ * `AcpPromptCapabilities.audio` (`@ikenga/contract/engine/acp.ts`).
+ *
+ * That host tool does not exist yet. As of this writing (2026-09-04)
+ * `shell/src/components/pkg/pkg-iframe-host.tsx` implements exactly these
+ * `host.*` verbs: `pkgSidecarCall`, `dbQuery`, `dbExec`, `navigate`,
+ * `openFolder`, `pkg.setMenu`, `pkg.setBadge`, `paActions.*`, `agentOps.*`,
+ * `fetch`, `invoke` — no capability query for the active engine is bridged
+ * to pkg iframes at all, and no shipped engine (Claude Code, OpenCode, Pi)
+ * advertises `audio: true` regardless — they all wrap text-only CLIs.
+ *
+ * This still performs a real call rather than hardcoding `false`: any
+ * failure (unknown tool today, or a real "no audio support" answer once the
+ * bridge exists) is read as unavailable, and the day either gap closes this
+ * starts reporting `available: true` with no code change here required.
+ */
+export async function getEngineAudioCapability(): Promise<EngineAudioCapability> {
+  try {
+    const res = await callHostTool('host.engine.capabilities', {});
+    const payload = (res.structuredContent ?? {}) as { audio?: boolean; engine?: string };
+    if (payload.audio === true) {
+      return {
+        available: true,
+        reason: `the configured engine (${payload.engine ?? 'unknown'}) advertises audio input`,
+      };
+    }
+    return {
+      available: false,
+      reason: payload.engine
+        ? `the configured engine (${payload.engine}) does not advertise audio input`
+        : 'the configured engine does not advertise audio input',
+    };
+  } catch {
+    return {
+      available: false,
+      reason:
+        "no engine exposes audio input yet — Claude Code, OpenCode and Pi all wrap text-only CLIs, and the shell doesn't bridge engine capabilities to pkgs today",
+    };
+  }
+}
+
+export interface SttStatusResponse {
+  ok: boolean;
+  local: {
+    whisper_binary_available: boolean;
+    model_downloaded: boolean;
+    reason?: string;
+  };
+  openai: {
+    configured: boolean;
+  };
+}
+
+/** Ask our own supervised MCP server what it can transcribe with right now:
+ *  whether whisper-cli + a model are present locally, and whether an OpenAI
+ *  key has been configured (never the key's value — see `mcp/src/tools.ts`). */
+export async function sttStatus(): Promise<SttStatusResponse> {
+  return callPkgTool<SttStatusResponse>('stt_status');
+}
+
+/** Store the user's OpenAI API key for this pkg (see `mcp/src/secrets-store.ts`
+ *  for exactly where and why). The key is sent once, over this pkg's own
+ *  supervised MCP connection, and is never returned, logged, or persisted in
+ *  this iframe. */
+export async function setOpenAiApiKey(apiKey: string): Promise<void> {
+  await callPkgTool('stt_set_openai_key', { api_key: apiKey });
+}
+
+export async function clearOpenAiApiKey(): Promise<void> {
+  await callPkgTool('stt_clear_openai_key');
 }
 

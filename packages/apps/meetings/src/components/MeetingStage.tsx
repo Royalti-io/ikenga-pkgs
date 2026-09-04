@@ -6,6 +6,9 @@ import { formatClock, initials, speakerColor, waveformBars } from '../lib/displa
 export interface MeetingStageProps {
   meeting: Meeting;
   speakers: MeetingSpeaker[];
+  /** True when the transcript carries channel-derived identities (WP-21), so
+   *  the pane can stop claiming speakers are unidentified. */
+  channelAttributed?: boolean;
   /** Current playhead, in ms — lifted so the transcript can follow it. */
   currentMs: number;
   onTimeChange: (ms: number) => void;
@@ -27,6 +30,7 @@ function base64ToBlobUrl(base64: string, mime: string): string {
 export const MeetingStage: React.FC<MeetingStageProps> = ({
   meeting,
   speakers,
+  channelAttributed = false,
   currentMs,
   onTimeChange,
   seekToMs,
@@ -168,7 +172,11 @@ export const MeetingStage: React.FC<MeetingStageProps> = ({
             <span className="mtg-face-names">{speakers.map((s) => s.name).join(', ')}</span>
           </>
         ) : (
-          <span className="mtg-face-names">Speakers not yet identified</span>
+          <span className="mtg-face-names">
+            {channelAttributed
+              ? 'You and the other side, split by audio channel'
+              : 'Speakers not yet identified'}
+          </span>
         )}
       </div>
 

@@ -16,7 +16,7 @@
     "dev": "vite",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "clean": "rm -rf dist mcp/dist sidecars/bot/dist",
-    "test": "node --test --import=tsx src/components/ConsentGate.test.ts src/intelligence/summarizer.test.ts test/e2e-smoke.test.ts test/mcp-transcribe.test.ts mcp/src/whisper.orphan.test.ts",
+    "test": "node --test --import=tsx src/components/ConsentGate.test.ts src/intelligence/summarizer.test.ts test/e2e-smoke.test.ts test/mcp-transcribe.test.ts test/mcp-transcribe-stt.test.ts mcp/src/whisper.orphan.test.ts mcp/src/openai.test.ts mcp/src/secrets-store.test.ts src/lib/display.test.ts mcp/src/summarize.test.ts",
     "preview": "vite preview",
     "build:sidecar": "bash sidecars/bot/build.sh",
     "build:mcp": "bash mcp/build.sh"
