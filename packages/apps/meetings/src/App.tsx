@@ -7,6 +7,7 @@ import {
   MeetingsDbClient,
   TranscriptSegment,
 } from '@ikenga/meetings-contract';
+import { CalendarNudge } from './components/CalendarNudge.js';
 import { ConsentGate } from './components/ConsentGate.js';
 import { CommandPalette } from './components/CommandPalette.js';
 import { Digest } from './components/Digest.js';
@@ -260,7 +261,7 @@ export const App: React.FC = () => {
     [refresh, buildDigest]
   );
 
-  const startRecording = async () => {
+  const startRecording = async (titleOverride?: string) => {
     if (!hasConsent) { setConsentOpen(true); return; }
     // WP-19: a first-time user picks a transcription backend before their
     // first recording, not after — this is what makes the picker
@@ -270,16 +271,18 @@ export const App: React.FC = () => {
       setSttPicker({ scope: 'default', firstRun: true });
       return;
     }
-    await beginRecording();
+    await beginRecording(titleOverride);
   };
 
-  const beginRecording = async () => {
+  const beginRecording = async (titleOverride?: string) => {
     setError(null);
     setBusy('Starting…');
 
     const meetingId = crypto.randomUUID();
     const now = new Date().toISOString();
-    const title = `Recording — ${new Date().toLocaleString()}`;
+    // A nudge supplies the calendar event's title, so the meeting is named
+    // what the user actually called it rather than by a timestamp.
+    const title = titleOverride?.trim() || `Recording — ${new Date().toLocaleString()}`;
 
     try {
       // Start the recorder BEFORE writing the row, so a capture failure never
@@ -446,7 +449,9 @@ export const App: React.FC = () => {
         {!recording && (
           <button
             className="mtg-btn mtg-btn--rec"
-            onClick={startRecording}
+            // Wrapped, not passed directly: onClick supplies a MouseEvent as
+            // the first argument, which would become the meeting's title.
+            onClick={() => void startRecording()}
             disabled={busy !== null}
           >
             <span className="mtg-dot" />
@@ -460,6 +465,14 @@ export const App: React.FC = () => {
           <span>{error}</span>
           <button onClick={() => setError(null)} aria-label="Dismiss">×</button>
         </div>
+      )}
+
+      {!recording && phase === 'ready' && (
+        <CalendarNudge
+          busy={busy !== null}
+          onRecord={(title) => void startRecording(title)}
+          onConfigure={() => setPaletteOpen(false)}
+        />
       )}
 
       {recording ? (
