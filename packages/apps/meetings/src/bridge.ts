@@ -129,6 +129,24 @@ export const hostSqlExecutor = {
   },
 };
 
+/**
+ * Raise an OS notification (WP-26).
+ *
+ * Gated on `permissions.notify` containing `"send"`. Returns false rather than
+ * throwing when the verb is unavailable — an older shell has no `host.notify`
+ * dispatcher at all — so a caller can degrade to an in-pane signal instead of
+ * failing. That matters here: the shell fix may not be installed yet.
+ */
+export async function notifyUser(title: string, body?: string): Promise<boolean> {
+  try {
+    const res = await callHostTool('host.notify', { title, ...(body ? { body } : {}) });
+    const ok = (res.structuredContent as { ok?: boolean } | undefined)?.ok;
+    return ok === true;
+  } catch {
+    return false;
+  }
+}
+
 // ─── Sidecar ───────────────────────────────────────────────────────────────
 
 export const MEETINGS_SIDECAR = 'pa-com-ikenga-meetings-bot';

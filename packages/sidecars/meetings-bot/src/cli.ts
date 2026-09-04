@@ -39,6 +39,7 @@ import {
   isModelDownloaded,
 } from './whisper/models.js';
 import { ensureWhisperBinary, ensureModel } from './whisper/acquire.js';
+import { parseIcs, upcomingMeetings } from './calendar/ics.js';
 import {
   RecordingSession,
   readSession,
@@ -680,6 +681,61 @@ async function cmdInstallWhisper(flags: Record<string, string>): Promise<unknown
   };
 }
 
+
+/**
+ * Fetch a calendar feed and report meetings worth nudging about (WP-15).
+ *
+ * The URL is a secret — it grants read access to the user's calendar — so it is
+ * passed per call rather than stored here, and it is never echoed back in the
+ * result or in an error. `--window` is how many minutes ahead to look.
+ */
+async function cmdCalendarUpcoming(flags: Record<string, string>): Promise<unknown> {
+  const url = requireFlag(flags, 'ics-url');
+  if (!/^https:\/\//i.test(url)) {
+    throw new Error('the calendar feed URL must be https');
+  }
+  const windowMinutes = Number.parseInt(flags.window ?? '5', 10);
+
+  let text: string;
+  try {
+    const res = await fetch(url, { redirect: 'follow' });
+    if (!res.ok) {
+      // Deliberately does not include the URL: it is a bearer credential.
+      throw new Error(`calendar feed returned HTTP ${res.status} ${res.statusText}`);
+    }
+    text = await res.text();
+  } catch (err) {
+    const msg = (err as Error).message ?? String(err);
+    throw new Error(`could not read the calendar feed: ${msg.replace(url, '<feed url>')}`);
+  }
+
+  if (!/BEGIN:VCALENDAR/i.test(text)) {
+    throw new Error(
+      'that URL did not return a calendar. Use the secret iCal/ICS address from ' +
+        'your calendar settings, not the page you view it on.'
+    );
+  }
+
+  const all = parseIcs(text);
+  const upcoming = upcomingMeetings(all, {
+    ...(Number.isFinite(windowMinutes) ? { windowMinutes } : {}),
+  });
+
+  return {
+    ok: true,
+    events_total: all.length,
+    with_join_link: all.filter((e) => e.joinUrl).length,
+    window_minutes: Number.isFinite(windowMinutes) ? windowMinutes : 5,
+    upcoming: upcoming.map((e) => ({
+      uid: e.uid,
+      title: e.title,
+      starts_at: e.startsAt,
+      ends_at: e.endsAt,
+      join_url: e.joinUrl,
+    })),
+  };
+}
+
 // ─── entrypoint ────────────────────────────────────────────────────────────
 
 const COMMANDS: Record<string, (flags: Record<string, string>) => Promise<unknown>> = {
@@ -691,6 +747,7 @@ const COMMANDS: Record<string, (flags: Record<string, string>) => Promise<unknow
   'read-audio': cmdReadAudio,
   info: cmdInfo,
   'install-whisper': cmdInstallWhisper,
+  'calendar-upcoming': cmdCalendarUpcoming,
 };
 
 export async function runCli(argv: string[]): Promise<number> {
