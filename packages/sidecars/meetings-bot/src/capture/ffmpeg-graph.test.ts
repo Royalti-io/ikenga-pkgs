@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildFfmpegArgs, FfmpegGraphConfig } from './ffmpeg-graph.js';
+import { buildFfmpegArgs, deriveStereoPath, FfmpegGraphConfig } from './ffmpeg-graph.js';
 
 describe('FFmpeg Audio-Only Graph Builder', () => {
   it('builds valid audio capture args for pulse audio', () => {
@@ -125,5 +125,81 @@ describe('FFmpeg Audio-Only Graph Builder', () => {
     });
     assert.equal(args.filter((a) => a === '-i').length, 1);
     assert.ok(!args.includes('-filter_complex'));
+  });
+
+  // ── WP-21: stereo master for free two-way speaker attribution (D-15) ───
+  describe('stereo master (left=monitor/remote, right=mic/local)', () => {
+    it('adds a join filter chain and a third mapped output alongside the existing mono outputs', () => {
+      const args = buildFfmpegArgs({
+        audioInput: { type: 'pulse' },
+        outputAudioPath: '/tmp/m/audio.wav',
+        outputCompressedPath: '/tmp/m/audio.m4a',
+        outputStereoPath: '/tmp/m/audio.stereo.wav',
+      });
+
+      // Still exactly two capture inputs — the stereo master is a second
+      // filter chain off the SAME two inputs, not a third input.
+      assert.equal(args.filter((a) => a === '-i').length, 2);
+
+      const filterIdx = args.indexOf('-filter_complex');
+      assert.ok(filterIdx !== -1);
+      const graph = String(args[filterIdx + 1]);
+      assert.match(graph, /amix=inputs=2.*asplit=2\[aout\]\[acomp\]/);
+      assert.match(graph, /join=inputs=2:channel_layout=stereo:map=0\.0-FL\|1\.0-FR\[astereo\]/);
+
+      // Three mapped outputs now: the mono master, the compressed copy, and
+      // the stereo master.
+      assert.equal(args.filter((a) => a === '-map').length, 3);
+      assert.ok(args.includes('[astereo]'));
+
+      // Existing mono outputs are unchanged: 16kHz mono PCM master, 32k mono
+      // AAC compressed copy.
+      assert.ok(args.includes('pcm_s16le'));
+      assert.ok(args.includes('/tmp/m/audio.wav'));
+      assert.ok(args.includes('32k'));
+      assert.ok(args.includes('/tmp/m/audio.m4a'));
+
+      // The new stereo output is 2-channel PCM, not mono, and lands at its
+      // own path.
+      const stereoOutIdx = args.indexOf('/tmp/m/audio.stereo.wav');
+      assert.ok(stereoOutIdx !== -1);
+      assert.equal(args[stereoOutIdx - 1], '2', 'stereo master must be -ac 2');
+    });
+
+    it('works standalone (no compressed copy requested)', () => {
+      const args = buildFfmpegArgs({
+        audioInput: { type: 'pulse' },
+        outputAudioPath: '/tmp/m/audio.wav',
+        outputStereoPath: '/tmp/m/audio.stereo.wav',
+      });
+
+      const filterIdx = args.indexOf('-filter_complex');
+      const graph = String(args[filterIdx + 1]);
+      assert.match(graph, /amix=inputs=2:duration=longest:dropout_transition=0\[aout\]/);
+      assert.ok(!graph.includes('asplit'), 'no compressed copy means no asplit on the mix leg');
+      assert.match(graph, /join=inputs=2:channel_layout=stereo/);
+      assert.equal(args.filter((a) => a === '-map').length, 2);
+      assert.ok(args.includes('/tmp/m/audio.stereo.wav'));
+    });
+
+    it('is silently ignored on the single-device (non-dual-source) path', () => {
+      // Nothing to split when there was only ever one input — asserting this
+      // stays quiet rather than erroring keeps `outputStereoPath` safe to set
+      // unconditionally at the call site regardless of platform/config.
+      const args = buildFfmpegArgs({
+        audioInput: { type: 'pulse', deviceOrSink: 'some.monitor' },
+        mixSystemAndMic: false,
+        outputAudioPath: '/tmp/m/audio.wav',
+        outputStereoPath: '/tmp/m/audio.stereo.wav',
+      });
+      assert.ok(!args.includes('/tmp/m/audio.stereo.wav'));
+      assert.ok(!args.includes('[astereo]'));
+    });
+  });
+
+  describe('deriveStereoPath', () => {
+    it('sits next to the mono master with a .stereo.wav suffix', () => {
+      assert.equal(deriveStereoPath('/tmp/m/audio.wav'), '/tmp/m/audio.stereo.wav');
+    });
   });
 });

@@ -26,6 +26,10 @@ export interface MeetingMediaPaths {
   /** Compressed playback copy; may not exist for recordings made before it
    *  was introduced, so readers must fall back to `audioPath`. */
   audioCompressedPath: string;
+  /** Stereo diarization master (left = remote, right = local). Absent for any
+   *  recording made before D-15 shipped, so callers must handle its absence
+   *  rather than assume attribution is available. */
+  audioStereoPath: string;
   metaPath: string;
   transcriptRawPath: string;
 }
@@ -43,6 +47,7 @@ export function getMeetingMediaFilePaths(
     videoPath: path.join(dir, MEETING_MEDIA_FILES.VIDEO),
     audioPath: path.join(dir, MEETING_MEDIA_FILES.AUDIO),
     audioCompressedPath: path.join(dir, MEETING_MEDIA_FILES.AUDIO_COMPRESSED),
+    audioStereoPath: path.join(dir, MEETING_MEDIA_FILES.AUDIO_STEREO),
     metaPath: path.join(dir, MEETING_MEDIA_FILES.METADATA),
     transcriptRawPath: path.join(dir, MEETING_MEDIA_FILES.TRANSCRIPT_RAW),
   };
@@ -93,4 +98,21 @@ export async function hasMediaFiles(
     hasVideo: existsSync(paths.videoPath),
     hasAudio: existsSync(paths.audioPath),
   };
+}
+
+/** Per-channel extraction target pulled out of the stereo master.
+ *
+ * Lives here rather than in the sidecar so the naming is defined once. A
+ * `.replace()` on a path in the consumer silently produces the wrong filename
+ * the moment the extension or suffix changes.
+ */
+export function meetingChannelPath(
+  meetingId: string,
+  channel: 'left' | 'right',
+  customBaseDir?: string
+): string {
+  return path.join(
+    resolveMeetingMediaDir(meetingId, customBaseDir),
+    `audio.channel-${channel}.wav`
+  );
 }

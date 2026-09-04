@@ -22,10 +22,12 @@ import path from 'node:path';
 import {
   ensureMeetingMediaDir,
   getMeetingMediaFilePaths,
+  meetingChannelPath,
   resolveMeetingMediaDir,
 } from '@ikenga/meetings-contract/storage';
 
 import { buildFfmpegArgs, FfmpegGraphConfig } from './capture/ffmpeg-graph.js';
+import { buildChannelExtractArgs, StereoChannel } from './capture/channel-extract.js';
 import { runCapturePreflight } from './capture/preflight.js';
 import { LocalWhisperEngine, parseWhisperCppJson } from './whisper/engine.js';
 import { resolveWhisperBinary } from './whisper/binary.js';
@@ -137,6 +139,10 @@ async function cmdStart(flags: Record<string, string>): Promise<unknown> {
     // Written during capture rather than transcoded afterwards, so playback is
     // available the moment a recording stops.
     outputCompressedPath: paths.audioCompressedPath,
+    // Free two-way speaker attribution (WP-21 / D-15): left=monitor
+    // (remote), right=mic (local). See ffmpeg-graph.ts for why this is an
+    // ADDITION alongside the mono outputs above, not a replacement.
+    outputStereoPath: paths.audioStereoPath,
   };
   const args = buildFfmpegArgs(graphConfig);
 
@@ -317,11 +323,60 @@ async function cmdStop(flags: Record<string, string>): Promise<unknown> {
   };
 }
 
+// left=monitor (remote participants), right=mic (the local speaker) — D-15.
+const SPEAKER_ID_BY_CHANNEL: Record<StereoChannel, string> = {
+  left: 'remote',
+  right: 'local',
+};
+
 async function cmdTranscribe(flags: Record<string, string>): Promise<unknown> {
   const meetingId = requireFlag(flags, 'meeting-id');
   const mediaDir = resolveMeetingMediaDir(meetingId, flags['output-dir']);
   const paths = getMeetingMediaFilePaths(meetingId, flags['output-dir']);
-  const audioPath = flags.audio ?? paths.audioPath;
+
+  const channelFlag = flags.channel ?? 'mix';
+  if (channelFlag !== 'mix' && channelFlag !== 'left' && channelFlag !== 'right') {
+    throw new Error(`invalid --channel '${channelFlag}'; expected 'left', 'right', or 'mix'`);
+  }
+
+  let audioPath = flags.audio ?? paths.audioPath;
+  let speakerId: string | undefined;
+
+  // ── Per-speaker transcription (WP-21) ────────────────────────────────────
+  // `left`/`right` transcribe ONE leg of the stereo master in isolation, so
+  // the resulting segments can be attributed to one speaker. `mix` (the
+  // default) is the original whole-meeting behaviour, unchanged, against the
+  // existing mono `audio.wav`.
+  //
+  // An explicit `--audio` override always wins — it exists for tests and for
+  // ad-hoc runs against an arbitrary file, and channel extraction only makes
+  // sense against the stereo master this pkg itself produces.
+  if (!flags.audio && (channelFlag === 'left' || channelFlag === 'right')) {
+    const stereoPath = paths.audioStereoPath;
+    const stereoStat = await fs.stat(stereoPath).catch(() => null);
+    if (!stereoStat) {
+      throw new Error(
+        `no stereo master found for meeting ${meetingId} at ${stereoPath}; per-speaker ` +
+          `transcription requires a recording captured with the stereo master (WP-21)`
+      );
+    }
+
+    const channelPath = meetingChannelPath(meetingId, channelFlag, flags['output-dir']);
+    const channelStat = await fs.stat(channelPath).catch(() => null);
+    // Only re-extract when the channel file is missing or stale against the
+    // stereo master — mirrors the transcript-reuse pattern below, so calling
+    // `transcribe --channel left` twice in a row doesn't re-run ffmpeg for
+    // nothing.
+    if (!channelStat || channelStat.mtimeMs < stereoStat.mtimeMs) {
+      await execFileAsync(
+        flags.ffmpeg ?? 'ffmpeg',
+        buildChannelExtractArgs(stereoPath, channelPath, channelFlag)
+      );
+    }
+
+    audioPath = channelPath;
+    speakerId = SPEAKER_ID_BY_CHANNEL[channelFlag];
+  }
 
   const stat = await fs.stat(audioPath).catch(() => null);
   if (!stat) throw new Error(`audio file not found: ${audioPath}`);
@@ -366,11 +421,12 @@ async function cmdTranscribe(flags: Record<string, string>): Promise<unknown> {
     const jsonStat = await fs.stat(outJsonPath).catch(() => null);
     if (jsonStat && jsonStat.mtimeMs >= stat.mtimeMs) {
       const parsed = JSON.parse(await fs.readFile(outJsonPath, 'utf8'));
-      const segments = parseWhisperCppJson(parsed, meetingId);
+      const segments = parseWhisperCppJson(parsed, meetingId, { speakerId });
       return {
         ok: true,
         meeting_id: meetingId,
         audio_path: audioPath,
+        channel: channelFlag,
         segment_count: segments.length,
         segments,
         reused_existing_transcript: true,
@@ -387,6 +443,7 @@ async function cmdTranscribe(flags: Record<string, string>): Promise<unknown> {
       language: flags.language ?? 'en',
       whisperBinaryPath: flags['whisper-bin'],
       modelDir: flags['model-dir'],
+      speakerId,
       onSpawn: async (pid) => {
         await writeWhisperPid(mediaDir, pid);
       },
@@ -396,6 +453,7 @@ async function cmdTranscribe(flags: Record<string, string>): Promise<unknown> {
       ok: true,
       meeting_id: meetingId,
       audio_path: audioPath,
+      channel: channelFlag,
       segment_count: segments.length,
       segments,
     };
@@ -435,6 +493,16 @@ async function cmdInfo(flags: Record<string, string>): Promise<unknown> {
     path: paths.audioCompressedPath,
     bytes: compressedStat?.size ?? 0,
     exists: compressedExists,
+  };
+
+  // Stereo master (WP-21 / D-15) — absent for recordings made before this
+  // shipped, or for the non-Linux/single-device capture path.
+  const stereoPath = paths.audioStereoPath;
+  const stereoStat = await fs.stat(stereoPath).catch(() => null);
+  const stereo = {
+    path: stereoPath,
+    bytes: stereoStat?.size ?? 0,
+    exists: stereoStat !== null,
   };
 
   // Transcript JSON
@@ -493,6 +561,7 @@ async function cmdInfo(flags: Record<string, string>): Promise<unknown> {
     media_dir: mediaDir,
     audio,
     compressed,
+    stereo,
     transcript,
     engine,
     recording,
