@@ -331,3 +331,14 @@ button { font: inherit; color: inherit; }
   color: var(--fg-muted); font-size: var(--text-body-sm); cursor: pointer;
 }
 .mtg-stt-trigger:hover { border-color: var(--border); color: var(--fg); }
+
+/* Consent gate body copy. Its own class rather than inline styles so the
+ * app's one stylesheet stays the single place token names are used — the
+ * mistake this pkg already made once with 60 dead --ik-* references. */
+.mtg-consent-body {
+  font-size: var(--text-body-sm);
+  color: var(--fg-muted);
+  line-height: var(--lead-body);
+  margin: 0 0 var(--space-3);
+}
+.mtg-consent-body strong { color: var(--fg); font-weight: 600; }

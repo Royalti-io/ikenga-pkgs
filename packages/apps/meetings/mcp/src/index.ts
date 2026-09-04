@@ -34,6 +34,7 @@ import {
   DEFAULT_WHISPER_MODEL,
 } from './whisper.js';
 import { transcribeWithOpenAi } from './openai.js';
+import { summarizeWithOpenAi } from './summarize.js';
 import { getOpenAiKey, hasOpenAiKey, setOpenAiKey, clearOpenAiKey } from './secrets-store.js';
 
 const NAME = 'meetings';
@@ -174,6 +175,27 @@ export function createMeetingsMcpServer(
             content: [{ type: 'text', text: JSON.stringify(result) }],
             structuredContent: result as unknown as Record<string, unknown>,
             isError: result.ok === false,
+          };
+        }
+
+        case 'summarize_cloud': {
+          // Explicit, per-meeting, and never automatic (D-16): this sends the
+          // whole transcript off the machine. The app's rule-based summariser
+          // may run on its own precisely because it does not.
+          const meetingId = String(args?.meeting_id ?? '');
+          if (!meetingId) throw new Error('summarize_cloud requires meeting_id');
+          const segments = Array.isArray(args?.segments) ? args.segments : null;
+          if (!segments || segments.length === 0) {
+            throw new Error('summarize_cloud requires the transcript segments to summarise');
+          }
+          const summary = await summarizeWithOpenAi({
+            segments: segments as never,
+            ...(typeof args?.model === 'string' ? { model: args.model } : {}),
+          });
+          const payload = { ok: true, meeting_id: meetingId, provider: 'openai', summary };
+          return {
+            content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+            structuredContent: payload,
           };
         }
 

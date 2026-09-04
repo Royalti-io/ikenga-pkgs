@@ -525,6 +525,13 @@ export const App: React.FC = () => {
 
       {consentOpen && (
         <ConsentGate
+          cloudProvider={(() => {
+            // The gate's copy must describe the CONFIGURED state, not a
+            // hoped-for one: with a cloud provider selected, "nothing leaves
+            // this machine" is simply false.
+            const p = getDefaultProvider();
+            return p && sttProviderIsCloud(p) ? STT_PROVIDER_LABELS[p] : undefined;
+          })()}
           hasAcknowledged={false}
           onAccept={acceptConsent}
           onCancel={() => setConsentOpen(false)}

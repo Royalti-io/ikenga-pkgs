@@ -7,6 +7,10 @@ export interface ConsentGateProps {
   onCancel?: () => void;
   /** Whether consent has already been acknowledged (persisted in local settings) */
   hasAcknowledged?: boolean;
+  /** Name of the cloud transcription provider in use, when one is configured.
+   *  Undefined means everything stays on this machine — and the copy says the
+   *  opposite thing in each case, because only one of them is true at a time. */
+  cloudProvider?: string;
   /** Child component rendered when consent is satisfied */
   children?: React.ReactNode;
 }
@@ -18,6 +22,7 @@ export const ConsentGate: React.FC<ConsentGateProps> = ({
   onCancel,
   hasAcknowledged: propHasAcknowledged,
   children,
+  cloudProvider,
 }) => {
   const [acknowledged, setAcknowledged] = useState<boolean>(() => {
     if (propHasAcknowledged !== undefined) return propHasAcknowledged;
@@ -85,14 +90,14 @@ export const ConsentGate: React.FC<ConsentGateProps> = ({
     >
       <div
         style={{
-          backgroundColor: 'var(--ik-surface-elevated, #1e1e24)',
-          color: 'var(--ik-text-primary, #ffffff)',
+          backgroundColor: 'var(--bg-raised)',
+          color: 'var(--fg)',
           borderRadius: '8px',
           maxWidth: '560px',
           width: '100%',
           padding: '1.5rem',
           boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
-          border: '1px solid var(--ik-border, #33333e)',
+          border: '1px solid var(--border)',
         }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
@@ -102,10 +107,32 @@ export const ConsentGate: React.FC<ConsentGateProps> = ({
           </h2>
         </div>
 
-        <p style={{ fontSize: '0.9rem', color: 'var(--ik-text-secondary, #b3b3c2)', lineHeight: 1.5, margin: '0 0 1.25rem 0' }}>
-          Ikenga Meetings records audio, video, and transcripts 100% locally on your machine.
-          Before recording internal or external calls, you must comply with applicable wiretap,
-          consent, and privacy laws.
+        <p className="mtg-consent-body">
+          Ikenga Meetings records <strong>audio only</strong> — your microphone and
+          whatever your computer is playing, which on a call means everyone else.
+          No video is captured.
+        </p>
+
+        <p className="mtg-consent-body">
+          {cloudProvider ? (
+            <>
+              Audio is captured on this machine, then{' '}
+              <strong>sent to {cloudProvider} to be transcribed</strong>. Summarising a
+              meeting sends its transcript there too, and only when you ask for it.
+              Nothing else leaves.
+            </>
+          ) : (
+            <>
+              Recording and transcription both happen on this machine and nothing is
+              uploaded. If you later choose a cloud transcription provider, that changes
+              — and this notice will say so.
+            </>
+          )}
+        </p>
+
+        <p className="mtg-consent-body">
+          Before recording a call, you must comply with applicable wiretap, consent and
+          privacy laws.
         </p>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginBottom: '1.5rem' }}>
@@ -117,7 +144,9 @@ export const ConsentGate: React.FC<ConsentGateProps> = ({
               style={{ marginTop: '0.2rem' }}
             />
             <span>
-              <strong>In-Call Notice:</strong> I agree to verbally announce recording or ensure the AI notetaker bot displays its presence and posts notice in chat.
+              <strong>In-Call Notice:</strong> I will tell the other participants that
+              I am recording. This app records from my own machine and joins nothing, so
+              it cannot announce itself — saying so is on me.
             </span>
           </label>
 
@@ -142,7 +171,7 @@ export const ConsentGate: React.FC<ConsentGateProps> = ({
               style={{
                 padding: '0.5rem 1rem',
                 borderRadius: '4px',
-                border: '1px solid var(--ik-border, #444)',
+                border: '1px solid var(--border)',
                 backgroundColor: 'transparent',
                 color: 'inherit',
                 cursor: 'pointer',
@@ -159,7 +188,7 @@ export const ConsentGate: React.FC<ConsentGateProps> = ({
               padding: '0.5rem 1.25rem',
               borderRadius: '4px',
               border: 'none',
-              backgroundColor: checkedDisclosure && checkedJurisdiction ? 'var(--ik-primary, #3b82f6)' : '#555',
+              backgroundColor: checkedDisclosure && checkedJurisdiction ? 'var(--primary)' : '#555',
               color: '#ffffff',
               fontWeight: 500,
               cursor: checkedDisclosure && checkedJurisdiction ? 'pointer' : 'not-allowed',
