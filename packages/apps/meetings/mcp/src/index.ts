@@ -14,6 +14,7 @@
 
 import path from 'node:path';
 import os from 'node:os';
+import fs from 'node:fs/promises';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import {
@@ -24,7 +25,16 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 
 import { TOOLS } from './tools.js';
-import { WhisperSupervisor, WhisperModelName } from './whisper.js';
+import {
+  WhisperSupervisor,
+  WhisperModelName,
+  getMeetingMediaFilePaths,
+  resolveWhisperBinary,
+  isModelDownloaded,
+  DEFAULT_WHISPER_MODEL,
+} from './whisper.js';
+import { transcribeWithOpenAi } from './openai.js';
+import { getOpenAiKey, hasOpenAiKey, setOpenAiKey, clearOpenAiKey } from './secrets-store.js';
 
 const NAME = 'meetings';
 const VERSION = '0.1.0';
@@ -56,6 +66,87 @@ export function createMeetingsMcpServer(
             );
           }
 
+          const provider = typeof rawArgs.provider === 'string' ? rawArgs.provider : 'local';
+
+          // WP-19: 'engine' routes through the shell's active agent session,
+          // which only the iframe (not this Node child process) has any path
+          // to reach — and no shipped engine accepts audio input regardless
+          // (see AcpPromptCapabilities.audio in @ikenga/contract). Fail loudly
+          // and specifically rather than silently falling back to local,
+          // which would transcribe on the wrong backend without saying so.
+          if (provider === 'engine') {
+            const result = {
+              ok: false as const,
+              meeting_id: meetingId,
+              error:
+                "'engine' transcription is not reachable from the meetings MCP server — no shipped engine (Claude Code, OpenCode, Pi) accepts audio input yet. Choose 'local' or 'openai'.",
+            };
+            return {
+              content: [{ type: 'text', text: JSON.stringify(result) }],
+              structuredContent: result,
+              isError: true,
+            };
+          }
+
+          if (provider === 'openai') {
+            const apiKey = await getOpenAiKey();
+            if (!apiKey) {
+              const result = {
+                ok: false as const,
+                meeting_id: meetingId,
+                error:
+                  "no OpenAI API key configured — call stt_set_openai_key first, or choose the 'local' backend.",
+              };
+              return {
+                content: [{ type: 'text', text: JSON.stringify(result) }],
+                structuredContent: result,
+                isError: true,
+              };
+            }
+
+            const outputDir =
+              typeof rawArgs.output_dir === 'string' ? rawArgs.output_dir : undefined;
+            const paths = getMeetingMediaFilePaths(meetingId, outputDir);
+            const audioPath =
+              typeof rawArgs.audio_path === 'string' ? rawArgs.audio_path : paths.audioPath;
+
+            try {
+              const stat = await fs.stat(audioPath);
+              if (stat.size === 0) {
+                throw new Error(`audio file is empty: ${audioPath}`);
+              }
+              const { segments } = await transcribeWithOpenAi({
+                meetingId,
+                audioPath,
+                apiKey,
+                language: typeof rawArgs.language === 'string' ? rawArgs.language : undefined,
+              });
+              const result = {
+                ok: true as const,
+                meeting_id: meetingId,
+                audio_path: audioPath,
+                segment_count: segments.length,
+                segments,
+              };
+              return {
+                content: [{ type: 'text', text: JSON.stringify(result) }],
+                structuredContent: result,
+                isError: false,
+              };
+            } catch (err) {
+              const result = {
+                ok: false as const,
+                meeting_id: meetingId,
+                error: err instanceof Error ? err.message : String(err),
+              };
+              return {
+                content: [{ type: 'text', text: JSON.stringify(result) }],
+                structuredContent: result,
+                isError: true,
+              };
+            }
+          }
+
           const result = await supervisor.transcribe({
             meetingId,
             audioPath: typeof rawArgs.audio_path === 'string' ? rawArgs.audio_path : undefined,
@@ -83,6 +174,58 @@ export function createMeetingsMcpServer(
             content: [{ type: 'text', text: JSON.stringify(result) }],
             structuredContent: result as unknown as Record<string, unknown>,
             isError: result.ok === false,
+          };
+        }
+
+        case 'stt_status': {
+          const binaryRes = await resolveWhisperBinary(
+            typeof rawArgs.whisper_bin === 'string' ? rawArgs.whisper_bin : undefined
+          );
+          const modelDownloaded = await isModelDownloaded(
+            typeof rawArgs.model === 'string'
+              ? (rawArgs.model as WhisperModelName)
+              : DEFAULT_WHISPER_MODEL,
+            typeof rawArgs.model_dir === 'string' ? rawArgs.model_dir : undefined
+          );
+          const result = {
+            ok: true,
+            local: {
+              whisper_binary_available: binaryRes.available,
+              model_downloaded: modelDownloaded,
+              reason: binaryRes.available ? undefined : binaryRes.error,
+            },
+            openai: {
+              configured: await hasOpenAiKey(),
+            },
+          };
+          return {
+            content: [{ type: 'text', text: JSON.stringify(result) }],
+            structuredContent: result,
+            isError: false,
+          };
+        }
+
+        case 'stt_set_openai_key': {
+          const apiKey = String(rawArgs.api_key ?? '');
+          if (!apiKey.trim()) {
+            throw new McpError(ErrorCode.InvalidParams, 'missing required argument: api_key');
+          }
+          await setOpenAiKey(apiKey);
+          const result = { ok: true };
+          return {
+            content: [{ type: 'text', text: JSON.stringify(result) }],
+            structuredContent: result,
+            isError: false,
+          };
+        }
+
+        case 'stt_clear_openai_key': {
+          await clearOpenAiKey();
+          const result = { ok: true };
+          return {
+            content: [{ type: 'text', text: JSON.stringify(result) }],
+            structuredContent: result,
+            isError: false,
           };
         }
 

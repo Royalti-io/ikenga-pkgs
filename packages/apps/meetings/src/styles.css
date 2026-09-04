@@ -63,6 +63,10 @@ button { font: inherit; color: inherit; }
 .mtg-btn:disabled { opacity: .5; cursor: not-allowed; }
 .mtg-btn--rec { border-color: var(--danger); color: var(--danger); }
 .mtg-btn--rec:hover:not(:disabled) { background: var(--danger-soft); color: var(--danger); }
+.mtg-btn--primary {
+  border-color: var(--primary); background: var(--primary); color: var(--primary-fg);
+}
+.mtg-btn--primary:hover:not(:disabled) { background: var(--primary); color: var(--primary-fg); opacity: .92; }
 .mtg-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--danger);
            display: inline-block; margin-right: var(--space-2); }
 
@@ -269,3 +273,61 @@ button { font: inherit; color: inherit; }
 .mtg-centre p { margin: 0; max-width: 40rem; font-size: var(--text-body-sm); }
 
 .mtg-note { font-size: var(--text-body-sm); color: var(--fg-faint); }
+
+/* ── STT provider picker (WP-19) ─────────────────────────────────────────── */
+
+.mtg-stt-overlay {
+  position: fixed; inset: 0; background: color-mix(in srgb, var(--bg-base) 60%, black);
+  display: flex; align-items: center; justify-content: center; z-index: 9998;
+  padding: var(--space-4);
+}
+.mtg-stt-card {
+  width: 100%; max-width: 30rem; max-height: 90vh; overflow-y: auto;
+  background: var(--bg-surface); border: 1px solid var(--border-soft);
+  border-radius: var(--radius-md); padding: var(--space-5);
+}
+.mtg-stt-title { margin: 0 0 var(--space-2); font-size: var(--text-h4); color: var(--fg); }
+.mtg-stt-intro { margin: 0 0 var(--space-4); color: var(--fg-muted); font-size: var(--text-body-sm); }
+
+.mtg-stt-options { display: flex; flex-direction: column; gap: var(--space-2); margin-bottom: var(--space-4); }
+.mtg-stt-option {
+  display: flex; gap: var(--space-3); align-items: flex-start; cursor: pointer;
+  padding: var(--space-3); border: 1px solid var(--border-soft); border-radius: var(--radius-md);
+  transition: border-color var(--motion-fast) var(--ease-calm);
+}
+.mtg-stt-option:hover { border-color: var(--border); }
+.mtg-stt-option[data-disabled] { opacity: .55; cursor: not-allowed; }
+.mtg-stt-option input { margin-top: 3px; }
+.mtg-stt-option-label {
+  display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-body-sm);
+  font-weight: 600; color: var(--fg);
+}
+.mtg-stt-option-desc { margin-top: 2px; font-size: var(--text-body-sm); color: var(--fg-muted); }
+.mtg-stt-option-reason { margin-top: 2px; font-size: 11px; color: var(--warning); }
+
+.mtg-stt-key { margin-bottom: var(--space-4); }
+.mtg-stt-key label { display: block; font-size: var(--text-body-sm); color: var(--fg); margin-bottom: var(--space-2); }
+.mtg-stt-key-row { display: flex; gap: var(--space-2); }
+.mtg-stt-key-row input {
+  flex: 1; height: 32px; padding: 0 var(--space-3); border-radius: var(--radius-md);
+  border: 1px solid var(--border-soft); background: var(--bg-base); color: var(--fg);
+}
+.mtg-stt-key-error { color: var(--danger); font-size: var(--text-body-sm); margin-top: var(--space-2); }
+
+.mtg-stt-ack {
+  display: flex; gap: var(--space-2); align-items: flex-start; margin-bottom: var(--space-4);
+  padding: var(--space-3); border: 1px solid var(--warning); border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  font-size: var(--text-body-sm); color: var(--fg);
+}
+.mtg-stt-ack input { margin-top: 3px; }
+
+.mtg-stt-actions { display: flex; justify-content: flex-end; gap: var(--space-3); }
+
+.mtg-stt-trigger {
+  display: flex; align-items: center; gap: var(--space-2); height: 28px;
+  padding: 0 var(--space-3); border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill); background: var(--bg-surface);
+  color: var(--fg-muted); font-size: var(--text-body-sm); cursor: pointer;
+}
+.mtg-stt-trigger:hover { border-color: var(--border); color: var(--fg); }
