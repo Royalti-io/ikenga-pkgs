@@ -16,7 +16,10 @@ export default defineConfig({
   plugins: [react()],
   build: {
     target: 'es2022',
-    sourcemap: true,
+    // No sourcemap in the shipped bundle. It was 2.2 MB — four times the code
+    // it maps — in a tarball a stranger downloads, and nothing consumes it: the
+    // pane runs inside a srcdoc iframe where devtools cannot resolve it anyway.
+    sourcemap: false,
     // Inline every static asset as a base64 data: URI. The shell srcdoc-inlines
     // this pane and WebKitGTK drops HTTP fetches from a srcdoc iframe
     // (Tauri #12767), so a separate asset file would never load in-shell.

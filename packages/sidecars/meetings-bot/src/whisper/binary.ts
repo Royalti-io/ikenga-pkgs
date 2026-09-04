@@ -57,7 +57,9 @@ export async function resolveWhisperBinary(
   return {
     available: false,
     error:
-      'whisper.cpp binary (whisper-cli) not found. Please install whisper-cli or place it in ~/.ikenga/bin/whisper-cli.',
+      'whisper.cpp is not installed yet. Choose a transcription backend in Meetings, '
+      + 'or run `install-whisper` to download it — no building required. '
+      + 'A hand-placed binary at ~/.ikenga/bin/whisper-cli is also used if present.',
   };
 }
 
@@ -71,7 +73,9 @@ async function resolveSingleCandidate(candidate: {
     error:
       candidate.source === 'custom'
         ? `whisper.cpp binary (whisper-cli) not found at the configured path ${candidate.path}.`
-        : 'whisper.cpp binary (whisper-cli) not found. Please install whisper-cli or place it in ~/.ikenga/bin/whisper-cli.',
+        : 'whisper.cpp is not installed yet. Choose a transcription backend in Meetings, '
+      + 'or run `install-whisper` to download it — no building required. '
+      + 'A hand-placed binary at ~/.ikenga/bin/whisper-cli is also used if present.',
   };
 
   if (candidate.source !== 'path' && !existsSync(candidate.path)) {
