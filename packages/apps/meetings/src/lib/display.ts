@@ -16,6 +16,10 @@ const SPEAKER_ROLES = [
  *  in a list that reorders. */
 export function speakerColor(speakerId: string | undefined): string {
   if (!speakerId) return 'var(--fg-faint)';
+  // Channel identities are fixed roles, not arbitrary speakers — keep them
+  // visually stable so "You" never changes colour between meetings.
+  const channel = CHANNEL_SPEAKERS[speakerId];
+  if (channel) return channel.color;
   let hash = 0;
   for (let i = 0; i < speakerId.length; i++) {
     hash = (hash * 31 + speakerId.charCodeAt(i)) >>> 0;
@@ -23,7 +27,38 @@ export function speakerColor(speakerId: string | undefined): string {
   return SPEAKER_ROLES[hash % SPEAKER_ROLES.length]!;
 }
 
+
+/**
+ * Channel-derived speaker identities (WP-21 / D-15).
+ *
+ * v1 ships no speaker model, so these are the only two identities that exist:
+ * capture keeps the system-output monitor and the microphone as separate stereo
+ * channels, and transcription stamps each segment `remote` or `local`. That is
+ * exact for a two-party call and reads as "me vs everyone else" on a group
+ * call — worth saying plainly rather than implying per-person diarization the
+ * app cannot do.
+ */
+export const CHANNEL_SPEAKERS: Record<string, { label: string; short: string; color: string }> = {
+  remote: { label: 'Them', short: 'TH', color: 'var(--info)' },
+  local: { label: 'You', short: 'YO', color: 'var(--primary)' },
+};
+
+/** Display name for a segment's speaker, preferring a real name when one exists. */
+export function speakerLabel(
+  speakerId: string | undefined,
+  speakerName: string | undefined
+): string {
+  if (speakerName) return speakerName;
+  if (speakerId && CHANNEL_SPEAKERS[speakerId]) return CHANNEL_SPEAKERS[speakerId]!.label;
+  return 'Speaker';
+}
+
 export function initials(name: string | undefined): string {
+  // "You" / "Them" would initial to a single letter and read as noise; the
+  // channel identities carry their own two-letter form.
+  for (const c of Object.values(CHANNEL_SPEAKERS)) {
+    if (name === c.label) return c.short;
+  }
   if (!name) return '··';
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return '··';
@@ -73,7 +108,7 @@ export function groupIntoTurns(
     const name =
       seg.speaker_name ??
       (seg.speaker_id ? nameById.get(seg.speaker_id) : undefined) ??
-      'Speaker';
+      speakerLabel(seg.speaker_id, undefined);
     const last = turns[turns.length - 1];
     const prev = last?.segments[last.segments.length - 1];
 

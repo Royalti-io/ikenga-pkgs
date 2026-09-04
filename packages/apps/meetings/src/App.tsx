@@ -475,6 +475,9 @@ export const App: React.FC = () => {
             <MeetingStage
               meeting={selected}
               speakers={speakers}
+              channelAttributed={segments.some(
+                (s) => s.speaker_id === 'remote' || s.speaker_id === 'local'
+              )}
               currentMs={currentMs}
               onTimeChange={setCurrentMs}
               seekToMs={seekToMs}
