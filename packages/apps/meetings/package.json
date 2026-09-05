@@ -1,6 +1,6 @@
 {
   "name": "@ikenga/pkg-meetings",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Ikenga Meetings app: local recording controls, synchronized transcript player, and meeting intelligence.",
   "license": "Apache-2.0",
   "type": "module",
