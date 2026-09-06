@@ -45,7 +45,11 @@ function findMonorepoPackages() {
     if (existsSync(pkgJsonPath) && existsSync(manifestPath)) {
       try {
         const pj = JSON.parse(readFileSync(pkgJsonPath, 'utf8'));
-        if (pj.name && !NON_PKG_LIBRARIES.has(pj.name)) {
+        // `private` packages are never published, so they can never appear in
+        // the registry index — flagging them as "missing" fails the release on
+        // packages that are working exactly as intended. 14 of the 21 packages
+        // this check reported on 2026-09-05 were private.
+        if (pj.name && !pj.private && !NON_PKG_LIBRARIES.has(pj.name)) {
           pkgs.push({ name: pj.name, version: pj.version });
         }
       } catch {}
