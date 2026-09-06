@@ -25,8 +25,12 @@ import {
   buildPreviewArgs,
   buildRenderArgs,
   buildResolutionExpr,
+  buildDeviceExpr,
+  buildDeviceProbeScript,
   computeTotalFrames,
+  parseDeviceFromChunk,
   parseFrameFromChunk,
+  parseProbeDevice,
   scalePadFilter,
 } from './blender.js';
 import type { RenderContext } from './types.js';
@@ -250,6 +254,104 @@ async function main(): Promise<number> {
   // ── cancel(recordId) on an unknown id is a safe no-op ───────────────────
   await testAsync('cancel(): unknown recordId is a no-op (never throws)', async () => {
     await blenderAdapter.cancel!('does-not-exist');
+  });
+
+  // ── G-BL-GPU: compute-device selection ─────────────────────────────────
+  // The adapter shipped without ANY device selection, so Cycles fell back to
+  // CPU on every render while the GPU idled (~4x slower, no error). These
+  // pin the fix's contract.
+
+  test('buildDeviceExpr: GPU backend sets compute_device_type and scene device', () => {
+    const expr = buildDeviceExpr('CUDA');
+    assert.match(expr, /compute_device_type = 'CUDA'/);
+    assert.match(expr, /get_devices\(\)/);
+    assert.match(expr, /cycles\.device = 'GPU'/);
+  });
+
+  test('buildDeviceExpr: get_devices() is called AFTER compute_device_type is set', () => {
+    const expr = buildDeviceExpr('OPTIX');
+    assert.ok(
+      expr.indexOf('compute_device_type') < expr.indexOf('get_devices()'),
+      'get_devices() populates .devices for the selected backend — order matters',
+    );
+  });
+
+  test('buildDeviceExpr: CPU pins CPU and never touches the GPU prefs', () => {
+    const expr = buildDeviceExpr('CPU');
+    assert.match(expr, /cycles\.device = 'CPU'/);
+    assert.ok(!expr.includes('compute_device_type'));
+  });
+
+  test('buildDeviceExpr: defaults to CPU when no device is resolved', () => {
+    assert.equal(buildDeviceExpr(), buildDeviceExpr('CPU'));
+  });
+
+  test('buildDeviceExpr: never sets render.engine (G-BL-ENUM — the .blend decides)', () => {
+    // Plan 24 typed BLENDER_EEVEE_NEXT, which does not exist in Blender 5.x.
+    // The adapter sidesteps the whole question by leaving the engine alone.
+    for (const d of ['OPTIX', 'CUDA', 'CPU'] as const) {
+      assert.ok(!buildDeviceExpr(d).includes('render.engine'));
+      assert.ok(!buildDeviceExpr(d).includes('EEVEE'));
+    }
+  });
+
+  test('buildDeviceExpr: is wrapped so a Cycles-less build cannot fail the render', () => {
+    for (const d of ['OPTIX', 'CUDA', 'CPU'] as const) {
+      assert.match(buildDeviceExpr(d), /^try:/);
+      assert.match(buildDeviceExpr(d), /except Exception/);
+    }
+  });
+
+  test('buildBaseArgs: composes resolution + device into ONE --python-expr', () => {
+    const args = buildBaseArgs('/proj/cells/c1/scene.blend', { w: 1920, h: 1080 }, 'CUDA');
+    assert.equal(
+      args.filter((a) => a === '--python-expr').length,
+      1,
+      'a second --python-expr would break the arg-order contract the G-74 tests pin',
+    );
+    const expr = args[args.indexOf('--python-expr') + 1]!;
+    assert.match(expr, /resolution_x = 1920/);
+    assert.match(expr, /compute_device_type = 'CUDA'/);
+    assert.ok(expr.indexOf('import bpy') === 0, 'resolution expr must lead — it emits the import');
+  });
+
+  test('parseDeviceFromChunk: reads the device marker, ignores unrelated stdout', () => {
+    assert.equal(parseDeviceFromChunk('[studio] cycles_device=CUDA\n'), 'CUDA');
+    assert.equal(parseDeviceFromChunk('Fra:12 Mem:40.00M | Sample 4/48'), null);
+  });
+
+  test('parseDeviceFromChunk: device marker does not collide with Fra: progress grammar', () => {
+    assert.equal(parseFrameFromChunk('[studio] cycles_device=OPTIX\n'), null);
+  });
+
+  // The probe exists because enumeration is NOT a capability test: on the
+  // reference box OptiX enumerates fine and then dies at kernel load with
+  // OPTIX_ERROR_INTERNAL_COMPILER_ERROR. Only a real render proves a backend.
+  test('buildDeviceProbeScript: proves each backend by actually rendering', () => {
+    const s = buildDeviceProbeScript();
+    assert.match(s, /bpy\.ops\.render\.render/);
+    assert.match(s, /\['OPTIX', 'CUDA'\]/);
+  });
+
+  test('buildDeviceProbeScript: creates a camera (an empty scene fails for unrelated reasons)', () => {
+    // Without this the probe dies on "Cannot render, no camera" and falsely
+    // condemns every GPU backend to CPU.
+    const s = buildDeviceProbeScript();
+    assert.match(s, /cameras\.new/);
+    assert.match(s, /scene\.camera = /);
+  });
+
+  test('buildDeviceProbeScript: keeps the probe render trivially cheap', () => {
+    const s = buildDeviceProbeScript();
+    assert.match(s, /samples = 1/);
+    assert.match(s, /resolution_x = 32/);
+  });
+
+  test('parseProbeDevice: reads the verdict; unknown backends are rejected', () => {
+    assert.equal(parseProbeDevice('[studio] cycles_device_probe=CUDA\n'), 'CUDA');
+    assert.equal(parseProbeDevice('[studio] cycles_device_probe=CPU\n'), 'CPU');
+    assert.equal(parseProbeDevice('[studio] cycles_device_probe=METAL\n'), null);
+    assert.equal(parseProbeDevice('nothing here'), null);
   });
 
   console.log(`\n${passed} passed`);

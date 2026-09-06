@@ -35,7 +35,7 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -224,6 +224,143 @@ export function buildResolutionExpr(w: number, h: number): string {
   );
 }
 
+/** Compute device for Cycles. `undefined` = auto (prefer OPTIX, then CUDA,
+ *  else CPU). */
+export type BlenderDevice = 'OPTIX' | 'CUDA' | 'CPU';
+
+/** Marker the injected device preamble prints so the adapter can read back
+ *  which device Blender actually bound. Must not collide with the `Fra:N`
+ *  progress grammar. */
+export const DEVICE_MARKER = '[studio] cycles_device=';
+
+/** Marker the one-shot host capability probe prints. */
+export const DEVICE_PROBE_MARKER = '[studio] cycles_device_probe=';
+
+/** Standalone `--python-expr` that determines which Cycles backend this HOST
+ *  can actually render with, and prints `DEVICE_PROBE_MARKER<backend>`.
+ *
+ *  **Why a render probe and not an enumeration check.** Enumeration is not a
+ *  capability test. Measured on the RTX 2070 dev box (2026-09-06): OptiX
+ *  enumerates perfectly — `compute_device_type='OPTIX'` sets, `get_devices()`
+ *  returns the card — and then every render dies at kernel load with
+ *  `OPTIX_ERROR_INTERNAL_COMPILER_ERROR` ("New backend is missing
+ *  implementation for PTX intrinsic optix.ptx.copysign.f32"), a
+ *  driver/OptiX-runtime mismatch against Blender 5.2's shipped PTX. A ladder
+ *  that trusts enumeration picks OPTIX and every render fails. CUDA on the
+ *  same card renders fine and is 4.1× faster than CPU (10.3s vs 42.7s on the
+ *  reference scene).
+ *
+ *  So the probe does a real 32×32, 1-sample render per backend and keeps the
+ *  first that survives. It needs a camera — an empty scene fails with
+ *  "Cannot render, no camera" for reasons unrelated to the backend, which
+ *  would falsely condemn every GPU.
+ *
+ *  Cost is ~2.6s of probe work (~6s wall including Blender startup), which is
+ *  why `resolveComputeDevice()` caches it per host for the sidecar's lifetime
+ *  rather than paying it per render. */
+export function buildDeviceProbeScript(): string {
+  return (
+    `import bpy\n` +
+    `def _try(backend):\n` +
+    `    try:\n` +
+    `        cp = bpy.context.preferences.addons['cycles'].preferences\n` +
+    `        cp.compute_device_type = backend\n` +
+    `        cp.get_devices()\n` +
+    `        if not any(d.type == backend for d in cp.devices):\n` +
+    `            return False\n` +
+    `        for d in cp.devices:\n` +
+    `            d.use = (d.type == backend)\n` +
+    `        sc = bpy.context.scene\n` +
+    `        sc.render.engine = 'CYCLES'\n` +
+    `        sc.cycles.device = 'GPU'\n` +
+    `        sc.cycles.samples = 1\n` +
+    `        sc.render.resolution_x = 32\n` +
+    `        sc.render.resolution_y = 32\n` +
+    `        sc.render.resolution_percentage = 100\n` +
+    `        bpy.ops.render.render(write_still=False)\n` +
+    `        return True\n` +
+    `    except Exception:\n` +
+    `        return False\n` +
+    `bpy.ops.wm.read_factory_settings(use_empty=True)\n` +
+    `_cd = bpy.data.cameras.new('ProbeCam')\n` +
+    `_co = bpy.data.objects.new('ProbeCam', _cd)\n` +
+    `bpy.context.scene.collection.objects.link(_co)\n` +
+    `bpy.context.scene.camera = _co\n` +
+    `_chosen = 'CPU'\n` +
+    `for _b in ['OPTIX', 'CUDA']:\n` +
+    `    if _try(_b):\n` +
+    `        _chosen = _b\n` +
+    `        break\n` +
+    `print('${DEVICE_PROBE_MARKER}' + _chosen)\n`
+  );
+}
+
+/** Read the probe's verdict out of its stdout. */
+export function parseProbeDevice(text: string): BlenderDevice | null {
+  const m = text.match(/\[studio\] cycles_device_probe=(OPTIX|CUDA|CPU)/);
+  return m ? (m[1] as BlenderDevice) : null;
+}
+
+/** `--python-expr` fragment that pins Cycles to an already-resolved compute
+ *  device (G-BL-GPU).
+ *
+ *  **Why this exists.** Headless Blender does NOT inherit the GUI's device
+ *  preference — `compute_device_type` lives in user preferences that `-b`
+ *  starts empty, so Cycles silently falls back to **CPU**. The adapter
+ *  shipped without this, so every Cycles render ran on the CPU while the GPU
+ *  sat idle: renders still succeeded, just ~4× slower, with no error to
+ *  notice. That is Plan 16's F5 latency risk reintroduced at the adapter
+ *  layer.
+ *
+ *  This function does no discovery — `resolveComputeDevice()` already decided
+ *  via `buildDeviceProbeScript()`. It only pins, so a render never pays probe
+ *  cost and never silently lands somewhere other than what the ledger claims.
+ *
+ *  `get_devices()` must be called AFTER setting `compute_device_type` — it
+ *  populates `.devices` for the selected backend. Deliberately does not touch
+ *  `scene.render.engine`: the `.blend` is the source of truth for which engine
+ *  to use (see G-BL-ENUM — Plan 24's `BLENDER_EEVEE_NEXT` does not exist in
+ *  Blender 5.x). EEVEE ignores all of this, so injecting it unconditionally is
+ *  safe; the block is wrapped so a Blender build without the Cycles addon
+ *  cannot fail the render.
+ *
+ *  Exported (pure, no I/O) so it is unit-testable without a Blender binary. */
+export function buildDeviceExpr(device: BlenderDevice = 'CPU'): string {
+  if (device === 'CPU') {
+    return (
+      `try:\n` +
+      `    bpy.context.scene.cycles.device = 'CPU'\n` +
+      `    print('${DEVICE_MARKER}CPU')\n` +
+      `except Exception as _e:\n` +
+      `    print('${DEVICE_MARKER}unavailable')\n`
+    );
+  }
+
+  return (
+    `try:\n` +
+    `    _cprefs = bpy.context.preferences.addons['cycles'].preferences\n` +
+    `    _cprefs.compute_device_type = '${device}'\n` +
+    `    _cprefs.get_devices()\n` +
+    `    if any(_d.type == '${device}' for _d in _cprefs.devices):\n` +
+    `        for _d in _cprefs.devices:\n` +
+    `            _d.use = (_d.type == '${device}')\n` +
+    `        bpy.context.scene.cycles.device = 'GPU'\n` +
+    `        print('${DEVICE_MARKER}${device}')\n` +
+    `    else:\n` +
+    `        bpy.context.scene.cycles.device = 'CPU'\n` +
+    `        print('${DEVICE_MARKER}CPU')\n` +
+    `except Exception as _e:\n` +
+    `    print('${DEVICE_MARKER}unavailable')\n`
+  );
+}
+
+/** Read the device the injected preamble reported. Returns `null` when the
+ *  chunk carries no device signal. Exported (pure) for tests. */
+export function parseDeviceFromChunk(chunk: string): string | null {
+  const m = chunk.match(/\[studio\] cycles_device=(\w+)/);
+  return m ? m[1]! : null;
+}
+
 /** Build the leading `--background [.blend] [--python file.py] --python-expr
  *  <resolution setup>` argv shared by preview() and render(). Output flags
  *  (`-o`/`-F`/…) and the render trigger (`-f`/`-a`) MUST come after this —
@@ -232,15 +369,69 @@ export function buildResolutionExpr(w: number, h: number): string {
  *  strictly left-to-right, so the frame landed at the scene's default
  *  output path instead of ours. Exported (pure, no I/O) for arg-construction
  *  tests. */
-export function buildBaseArgs(contentPath: string, res: { w: number; h: number }): string[] {
+export function buildBaseArgs(
+  contentPath: string,
+  res: { w: number; h: number },
+  device?: BlenderDevice,
+): string[] {
   const args: string[] = ['--background'];
   if (contentPath.toLowerCase().endsWith('.blend')) {
     args.push(contentPath);
   } else if (contentPath.toLowerCase().endsWith('.py')) {
     args.push('--python', contentPath);
   }
-  args.push('--python-expr', buildResolutionExpr(res.w, res.h));
+  // One `--python-expr`, two concerns: resolution (G1) then compute device
+  // (G-BL-GPU). Composed into a single expr rather than a second
+  // `--python-expr` so the existing arg-order contract (and its tests) is
+  // untouched — `buildResolutionExpr` already emits the `import bpy`.
+  args.push('--python-expr', buildResolutionExpr(res.w, res.h) + buildDeviceExpr(device));
   return args;
+}
+
+/** Host compute-device verdict, cached for the sidecar's lifetime. The probe
+ *  costs ~6s wall, and the answer is a property of the host (GPU + driver +
+ *  Blender build), not of the cell — so it is paid once, like
+ *  `cachedBlenderVersion`. */
+let cachedComputeDevice: BlenderDevice | undefined;
+
+/** Determine — by actually rendering, see `buildDeviceProbeScript()` — which
+ *  Cycles backend this host can use. Never throws: a probe failure degrades
+ *  to `'CPU'`, which always works. */
+export async function resolveComputeDevice(blenderBin: string): Promise<BlenderDevice> {
+  if (cachedComputeDevice) return cachedComputeDevice;
+
+  let tmp: string | undefined;
+  try {
+    tmp = mkdtempSync(join(tmpdir(), 'studio-blender-probe-'));
+    const scriptPath = join(tmp, 'probe.py');
+    writeFileSync(scriptPath, buildDeviceProbeScript(), 'utf-8');
+
+    const out = execSync(`"${blenderBin}" -b --python "${scriptPath}"`, {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+      timeout: 120_000,
+    });
+    cachedComputeDevice = parseProbeDevice(out) ?? 'CPU';
+  } catch {
+    // A probe that cannot run tells us nothing good about the GPU — fall back
+    // to the backend that is always available rather than failing the render.
+    cachedComputeDevice = 'CPU';
+  } finally {
+    if (tmp) {
+      try {
+        rmSync(tmp, { recursive: true, force: true });
+      } catch {
+        /* best-effort temp cleanup */
+      }
+    }
+  }
+
+  return cachedComputeDevice;
+}
+
+/** Test seam — drop the cached probe verdict. */
+export function __resetComputeDeviceCache(): void {
+  cachedComputeDevice = undefined;
 }
 
 /** Full preview() argv: output flags precede the `-f 1` trigger (G-74 #2). */
@@ -248,9 +439,10 @@ export function buildPreviewArgs(
   contentPath: string,
   res: { w: number; h: number },
   outPrefix: string,
+  device?: BlenderDevice,
 ): string[] {
   return [
-    ...buildBaseArgs(contentPath, res),
+    ...buildBaseArgs(contentPath, res, device),
     '-o', outPrefix,
     '-F', 'PNG',
     '-x', '1',
@@ -266,9 +458,10 @@ export function buildRenderArgs(
   res: { w: number; h: number },
   framePattern: string,
   totalFrames: number,
+  device?: BlenderDevice,
 ): string[] {
   return [
-    ...buildBaseArgs(contentPath, res),
+    ...buildBaseArgs(contentPath, res, device),
     '-o', framePattern,
     '-F', 'PNG',
     '-x', '1',
@@ -455,7 +648,8 @@ export const blenderAdapter: RendererAdapter = {
     const outPrefix = join(outDir, `${cell.uid}_preview_####`);
     const expectedFrame = join(outDir, `${cell.uid}_preview_0001.png`);
 
-    const args = buildPreviewArgs(contentPath, res, outPrefix);
+    const device = await resolveComputeDevice(blenderBin);
+    const args = buildPreviewArgs(contentPath, res, outPrefix, device);
 
     const tail = { text: '' };
     await new Promise<void>((res2, rej) => {
@@ -540,7 +734,8 @@ export const blenderAdapter: RendererAdapter = {
       // trigger (`-a`); resolution is injected via `--python-expr` before
       // any of that so the requested aspect/resolution is real, not
       // scene-defined (G1 honesty).
-      const args = buildRenderArgs(contentPath, res, framePattern, totalFrames);
+      const device = await resolveComputeDevice(blenderBin);
+      const args = buildRenderArgs(contentPath, res, framePattern, totalFrames, device);
 
       ctx.emit({
         type: 'render.progress',
@@ -549,6 +744,7 @@ export const blenderAdapter: RendererAdapter = {
 
       const stderrTail = { text: '' };
       let lastFrame = 0;
+      let computeDevice: string | null = null;
       let lastBucket = -1;
 
       await new Promise<void>((resResolve, rej) => {
@@ -568,7 +764,14 @@ export const blenderAdapter: RendererAdapter = {
         if (child.stderr) drainToTail(child.stderr, stderrTail);
 
         child.stdout.on('data', (chunk: Buffer) => {
-          const currentFrame = parseFrameFromChunk(chunk.toString());
+          const text = chunk.toString();
+          // G-BL-GPU: the injected preamble prints the device it bound.
+          // Recorded as provenance so a silent CPU fallback is visible in
+          // the ledger instead of only showing up as a slow render.
+          const dev = parseDeviceFromChunk(text);
+          if (dev !== null) computeDevice = dev;
+
+          const currentFrame = parseFrameFromChunk(text);
           if (currentFrame !== null) {
             lastFrame = currentFrame;
             const progress = Math.min(1, currentFrame / totalFrames);
@@ -654,6 +857,7 @@ export const blenderAdapter: RendererAdapter = {
           duration_ms: cell.duration_ms,
           frames_observed: lastFrame,
           elapsed_ms: finishedAtMs - startedAtMs,
+          compute_device: computeDevice ?? 'unknown',
         },
       };
 
