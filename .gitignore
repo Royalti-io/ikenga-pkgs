@@ -11,3 +11,7 @@ coverage/
 .env.*.local
 .pnpm-store/
 packages/sidecars/playwright-browser/package-lock.json
+
+# Scratch left behind by npm-dependency-materialization verification runs.
+node_modules.bak*/
+packages/apps/meetings/package-lock.json

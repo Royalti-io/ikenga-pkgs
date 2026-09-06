@@ -114,6 +114,7 @@ const HIDDEN_PKGS = new Set([
 const NON_PKG_LIBRARIES = new Set([
   '@ikenga/registry-client', // registry resolver client, consumed by the shell
   '@ikenga/ui-lib', // shared React components, consumed by app pkgs
+  '@ikenga/meetings-contract', // shared types/Zod schemas for the meetings pkgs
 ]);
 
 /** `@ikenga/pkg-engine-claude-code` → `engine-claude-code` */
