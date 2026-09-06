@@ -35,7 +35,7 @@
  */
 
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -75,6 +75,38 @@ const activeChildren = new Map<string, ChildProcess>();
 /**
  * Resolve local Blender executable across Windows, macOS, and Linux.
  */
+/** Compare two dotted version strings numerically, newest first. `5.2` must
+ *  sort above `4.3`, and `5.10` above `5.9` — which string compare gets
+ *  wrong both times. */
+export function compareVersionsDesc(a: string, b: string): number {
+  const pa = a.split('.').map(Number);
+  const pb = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i += 1) {
+    const d = (pb[i] ?? 0) - (pa[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
+
+/** List `Blender <version>` install dirs under `root`, newest first, mapped
+ *  through `toBinary`. Returns `[]` when `root` does not exist.
+ *
+ *  Exists because hardcoding a version list (the original G-51 approach)
+ *  silently stops finding Blender the moment a new major ships — which is
+ *  exactly what happened with Blender 5.2 against a list ending at 4.3. */
+export function discoverVersionedBlender(root: string, toBinary: (dir: string) => string): string[] {
+  if (!existsSync(root)) return [];
+  try {
+    return readdirSync(root)
+      .map((name) => ({ name, m: name.match(/^Blender\s+(\d+(?:\.\d+)*)(?:\.app)?$/i) }))
+      .filter((e): e is { name: string; m: RegExpMatchArray } => e.m !== null)
+      .sort((x, y) => compareVersionsDesc(x.m[1]!, y.m[1]!))
+      .map((e) => toBinary(join(root, e.name)));
+  } catch {
+    return [];
+  }
+}
+
 export async function resolveBlenderPath(
   vault?: { get(key: string): Promise<string | undefined> },
 ): Promise<string | null> {
@@ -103,18 +135,22 @@ export async function resolveBlenderPath(
 
   if (platform === 'win32') {
     const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+    // Enumerate installed versions instead of hardcoding them (G-51b). The
+    // original list stopped at "Blender 4.3" and so could not see the
+    // Blender 5.2 on the reference box — `resolveBlenderPath` returned null
+    // and every render failed BLENDER_NOT_FOUND on a host with Blender
+    // installed. Newest-first so a box with several versions picks the
+    // latest rather than whichever the OS happens to list first.
     candidates.push(
-      join(programFiles, 'Blender Foundation', 'Blender 4.3', 'blender.exe'),
-      join(programFiles, 'Blender Foundation', 'Blender 4.2', 'blender.exe'),
-      join(programFiles, 'Blender Foundation', 'Blender 4.1', 'blender.exe'),
-      join(programFiles, 'Blender Foundation', 'Blender 4.0', 'blender.exe'),
+      ...discoverVersionedBlender(join(programFiles, 'Blender Foundation'), (dir) =>
+        join(dir, 'blender.exe'),
+      ),
       join(programFiles, 'Blender Foundation', 'Blender', 'blender.exe'),
     );
   } else if (platform === 'darwin') {
     candidates.push(
+      ...discoverVersionedBlender('/Applications', (dir) => join(dir, 'Contents', 'MacOS', 'Blender')),
       '/Applications/Blender.app/Contents/MacOS/Blender',
-      '/Applications/Blender 4.3.app/Contents/MacOS/Blender',
-      '/Applications/Blender 4.2.app/Contents/MacOS/Blender',
     );
   } else {
     candidates.push(
@@ -235,6 +271,11 @@ export const DEVICE_MARKER = '[studio] cycles_device=';
 
 /** Marker the one-shot host capability probe prints. */
 export const DEVICE_PROBE_MARKER = '[studio] cycles_device_probe=';
+
+/** Printed by the LAST line of the anchor-plate script. Its absence is the
+ *  only reliable signal that the script died partway — Blender exits 0 on an
+ *  uncaught Python exception, so exit code cannot be trusted alone. */
+export const PLATE_OK_SENTINEL = '[studio] plate_ok';
 
 /** Standalone `--python-expr` that determines which Cycles backend this HOST
  *  can actually render with, and prints `DEVICE_PROBE_MARKER<backend>`.
@@ -903,7 +944,7 @@ export async function generateAnchorPlate(
 
   // Headless script setting up 3-point lighting & camera angle for asset import
   const pythonScript = `
-import bpy, sys, math
+import bpy, sys, math, mathutils
 
 # Clear default scene
 bpy.ops.wm.read_factory_settings(use_empty=True)
@@ -915,6 +956,28 @@ if mesh_path.endswith('.glb') or mesh_path.endswith('.gltf'):
 elif mesh_path.endswith('.obj'):
     bpy.ops.wm.obj_import(filepath=mesh_path)
 
+# ── Fit the subject (G-PLATE-FIT) ────────────────────────────────────────
+# The camera used to sit at a hardcoded cam_dist=4.0 aimed by fixed euler
+# angles, which framed exactly one asset size: anything else was cropped or
+# lost in the distance. (Verified 2026-09-07: a stock 2-unit Suzanne ran off
+# both the right and bottom edges.) Plates exist to be COMPARABLE reference
+# of a character across angles, so the subject must land at the same size in
+# every plate, for every asset.
+#
+# Angles stay fixed — only distance adapts, derived from the mesh's world
+# bounding sphere and the camera's actual FOV. Lighting scales with the same
+# radius, or a large asset would be lit by three candles at its feet.
+_objs = [o for o in bpy.context.scene.objects if o.type == 'MESH']
+_coords = [o.matrix_world @ mathutils.Vector(c) for o in _objs for c in o.bound_box]
+if _coords:
+    _min = mathutils.Vector((min(c.x for c in _coords), min(c.y for c in _coords), min(c.z for c in _coords)))
+    _max = mathutils.Vector((max(c.x for c in _coords), max(c.y for c in _coords), max(c.z for c in _coords)))
+    center = (_min + _max) / 2.0
+    radius = max((c - center).length for c in _coords) or 1.0
+else:
+    center = mathutils.Vector((0.0, 0.0, 0.0))
+    radius = 1.0
+
 # Camera Setup
 cam_data = bpy.data.cameras.new("Camera")
 cam_obj = bpy.data.objects.new("Camera", cam_data)
@@ -922,46 +985,80 @@ bpy.context.scene.collection.objects.link(cam_obj)
 bpy.context.scene.camera = cam_obj
 
 angle = sys.argv[sys.argv.index('--angle') + 1]
-cam_dist = 4.0
-if angle == 'front':
-    cam_obj.location = (0, -cam_dist, 1.0)
-    cam_obj.rotation_euler = (math.radians(80), 0, 0)
-elif angle == 'three_quarter_left':
-    cam_obj.location = (-cam_dist * 0.7, -cam_dist * 0.7, 1.0)
-    cam_obj.rotation_euler = (math.radians(80), 0, math.radians(-45))
-elif angle == 'three_quarter_right':
-    cam_obj.location = (cam_dist * 0.7, -cam_dist * 0.7, 1.0)
-    cam_obj.rotation_euler = (math.radians(80), 0, math.radians(45))
-elif angle == 'profile':
-    cam_obj.location = (cam_dist, 0, 1.0)
-    cam_obj.rotation_euler = (math.radians(80), 0, math.radians(90))
+_dirs = {
+    'front': mathutils.Vector((0.0, -1.0, 0.22)),
+    'three_quarter_left': mathutils.Vector((-0.7, -0.7, 0.22)),
+    'three_quarter_right': mathutils.Vector((0.7, -0.7, 0.22)),
+    'profile': mathutils.Vector((1.0, 0.0, 0.22)),
+}
+_dir = _dirs.get(angle, _dirs['front']).normalized()
 
-# 3-Point Lighting
+# Fit the bounding SPHERE in the NARROWER of the two FOV axes, with a small
+# margin, so a portrait plate crops the subject no more than a landscape one.
+#
+# Sphere-fitting is deliberate. Scene.camera_fit_coords() would fit the
+# projected geometry more tightly, but it DOES NOT EXIST in Blender 5.2
+# (AttributeError) — and because Blender exits 0 on an uncaught Python
+# exception (see the exit-code guard below), reaching for it fails silently.
+# The sphere is conservative for a wide subject, which is the right way to be
+# wrong for a reference plate: too much margin is legible, a cropped face is
+# not.
+_fov = min(cam_data.angle_x, cam_data.angle_y)
+cam_dist = (radius / math.sin(_fov / 2.0)) * 1.08
+cam_obj.location = center + _dir * cam_dist
+# Aim at the centre instead of guessing an euler — this is what kept the old
+# fixed rotations from ever pointing at an off-origin asset.
+cam_obj.rotation_euler = (center - cam_obj.location).to_track_quat('-Z', 'Y').to_euler()
+
+# 3-Point Lighting — positions and energy scale with the subject so the rig
+# reads the same on a prop and on a full figure. Inverse-square means energy
+# must grow with distance squared to hold exposure.
+_lr = radius * 2.5
+_energy_scale = max(1.0, (_lr / 3.0) ** 2)
+
 key_light = bpy.data.lights.new("KeyLight", type='AREA')
-key_light.energy = 500
+key_light.energy = 500 * _energy_scale
+key_light.size = radius
 key_obj = bpy.data.objects.new("KeyLight", key_light)
-key_obj.location = (-2, -3, 3)
+key_obj.location = center + mathutils.Vector((-0.55, -0.8, 0.8)).normalized() * _lr
+key_obj.rotation_euler = (center - key_obj.location).to_track_quat('-Z', 'Y').to_euler()
 bpy.context.scene.collection.objects.link(key_obj)
 
 fill_light = bpy.data.lights.new("FillLight", type='AREA')
-fill_light.energy = 250
+fill_light.energy = 250 * _energy_scale
+fill_light.size = radius
 fill_obj = bpy.data.objects.new("FillLight", fill_light)
-fill_obj.location = (3, -2, 2)
+fill_obj.location = center + mathutils.Vector((0.85, -0.5, 0.45)).normalized() * _lr
+fill_obj.rotation_euler = (center - fill_obj.location).to_track_quat('-Z', 'Y').to_euler()
 bpy.context.scene.collection.objects.link(fill_obj)
 
 rim_light = bpy.data.lights.new("RimLight", type='SPOT')
-rim_light.energy = 400
+rim_light.energy = 400 * _energy_scale
+rim_light.spot_size = math.radians(90)
 rim_obj = bpy.data.objects.new("RimLight", rim_light)
-rim_obj.location = (0, 3, 3)
+rim_obj.location = center + mathutils.Vector((0.0, 0.9, 0.8)).normalized() * _lr
+rim_obj.rotation_euler = (center - rim_obj.location).to_track_quat('-Z', 'Y').to_euler()
 bpy.context.scene.collection.objects.link(rim_obj)
 
 # Render settings
 bpy.context.scene.render.image_settings.file_format = 'PNG'
 bpy.context.scene.render.filepath = sys.argv[sys.argv.index('--out') + 1]
 bpy.ops.render.render(write_still=True)
+print('${PLATE_OK_SENTINEL}')
 `;
 
   mkdirSync(dirname(outPath), { recursive: true });
+
+  // Blender exits 0 even when --python-expr raises (verified 5.2.1: an
+  // uncaught RuntimeError still yields exit code 0), so `code === 0` proves
+  // nothing on its own. Two guards close that hole:
+  //   1. remove any previous plate first — otherwise existsSync() happily
+  //      passes on a STALE file and a failed render reports success. This
+  //      actually fooled a verification pass on 2026-09-07.
+  //   2. require the sentinel that only the final line of the script prints.
+  if (existsSync(outPath)) {
+    rmSync(outPath, { force: true });
+  }
 
   const tail = { text: '' };
   await new Promise<void>((res, rej) => {
@@ -984,10 +1081,17 @@ bpy.ops.render.render(write_still=True)
     if (child.stderr) drainToTail(child.stderr, tail);
     child.on('error', rej);
     child.on('close', (code) => {
-      if (code === 0 && existsSync(outPath)) {
+      if (code === 0 && existsSync(outPath) && tail.text.includes(PLATE_OK_SENTINEL)) {
         res();
       } else {
-        rej(new Error(`[blender] Anchor plate generation exited with code ${code}:\n${tail.text.slice(-1500)}`));
+        rej(
+          new Error(
+            `[blender] Anchor plate generation failed (exit ${code}, ` +
+              `output ${existsSync(outPath) ? 'present' : 'missing'}, ` +
+              `sentinel ${tail.text.includes(PLATE_OK_SENTINEL) ? 'seen' : 'ABSENT'}):\n` +
+              tail.text.slice(-1500),
+          ),
+        );
       }
     });
   });

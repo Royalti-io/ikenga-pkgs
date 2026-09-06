@@ -27,7 +27,10 @@ import {
   buildResolutionExpr,
   buildDeviceExpr,
   buildDeviceProbeScript,
+  compareVersionsDesc,
   computeTotalFrames,
+  discoverVersionedBlender,
+  PLATE_OK_SENTINEL,
   parseDeviceFromChunk,
   parseFrameFromChunk,
   parseProbeDevice,
@@ -345,6 +348,30 @@ async function main(): Promise<number> {
     const s = buildDeviceProbeScript();
     assert.match(s, /samples = 1/);
     assert.match(s, /resolution_x = 32/);
+  });
+
+  // ── G-51b: version-brittle binary discovery ────────────────────────────
+  test('compareVersionsDesc: numeric, newest first (5.10 > 5.9, 5.2 > 4.3)', () => {
+    assert.deepEqual(['4.3', '5.2', '5.10', '5.9'].sort(compareVersionsDesc), [
+      '5.10',
+      '5.9',
+      '5.2',
+      '4.3',
+    ]);
+  });
+
+  test('discoverVersionedBlender: missing root is [] (never throws)', () => {
+    assert.deepEqual(discoverVersionedBlender('/nope/does/not/exist', (d) => d), []);
+  });
+
+  // ── Anchor-plate failure detection ─────────────────────────────────────
+  // Blender exits 0 on an uncaught Python exception (verified 5.2.1), so the
+  // script's last-line sentinel is the only trustworthy success signal. A
+  // stale output file previously let a FAILED plate render report success.
+  test('PLATE_OK_SENTINEL: is a distinct marker, not a device marker prefix', () => {
+    assert.ok(PLATE_OK_SENTINEL.length > 0);
+    assert.equal(parseDeviceFromChunk(PLATE_OK_SENTINEL), null);
+    assert.equal(parseProbeDevice(PLATE_OK_SENTINEL), null);
   });
 
   test('parseProbeDevice: reads the verdict; unknown backends are rejected', () => {
