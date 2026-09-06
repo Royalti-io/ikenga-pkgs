@@ -529,12 +529,25 @@ export function blenderOutputPath(rendersDir: string, cell: Pick<Cell, 'uid' | '
   return { outDir, outPath: join(outDir, `${cell.uid}.mp4`) };
 }
 
-/** Parse a `Fra:N` line out of a chunk of Blender stdout. Returns `null` if
+/** Parse the frame number out of a chunk of Blender stdout. Returns `null` if
  *  the chunk carries no frame signal — exported (pure) for progress-parsing
- *  tests. */
+ *  tests.
+ *
+ *  Two things this has to get right, both learned the hard way:
+ *
+ *  1. **Blender 5.x puts a SPACE after the colon** — the real line reads
+ *     `00:07.157  render  | Fra: 1 | Rendering 1 / 64 samples`. The original
+ *     `/Fra:(\d+)/` is a 4.x-era pattern (`Fra:1`) that silently stopped
+ *     matching, so progress reported frame 0 forever and the UI showed a
+ *     render that never advanced. `\s*` covers both spellings.
+ *  2. **Take the LAST match, not the first.** A single stdout chunk carries
+ *     many progress lines; matching the first reports the oldest frame in
+ *     the chunk, which makes progress lag and can look non-monotonic across
+ *     chunk boundaries. */
 export function parseFrameFromChunk(text: string): number | null {
-  const m = text.match(/Fra:(\d+)/i);
-  return m ? parseInt(m[1]!, 10) : null;
+  const matches = [...text.matchAll(/Fra:\s*(\d+)/gi)];
+  const last = matches[matches.length - 1];
+  return last ? parseInt(last[1]!, 10) : null;
 }
 
 function resolveAspectAndResolution(
@@ -556,6 +569,20 @@ export function scalePadFilter(w: number, h: number): string {
   );
 }
 
+/** Translate Blender's `#`-padding output pattern into ffmpeg's `%0Nd` form.
+ *
+ *  Blender and ffmpeg spell numeric padding differently and BOTH are handed
+ *  the same base path here: Blender writes `frame_####.png` via `-o`, ffmpeg
+ *  must read it back as `frame_%04d.png` via `-i`. Passing Blender's form to
+ *  ffmpeg yields `Error opening input file … frame_####.png` and the whole
+ *  render fails at the last step, after every frame has already been paid
+ *  for. The width of the run of `#` is the zero-pad width.
+ *
+ *  Exported (pure) so the translation is testable without either binary. */
+export function ffmpegPatternFromBlender(pattern: string): string {
+  return pattern.replace(/#+/g, (hashes) => `%0${hashes.length}d`);
+}
+
 /** Run ffmpeg to assemble a `frame_%04d.png` sequence into an h264 MP4.
  *  Mirrors excalidraw.ts's runFfmpeg: stderr piped + drained into a tail,
  *  process-group killable via `onAbort`. */
@@ -570,7 +597,7 @@ function assembleFrames(
     const args = [
       '-y',
       '-framerate', String(BLENDER_FPS),
-      '-i', framePattern,
+      '-i', ffmpegPatternFromBlender(framePattern),
       '-vf', scalePadFilter(res.w, res.h),
       '-c:v', 'libx264',
       '-pix_fmt', 'yuv420p',

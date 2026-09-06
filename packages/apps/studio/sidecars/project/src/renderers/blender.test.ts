@@ -30,6 +30,7 @@ import {
   compareVersionsDesc,
   computeTotalFrames,
   discoverVersionedBlender,
+  ffmpegPatternFromBlender,
   PLATE_OK_SENTINEL,
   parseDeviceFromChunk,
   parseFrameFromChunk,
@@ -348,6 +349,58 @@ async function main(): Promise<number> {
     const s = buildDeviceProbeScript();
     assert.match(s, /samples = 1/);
     assert.match(s, /resolution_x = 32/);
+  });
+
+  // ── G-FFMPEG-PAT: Blender '#' padding vs ffmpeg '%0Nd' ─────────────────
+  // The same base path is handed to Blender (-o) and ffmpeg (-i). Passing
+  // Blender's spelling to ffmpeg failed the render at the LAST step, after
+  // every frame had already been paid for.
+  test('ffmpegPatternFromBlender: #### becomes %04d', () => {
+    assert.equal(
+      ffmpegPatternFromBlender('/scratch/frame_####.png'),
+      '/scratch/frame_%04d.png',
+    );
+  });
+
+  test('ffmpegPatternFromBlender: pad width follows the run length of #', () => {
+    assert.equal(ffmpegPatternFromBlender('f_##.png'), 'f_%02d.png');
+    assert.equal(ffmpegPatternFromBlender('f_######.png'), 'f_%06d.png');
+  });
+
+  test('ffmpegPatternFromBlender: a pattern with no # is unchanged', () => {
+    assert.equal(ffmpegPatternFromBlender('/scratch/still.png'), '/scratch/still.png');
+  });
+
+  test('ffmpegPatternFromBlender: Windows paths survive intact', () => {
+    assert.equal(
+      ffmpegPatternFromBlender(String.raw`C:\tmp\ikenga\frame_####.png`),
+      String.raw`C:\tmp\ikenga\frame_%04d.png`,
+    );
+  });
+
+  // ── Progress parsing against REAL Blender 5.x output ───────────────────
+  test('parseFrameFromChunk: Blender 5.x puts a SPACE after Fra:', () => {
+    // Verbatim from Blender 5.2.1 stdout — the 4.x-era /Fra:(\d+)/ never
+    // matched this, so progress sat at frame 0 for the whole render.
+    assert.equal(
+      parseFrameFromChunk('00:07.157  render           | Fra: 1 | Rendering 1 / 64 samples'),
+      1,
+    );
+  });
+
+  test('parseFrameFromChunk: still parses the old space-less 4.x spelling', () => {
+    assert.equal(parseFrameFromChunk('Fra:12 Mem:40.00M | Time:00:01.20'), 12);
+  });
+
+  test('parseFrameFromChunk: takes the LAST frame in a multi-line chunk', () => {
+    // stdout arrives in chunks carrying many progress lines; reporting the
+    // first makes progress lag and can read as non-monotonic.
+    const chunk = [
+      'render | Fra: 7 | Rendering 64 / 64 samples',
+      'render | Fra: 8 | Rendering 32 / 64 samples',
+      'render | Fra: 9 | Rendering 1 / 64 samples',
+    ].join('\n');
+    assert.equal(parseFrameFromChunk(chunk), 9);
   });
 
   // ── G-51b: version-brittle binary discovery ────────────────────────────
